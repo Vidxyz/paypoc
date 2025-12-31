@@ -112,6 +112,20 @@ cd services/ledger
 
 The service will start on port 8081 and automatically run Flyway migrations.
 
+## API Documentation
+
+Once the service is running, you can access the interactive OpenAPI/Swagger documentation:
+
+- **Swagger UI**: http://localhost:8081/swagger-ui.html
+- **OpenAPI JSON**: http://localhost:8081/v3/api-docs
+- **OpenAPI YAML**: http://localhost:8081/v3/api-docs.yaml
+
+The Swagger UI provides:
+- Interactive API testing interface
+- Complete request/response schemas
+- Example values for all fields
+- Try-it-out functionality to test endpoints directly from the browser
+
 ## Testing
 
 ### Prerequisites

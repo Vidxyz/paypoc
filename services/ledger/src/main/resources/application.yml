@@ -27,3 +27,12 @@ logging:
     com.payments.platform.ledger: DEBUG
     org.springframework.jdbc: DEBUG
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    tags-sorter: alpha
+    operations-sorter: alpha
+

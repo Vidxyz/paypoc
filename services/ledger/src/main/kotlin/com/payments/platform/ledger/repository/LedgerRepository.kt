@@ -2,6 +2,7 @@ package com.payments.platform.ledger.repository
 
 import com.payments.platform.ledger.domain.Balance
 import com.payments.platform.ledger.domain.Transaction
+import org.springframework.dao.CannotAcquireLockException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.time.Instant
 import java.util.UUID
 
@@ -24,9 +26,76 @@ class LedgerRepository(
      * - No overdrafts (balance check)
      * - Idempotency (unique constraint on idempotency_key)
      * - Correctness under concurrency (SERIALIZABLE isolation)
+     * 
+     * Retries on serialization failures (expected with SERIALIZABLE isolation).
+     */
+    fun createTransaction(
+        transactionId: UUID,
+        accountId: UUID,
+        amountCents: Long,
+        currency: String,
+        idempotencyKey: String,
+        description: String?
+    ): Transaction {
+        var lastException: Exception? = null
+        val maxRetries = 10
+        
+        repeat(maxRetries) { attempt ->
+            try {
+                return createTransactionInternal(transactionId, accountId, amountCents, currency, idempotencyKey, description)
+            } catch (e: InsufficientFundsException) {
+                // Don't retry business logic failures
+                throw e
+            } catch (e: IllegalArgumentException) {
+                // Don't retry validation failures
+                throw e
+            } catch (e: Exception) {
+                // Check if this is a serialization failure (SQL state 40001)
+                var current: Throwable? = e
+                var isSerializationFailure = false
+                
+                while (current != null) {
+                    if (current is SQLException) {
+                        // PostgreSQL serialization failure
+                        if (current.sqlState == "40001" || current.message?.contains("serialize") == true) {
+                            isSerializationFailure = true
+                            break
+                        }
+                    }
+                    // Also check for CannotAcquireLockException which Spring wraps serialization failures in
+                    if (current is CannotAcquireLockException) {
+                        val sqlException = current.cause
+                        if (sqlException is SQLException && sqlException.sqlState == "40001") {
+                            isSerializationFailure = true
+                            break
+                        }
+                    }
+                    current = current.cause
+                }
+                
+                if (isSerializationFailure && attempt < maxRetries - 1) {
+                    lastException = e
+                    // Exponential backoff: wait 10ms, 20ms, 40ms, 80ms, etc.
+                    Thread.sleep((10 * (1 shl attempt)).toLong())
+                    // Continue to retry (loop will continue)
+                } else if (isSerializationFailure) {
+                    // Out of retries
+                    throw RuntimeException("Failed to create transaction after $maxRetries retries due to serialization conflicts", e)
+                } else {
+                    // Not a serialization failure, rethrow immediately
+                    throw e
+                }
+            }
+        }
+        
+        throw RuntimeException("Failed to create transaction after $maxRetries retries due to serialization conflicts", lastException)
+    }
+
+    /**
+     * Internal method that performs the actual transaction creation.
      */
     @Transactional(isolation = Isolation.SERIALIZABLE)
-    fun createTransaction(
+    private fun createTransactionInternal(
         transactionId: UUID,
         accountId: UUID,
         amountCents: Long,
@@ -40,27 +109,32 @@ class LedgerRepository(
             return existingTransaction
         }
 
-        // Get current balance to check for overdraft
-        val currentBalance = getBalance(accountId)
+        // Validate account exists and currency matches
+        val accountCurrency = getAccountCurrency(accountId)
+            ?: throw IllegalArgumentException("Account not found: $accountId")
         
-        // Check for overdraft: balance + amount must be >= 0
-        // Since amount can be negative (debit), we check: balance + amount >= 0
-        val newBalance = currentBalance.balanceCents + amountCents
-        if (newBalance < 0) {
-            throw InsufficientFundsException(
-                "Insufficient funds. Current balance: ${currentBalance.balanceCents} cents, " +
-                "attempted transaction: $amountCents cents"
+        if (currency != accountCurrency) {
+            throw IllegalArgumentException(
+                "Transaction currency ($currency) does not match account currency ($accountCurrency)"
             )
         }
 
-        // Insert transaction
+        // Insert transaction with atomic overdraft check
+        // Use a single statement that checks balance atomically to prevent race conditions
+        // This ensures the balance check and insert happen atomically under SERIALIZABLE isolation
         val sql = """
             INSERT INTO ledger_transactions 
                 (transaction_id, account_id, amount_cents, currency, idempotency_key, description, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, now())
+            SELECT ?, ?, ?, ?, ?, ?, now()
+            WHERE (
+                SELECT COALESCE(SUM(amount_cents), 0) + ? 
+                FROM ledger_transactions 
+                WHERE account_id = ?
+            ) >= 0
         """.trimIndent()
-
-        try {
+        
+        // Check if the insert actually happened (returns 1 if inserted, 0 if condition failed)
+        val rowsAffected = try {
             jdbcTemplate.update(
                 sql,
                 transactionId,
@@ -68,7 +142,9 @@ class LedgerRepository(
                 amountCents,
                 currency,
                 idempotencyKey,
-                description
+                description,
+                amountCents,  // For the WHERE clause check
+                accountId     // For the WHERE clause check
             )
         } catch (e: DuplicateKeyException) {
             // Idempotency key conflict - fetch and return existing transaction
@@ -78,6 +154,23 @@ class LedgerRepository(
         } catch (e: DataIntegrityViolationException) {
             // Could be foreign key violation, check constraint violation, etc.
             throw IllegalArgumentException("Transaction violates constraints: ${e.message}", e)
+        }
+        
+        // If no rows were inserted, it means the overdraft check failed
+        if (rowsAffected == 0) {
+            // Get the current balance for the error message
+            val balanceSql = "SELECT COALESCE(SUM(amount_cents), 0) FROM ledger_transactions WHERE account_id = ?"
+            val currentBalanceCents = try {
+                jdbcTemplate.queryForObject(balanceSql, Long::class.java, accountId) ?: 0L
+            } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
+                0L
+            } catch (e: org.springframework.dao.IncorrectResultSizeDataAccessException) {
+                0L
+            }
+            throw InsufficientFundsException(
+                "Insufficient funds. Current balance: $currentBalanceCents cents, " +
+                "attempted transaction: $amountCents cents"
+            )
         }
 
         // Return the created transaction
@@ -91,26 +184,27 @@ class LedgerRepository(
      */
     @Transactional(isolation = Isolation.SERIALIZABLE, readOnly = true)
     fun getBalance(accountId: UUID): Balance {
+        // Get account currency first
+        val currency = getAccountCurrency(accountId)
+            ?: throw IllegalArgumentException("Account not found: $accountId")
+        
+        // Sum all transactions for this account
+        // Note: We don't GROUP BY currency since all transactions for an account must have the same currency
         val sql = """
-            SELECT
-                account_id,
-                currency,
-                COALESCE(SUM(amount_cents), 0) AS balance_cents
+            SELECT COALESCE(SUM(amount_cents), 0) AS balance_cents
             FROM ledger_transactions
             WHERE account_id = ?
-            GROUP BY account_id, currency
         """.trimIndent()
 
-        return try {
-            jdbcTemplate.queryForObject(sql, balanceRowMapper, accountId)
-                ?: Balance(accountId, "USD", 0) // Default if no transactions
+        val balanceCents = try {
+            jdbcTemplate.queryForObject(sql, Long::class.java, accountId) ?: 0L
         } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
-            // No transactions yet - return zero balance
-            // We need to get currency from account
-            val currency = getAccountCurrency(accountId)
-                ?: throw IllegalArgumentException("Account not found: $accountId")
-            Balance(accountId, currency, 0)
+            0L
+        } catch (e: org.springframework.dao.IncorrectResultSizeDataAccessException) {
+            0L
         }
+        
+        return Balance(accountId, currency, balanceCents)
     }
 
     private fun getAccountCurrency(accountId: UUID): String? {

@@ -1,11 +1,8 @@
 spring:
-  application:
-    name: ledger-service
-  
   datasource:
-    url: jdbc:postgresql://localhost:5432/ledger_db
-    username: ${DB_USERNAME:ledger_user}
-    password: ${DB_PASSWORD:ledger_password}
+    url: jdbc:postgresql://localhost:5432/ledger_test
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -18,12 +15,4 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     validate-on-migrate: true
-
-server:
-  port: 8081
-
-logging:
-  level:
-    com.payments.platform.ledger: DEBUG
-    org.springframework.jdbc: DEBUG
 

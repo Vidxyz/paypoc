@@ -17,14 +17,7 @@ CREATE TABLE ledger_transactions (
         CHECK (amount_cents <> 0),
 
     CONSTRAINT currency_format
-        CHECK (currency ~ '^[A-Z]{3}$'),
-
-    CONSTRAINT account_currency_match
-        CHECK (currency = (
-            SELECT currency
-            FROM ledger_accounts a
-            WHERE a.account_id = ledger_transactions.account_id
-        ))
+        CHECK (currency ~ '^[A-Z]{3}$')
 );
 
 -- Create unique index on idempotency_key to enforce idempotency

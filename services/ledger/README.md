@@ -114,11 +114,34 @@ The service will start on port 8081 and automatically run Flyway migrations.
 
 ## Testing
 
+### Prerequisites
+
+Tests require a local PostgreSQL instance running. The tests will automatically create and destroy the test database.
+
+**Option 1: Use Docker (Recommended for Development)**
+```bash
+docker run -d --name ledger-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  postgres:15-alpine
+```
+
+**Option 2: Use Local PostgreSQL Installation**
+- Ensure PostgreSQL 15+ is installed and running
+- Default connection: `localhost:5432` with user `postgres` / password `postgres`
+- You can override with environment variables: `DB_USERNAME` and `DB_PASSWORD`
+
 ### Run Tests
 
 ```bash
 ./gradlew test
 ```
+
+The tests will:
+1. **Before all tests**: Create a fresh `ledger_test` database
+2. **Run all tests**: Execute concurrency and correctness tests
+3. **After all tests**: Drop the `ledger_test` database
 
 ### Concurrency Tests
 
@@ -131,6 +154,13 @@ The concurrency tests verify:
 ```bash
 ./gradlew test --tests "*ConcurrencyTest"
 ```
+
+### Test Configuration
+
+Test configuration is in `src/test/resources/application-test.yml`:
+- Database: `ledger_test` (created/dropped automatically)
+- Connection: `localhost:5432`
+- Credentials: Can be overridden with `DB_USERNAME` and `DB_PASSWORD` environment variables
 
 ## Invariants Enforced
 

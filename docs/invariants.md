@@ -57,6 +57,8 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 **Invariant:** Idempotency keys are enforced at the ledger boundary. Duplicate requests with the same idempotency key must be rejected or return the same result.
 
 **Enforcement:**
+- Client may supply idempotency key (optional, but recommended)
+- Payments service forwards idempotency key unchanged to ledger service
 - Ledger service must maintain a unique constraint on idempotency keys
 - All ledger write operations must include an idempotency key
 - Duplicate idempotency keys must return the original transaction result (not create a new one)
@@ -64,7 +66,9 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 **Rationale:** Prevents duplicate processing of financial transactions, which could lead to incorrect balances or double charges.
 
-**Design Decision:** Idempotency keys should be enforced at the ledger service boundary, not in the payments service. This ensures that even if the payments service retries, the ledger will not process duplicates.
+**Design Decision:** 
+- Idempotency keys follow Stripe's model: client supplies, payments service forwards unchanged, ledger enforces.
+- Idempotency keys should be enforced at the ledger service boundary, not in the payments service. This ensures that even if the payments service retries, the ledger will not process duplicates.
 
 ---
 
@@ -73,18 +77,38 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 **Invariant:** The payments service must never compute or maintain account balances. All balance queries must go through the ledger service.
 
 **Enforcement:**
-- Payments service must not have any balance calculation logic
+- Payments service must not have any balance derivation logic
 - Payments service must not cache balances
 - All balance queries must be synchronous calls to the ledger service
 - Code reviews must verify no balance computation exists in payments service
 
-**Rationale:** The ledger is the single source of truth. Allowing balance computation in the payments service would create multiple sources of truth and potential inconsistencies.
+**Rationale:** The ledger is the system of record for money. Allowing balance computation in the payments service would create multiple sources of truth and potential inconsistencies.
 
 **Design Decision:** This is a strict architectural constraint. If the payments service needs a balance, it must query the ledger service synchronously, even if this impacts latency.
 
 ---
 
-### 5. Ledger Service Rejects Unbalanced Writes
+### 5. Ledger Writes Only After Money Movement
+
+**Invariant:** The ledger is only written when money movement is guaranteed or has occurred. Payment creation is metadata only and must not trigger ledger writes.
+
+**Enforcement:**
+- Ledger writes must only occur after:
+  - Authorization (if money movement is guaranteed at authorization)
+  - Capture (money has moved)
+  - Refund (money has moved)
+  - Dispute (money movement has occurred)
+- Payment creation must NOT write to ledger (no money has moved yet)
+- Code must validate that ledger writes are only triggered by confirmed money movement events
+- Webhook handlers must verify money movement before writing to ledger
+
+**Rationale:** The ledger records actual financial transactions. Writing to the ledger before money movement occurs would create incorrect financial records and violate the principle that the ledger is the system of record for money.
+
+**Design Decision:** Payment creation stores metadata in the Payments Service database only. Ledger writes happen asynchronously after Stripe (or other PSP) confirms money movement via webhooks.
+
+---
+
+### 6. Ledger Service Rejects Unbalanced Writes
 
 **Invariant:** The ledger service must reject any write operation that does not balance to zero. This rejection must happen before any database commit.
 
@@ -100,7 +124,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ## Payment State Machine Invariants
 
-### 6. No Backward Transitions
+### 7. No Backward Transitions
 
 **Invariant:** Payment state transitions must only move forward through the state machine. Once a payment reaches a state, it cannot transition to a previous state.
 
@@ -122,7 +146,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ---
 
-### 7. No Skipping States
+### 8. No Skipping States
 
 **Invariant:** Payments must transition through states sequentially. States cannot be skipped.
 
@@ -146,7 +170,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ---
 
-### 8. Webhook-Driven Asynchronous State Advancement
+### 9. Webhook-Driven Asynchronous State Advancement
 
 **Invariant:** Webhooks from external systems (e.g., Stripe) may advance payment state asynchronously. The system must handle concurrent state updates correctly.
 
@@ -164,20 +188,20 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ## System Architecture Invariants
 
-### 9. Ledger is the Source of Truth
+### 10. Ledger is the System of Record for Money
 
-**Invariant:** The ledger service and its database are the authoritative source for all financial data. No other service may maintain financial state.
+**Invariant:** The ledger service and its database are the authoritative system of record for all financial data. No other service may maintain financial state.
 
 **Enforcement:**
 - All financial queries must go through the ledger service
 - No other service may have financial data in its database
 - Payments service may cache non-financial data (e.g., payment metadata) but never balances or amounts
 
-**Rationale:** Having a single source of truth prevents inconsistencies and simplifies reasoning about system correctness.
+**Rationale:** Having a single system of record prevents inconsistencies and simplifies reasoning about system correctness.
 
 ---
 
-### 10. Kafka is Orchestration, Not Money Truth
+### 11. Kafka is Orchestration, Not Money Truth
 
 **Invariant:** Kafka is used for orchestration and event-driven workflows, but it is not the source of truth for financial data. Financial state must be persisted in the ledger database.
 
@@ -191,7 +215,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 **Design Decision:** Use Kafka for:
 - Orchestrating payment workflows
-- Retry mechanisms
+- Workflow retries
 - Event notifications
 - Async processing
 
@@ -204,7 +228,7 @@ Do NOT use Kafka for:
 
 ## Operational Invariants
 
-### 11. Database Isolation Level
+### 12. Database Isolation Level
 
 **Invariant:** Ledger service database must use SERIALIZABLE isolation level to prevent race conditions and ensure financial correctness.
 
@@ -219,7 +243,7 @@ Do NOT use Kafka for:
 
 ---
 
-### 12. Single-Merchant Model
+### 13. Single-Merchant Model
 
 **Invariant:** The system is designed for a single-merchant model. All operations are scoped to a single merchant entity.
 

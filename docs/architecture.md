@@ -29,9 +29,12 @@ The payments platform is a monorepo-based system designed to handle payment proc
        ▼                  ▼
 ┌─────────────────┐  ┌──────────────┐
 │ Ledger Service  │  │    Kafka     │
-│ - Money truth   │  │ (Strimzi)    │
-│ - Balance calc  │  │ - Events     │
-│ - Transactions  │  │ - Retries    │
+│ - System of     │  │ (Strimzi)    │
+│   record for    │  │ - Events     │
+│   money         │  │ - Workflow   │
+│ - Balance       │  │   retries    │
+│   derivation    │  │              │
+│ - Transactions  │  │              │
 └────────┬────────┘  └──────────────┘
          │
          │
@@ -45,7 +48,7 @@ The payments platform is a monorepo-based system designed to handle payment proc
 
 ## Core Principles
 
-1. **Ledger is the Source of Truth**: All financial data resides in the Ledger Service database
+1. **Ledger is the System of Record for Money**: All financial data resides in the Ledger Service database
 2. **Payments Service Never Writes Balances**: Payments service orchestrates but never computes or stores balances
 3. **Kafka is Orchestration, Not Money Truth**: Kafka handles workflow orchestration but financial state is in the ledger
 4. **Single-Merchant Model**: System designed for a single merchant entity
@@ -60,7 +63,7 @@ The payments platform is a monorepo-based system designed to handle payment proc
 - Public-facing REST APIs for payment operations
 - Webhook handling from external systems
 - Payment state machine management
-- Idempotency key generation and forwarding
+- Idempotency key forwarding (from client to ledger)
 
 **What it does NOT do:**
 - Compute or store account balances
@@ -85,10 +88,11 @@ The payments platform is a monorepo-based system designed to handle payment proc
 
 **Responsibilities:**
 - Maintain financial transaction records (append-only ledger)
-- Compute and serve account balances
+- Derive and serve account balances
 - Enforce double-entry bookkeeping (balanced transactions)
 - Enforce idempotency at the ledger boundary
 - Validate all financial operations
+- Only write when money movement is confirmed
 
 **Key Operations:**
 - Create ledger entries (with balance validation)
@@ -115,26 +119,29 @@ The payments platform is a monorepo-based system designed to handle payment proc
 
 ```
 1. Client → Payments Service: POST /payments
-   - Payments Service generates idempotency key
-   - Creates payment record in CREATED state
+   - Client may supply idempotency key (optional)
+   - Payments Service creates payment record in CREATED state
+   - Payment stored in Payments Service database only (metadata)
+   - NO ledger write at this stage (no money has moved)
 
-2. Payments Service → Ledger Service: POST /ledger/transactions
-   - Synchronous call
-   - Includes idempotency key
-   - Ledger validates and records transaction
-   - Returns success/failure
-
-3. Payments Service → Stripe: Create payment intent
+2. Payments Service → Stripe: Create payment intent
    - Async operation
    - Payment state → CONFIRMING
 
-4. Stripe → Payments Service: Webhook (async)
+3. Stripe → Payments Service: Webhook (async)
    - Payment state → AUTHORIZED or FAILED
+   - If AUTHORIZED: Money movement is guaranteed
+   - If FAILED: No money movement occurred
 
-5. Payments Service → Ledger Service: Update transaction
-   - If authorized, record capture
-   - If failed, record reversal
+4. Payments Service → Ledger Service: POST /ledger/transactions
+   - Only called after Stripe confirms money movement
+   - If AUTHORIZED: Record authorization transaction
+   - If FAILED: No ledger write (no money moved)
+   - Synchronous call with idempotency key
+   - Ledger validates and records transaction
 ```
+
+**Critical Rule:** The ledger is only written when money movement is guaranteed or has occurred. Payment creation is metadata only - no ledger write.
 
 ### Payment Capture Flow
 
@@ -147,11 +154,15 @@ The payments platform is a monorepo-based system designed to handle payment proc
 
 3. Stripe → Payments Service: Webhook (async)
    - Payment state → CAPTURED
+   - Money movement has occurred
 
-4. Payments Service → Ledger Service: Record capture
+4. Payments Service → Ledger Service: POST /ledger/transactions
    - Synchronous call
-   - Ledger records capture transaction
+   - Ledger records capture transaction (money has moved)
+   - Includes idempotency key
 ```
+
+**Note:** Ledger writes occur only after Stripe confirms the money movement via webhook.
 
 ### Balance Query Flow
 
@@ -270,7 +281,7 @@ GKE Cluster
 - Protocol: HTTP/REST
 - Pattern: Request-Response
 - Use cases:
-  - Creating ledger transactions
+  - Creating ledger transactions (after money movement confirmed)
   - Querying balances
   - Validating operations
 - Characteristics:
@@ -285,7 +296,7 @@ GKE Cluster
 - Pattern: Event-driven
 - Use cases:
   - Payment workflow orchestration
-  - Retry mechanisms
+  - Workflow retries
   - Event notifications
   - Async processing triggers
 - Characteristics:
@@ -342,9 +353,11 @@ LedgerTransaction {
   entries: List<LedgerEntry>
   totalDebits: Money
   totalCredits: Money
-  status: TransactionStatus (PENDING, COMMITTED, REJECTED)
   createdAt: Timestamp
 }
+```
+
+**Design Decision:** Ledger writes are synchronous. Either the transaction commits (exists in database) or it doesn't (exception thrown). No intermediate states. Transaction existence == committed. Rejections are exceptions, not database states.
 ```
 
 ## Security Considerations

@@ -10,3 +10,5 @@
 *.vsix
 .gradle/*
 build/*
+/services/payments/.gradle/
+/services/payments/build/

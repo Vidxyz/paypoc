@@ -12,3 +12,4 @@
 build/*
 /services/payments/.gradle/
 /services/payments/build/
+/services/payments/build/resources/

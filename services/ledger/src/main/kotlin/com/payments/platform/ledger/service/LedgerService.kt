@@ -1,6 +1,8 @@
 package com.payments.platform.ledger.service
 
 import com.payments.platform.ledger.domain.Account
+import com.payments.platform.ledger.domain.AccountStatus
+import com.payments.platform.ledger.domain.AccountType
 import com.payments.platform.ledger.domain.Balance
 import com.payments.platform.ledger.domain.CreateTransactionRequest
 import com.payments.platform.ledger.domain.Transaction
@@ -61,11 +63,20 @@ class LedgerService(
      * Creates a new account in the ledger.
      * 
      * @param accountId The account ID
+     * @param type The account type
      * @param currency The currency code (ISO 4217, 3 uppercase letters)
+     * @param status The account status (defaults to ACTIVE)
+     * @param metadata Optional metadata as JSON
      * @return The created account
      */
-    fun createAccount(accountId: UUID, currency: String): Account {
-        return ledgerRepository.createAccount(accountId, currency)
+    fun createAccount(
+        accountId: UUID,
+        type: AccountType,
+        currency: String,
+        status: AccountStatus = AccountStatus.ACTIVE,
+        metadata: Map<String, Any>? = null
+    ): Account {
+        return ledgerRepository.createAccount(accountId, type, currency, status, metadata)
     }
 
     /**

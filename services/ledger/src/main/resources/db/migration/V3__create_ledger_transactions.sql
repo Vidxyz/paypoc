@@ -10,7 +10,7 @@ CREATE TABLE ledger_transactions (
 
     CONSTRAINT fk_account
         FOREIGN KEY (account_id)
-        REFERENCES ledger_accounts(account_id)
+        REFERENCES ledger_accounts(id)
         ON DELETE RESTRICT,
 
     CONSTRAINT non_zero_amount

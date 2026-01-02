@@ -139,7 +139,9 @@ class PaymentLedgerIntegrationTest {
             // Create customer account
             val createCustomerAccountRequest = mapOf(
                 "accountId" to customerAccountId.toString(),
-                "currency" to "USD"
+                "type" to "CUSTOMER",
+                "currency" to "USD",
+                "status" to "ACTIVE"
             )
             val customerHeaders = HttpHeaders().apply {
                 set("Authorization", "Bearer $ledgerInternalApiToken")
@@ -160,7 +162,9 @@ class PaymentLedgerIntegrationTest {
             // Create merchant account
             val createMerchantAccountRequest = mapOf(
                 "accountId" to merchantAccountId.toString(),
-                "currency" to "USD"
+                "type" to "MERCHANT",
+                "currency" to "USD",
+                "status" to "ACTIVE"
             )
             val merchantHeaders = HttpHeaders().apply {
                 set("Authorization", "Bearer $ledgerInternalApiToken")

@@ -10,7 +10,7 @@ CREATE TABLE ledger_account_metadata (
 
     CONSTRAINT fk_account
         FOREIGN KEY (account_id)
-        REFERENCES ledger_accounts(account_id)
+        REFERENCES ledger_accounts(id)
         ON DELETE CASCADE
 );
 

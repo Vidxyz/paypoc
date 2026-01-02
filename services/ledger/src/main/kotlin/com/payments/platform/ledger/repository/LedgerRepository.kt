@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.repository
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.payments.platform.ledger.domain.Account
 import com.payments.platform.ledger.domain.Balance
 import com.payments.platform.ledger.domain.Transaction
@@ -209,7 +210,7 @@ class LedgerRepository(
     }
 
     private fun getAccountCurrency(accountId: UUID): String? {
-        val sql = "SELECT currency FROM ledger_accounts WHERE account_id = ?"
+        val sql = "SELECT currency FROM ledger_accounts WHERE id = ?"
         return try {
             jdbcTemplate.queryForObject(sql, String::class.java, accountId)
         } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
@@ -271,24 +272,38 @@ class LedgerRepository(
      * Creates a new account in the ledger.
      * 
      * @param accountId The account ID
+     * @param type The account type
      * @param currency The currency code (ISO 4217, 3 uppercase letters)
+     * @param status The account status
+     * @param metadata Optional metadata as JSON
      * @return The created account
      * @throws IllegalArgumentException if account already exists or currency is invalid
      */
     @Transactional
-    fun createAccount(accountId: UUID, currency: String): Account {
+    fun createAccount(
+        accountId: UUID,
+        type: com.payments.platform.ledger.domain.AccountType,
+        currency: String,
+        status: com.payments.platform.ledger.domain.AccountStatus = com.payments.platform.ledger.domain.AccountStatus.ACTIVE,
+        metadata: Map<String, Any>? = null
+    ): Account {
         // Validate currency format
         require(currency.matches(Regex("^[A-Z]{3}$"))) {
             "Currency must be 3 uppercase letters (ISO 4217 format)"
         }
 
         val sql = """
-            INSERT INTO ledger_accounts (account_id, currency, created_at)
-            VALUES (?, ?, now())
+            INSERT INTO ledger_accounts (id, type, currency, status, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?::jsonb, now())
         """.trimIndent()
 
         try {
-            jdbcTemplate.update(sql, accountId, currency)
+            val metadataJson = if (metadata != null) {
+                ObjectMapper().writeValueAsString(metadata)
+            } else {
+                null
+            }
+            jdbcTemplate.update(sql, accountId, type.name, currency, status.name, metadataJson)
         } catch (e: DuplicateKeyException) {
             throw IllegalArgumentException("Account already exists: $accountId", e)
         } catch (e: DataIntegrityViolationException) {
@@ -296,7 +311,7 @@ class LedgerRepository(
         }
 
         // Fetch the created account
-        val accountSql = "SELECT account_id, currency, created_at FROM ledger_accounts WHERE account_id = ?"
+        val accountSql = "SELECT id, type, currency, status, metadata, created_at FROM ledger_accounts WHERE id = ?"
         return jdbcTemplate.queryForObject(accountSql, accountRowMapper, accountId)
             ?: throw IllegalStateException("Account created but not found")
     }
@@ -313,7 +328,7 @@ class LedgerRepository(
     fun deleteAccount(accountId: UUID) {
         // Check if account exists
         val accountExists = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM ledger_accounts WHERE account_id = ?",
+            "SELECT COUNT(*) FROM ledger_accounts WHERE id = ?",
             Int::class.java,
             accountId
         ) ?: 0
@@ -326,14 +341,14 @@ class LedgerRepository(
         // Note: The foreign key constraint in V3 migration uses ON DELETE RESTRICT,
         // so we need to delete transactions first
         jdbcTemplate.update("DELETE FROM ledger_transactions WHERE account_id = ?", accountId)
-        jdbcTemplate.update("DELETE FROM ledger_accounts WHERE account_id = ?", accountId)
+        jdbcTemplate.update("DELETE FROM ledger_accounts WHERE id = ?", accountId)
     }
 
     /**
      * Finds an account by ID.
      */
     fun findAccountById(accountId: UUID): Account? {
-        val sql = "SELECT account_id, currency, created_at FROM ledger_accounts WHERE account_id = ?"
+        val sql = "SELECT id, type, currency, status, metadata, created_at FROM ledger_accounts WHERE id = ?"
         return try {
             jdbcTemplate.queryForObject(sql, accountRowMapper, accountId)
         } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
@@ -342,9 +357,27 @@ class LedgerRepository(
     }
 
     private val accountRowMapper = RowMapper<Account> { rs: ResultSet, _ ->
+        val metadataJson = try {
+            rs.getString("metadata")
+        } catch (e: Exception) {
+            null
+        }
+        val metadata = if (metadataJson != null && metadataJson.isNotBlank()) {
+            try {
+                ObjectMapper().readValue(metadataJson, Map::class.java) as Map<String, Any>
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        
         Account(
-            accountId = UUID.fromString(rs.getString("account_id")),
+            accountId = UUID.fromString(rs.getString("id")),
+            type = com.payments.platform.ledger.domain.AccountType.valueOf(rs.getString("type")),
             currency = rs.getString("currency"),
+            status = com.payments.platform.ledger.domain.AccountStatus.valueOf(rs.getString("status")),
+            metadata = metadata,
             createdAt = rs.getTimestamp("created_at").toInstant()
         )
     }

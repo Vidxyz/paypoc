@@ -25,7 +25,44 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ---
 
-### 2. Balanced Transactions
+### 2. Accounts Must Exist Before Transactions
+
+**Invariant:** Ledger entries must reference pre-existing accounts. Accounts must be explicitly created before any transactions can reference them.
+
+**Enforcement:**
+- Database foreign key constraint: `ledger_transactions.account_id` → `ledger_accounts.id` with `ON DELETE RESTRICT`
+- Application-level validation: Ledger service must verify account exists before creating transactions
+- Account creation must be an explicit operation (via internal API or direct database operation)
+- Transaction creation must fail with clear error if account does not exist
+- No implicit account creation - accounts cannot be auto-created during transaction processing
+
+**Rationale:** 
+- Ensures referential integrity: all transactions reference valid accounts
+- Prevents orphaned transactions pointing to non-existent accounts
+- Enforces explicit account lifecycle management
+- Makes account creation a deliberate, auditable action
+
+**Design Decision:**
+- Accounts are created via the internal API (`POST /internal/accounts`) which requires authentication
+   - This can be extended in the future to be backed by an `account-service` which would be the source of truth (and would invoke the above internal API)
+- This ensures accounts are created intentionally, not accidentally
+- The foreign key constraint provides database-level enforcement as defense-in-depth
+- Application code validates account existence before transaction creation to provide clear error messages
+
+**Example:**
+```
+✅ Valid Flow:
+  1. Create account: POST /internal/accounts { accountId: "abc-123", type: "CUSTOMER", currency: "USD" }
+  2. Create transaction: POST /ledger/transactions { accountId: "abc-123", amountCents: 1000, ... }
+
+❌ Invalid Flow:
+  1. Create transaction: POST /ledger/transactions { accountId: "xyz-999", ... }
+     → Error: "Account not found: xyz-999"
+```
+
+---
+
+### 3. Balanced Transactions
 
 **Invariant:** Each ledger transaction must balance to zero. The sum of all debits must equal the sum of all credits within a single transaction.
 
@@ -52,7 +89,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ---
 
-### 3. Idempotency Key Enforcement
+### 4. Idempotency Key Enforcement
 
 **Invariant:** Idempotency keys are enforced at the ledger boundary. Duplicate requests with the same idempotency key must be rejected or return the same result.
 
@@ -72,7 +109,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ---
 
-### 4. Payments Service Never Computes Balances
+### 5. Payments Service Never Computes Balances
 
 **Invariant:** The payments service must never compute or maintain account balances. All balance queries must go through the ledger service.
 
@@ -88,7 +125,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ---
 
-### 5. Ledger Writes Only After Money Movement
+### 6. Ledger Writes Only After Money Movement
 
 **Invariant:** The ledger is only written when money movement is guaranteed or has occurred. Payment creation is metadata only and must not trigger ledger writes.
 
@@ -108,7 +145,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ---
 
-### 6. Ledger Service Rejects Unbalanced Writes
+### 7. Ledger Service Rejects Unbalanced Writes
 
 **Invariant:** The ledger service must reject any write operation that does not balance to zero. This rejection must happen before any database commit.
 
@@ -124,7 +161,7 @@ All invariants must be enforced programmatically. Documentation alone is insuffi
 
 ## Payment State Machine Invariants
 
-### 7. No Backward Transitions
+### 8. No Backward Transitions
 
 **Invariant:** Payment state transitions must only move forward through the state machine. Once a payment reaches a state, it cannot transition to a previous state.
 
@@ -146,7 +183,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ---
 
-### 8. No Skipping States
+### 9. No Skipping States
 
 **Invariant:** Payments must transition through states sequentially. States cannot be skipped.
 
@@ -170,7 +207,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ---
 
-### 9. Webhook-Driven Asynchronous State Advancement
+### 10. Webhook-Driven Asynchronous State Advancement
 
 **Invariant:** Webhooks from external systems (e.g., Stripe) may advance payment state asynchronously. The system must handle concurrent state updates correctly.
 
@@ -188,7 +225,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ## System Architecture Invariants
 
-### 10. Ledger is the System of Record for Money
+### 11. Ledger is the System of Record for Money
 
 **Invariant:** The ledger service and its database are the authoritative system of record for all financial data. No other service may maintain financial state.
 
@@ -201,7 +238,7 @@ CREATED → CONFIRMING → AUTHORIZED → CAPTURED
 
 ---
 
-### 11. Kafka is Orchestration, Not Money Truth
+### 12. Kafka is Orchestration, Not Money Truth
 
 **Invariant:** Kafka is used for orchestration and event-driven workflows, but it is not the source of truth for financial data. Financial state must be persisted in the ledger database.
 
@@ -228,7 +265,7 @@ Do NOT use Kafka for:
 
 ## Operational Invariants
 
-### 12. Database Isolation Level
+### 13. Database Isolation Level
 
 **Invariant:** Ledger service database must use SERIALIZABLE isolation level to prevent race conditions and ensure financial correctness.
 
@@ -243,7 +280,7 @@ Do NOT use Kafka for:
 
 ---
 
-### 13. Single-Merchant Model
+### 14. Single-Merchant Model
 
 **Invariant:** The system is designed for a single-merchant model. All operations are scoped to a single merchant entity.
 
@@ -270,10 +307,11 @@ All invariants must be verified through:
 ### Monitoring
 
 Monitor for invariant violations:
-- Track ledger rejection rates (unbalanced transactions, duplicate idempotency keys)
+- Track ledger rejection rates (unbalanced transactions, duplicate idempotency keys, missing accounts)
 - Alert on invalid state transitions
 - Monitor database serialization failures
 - Track balance query patterns to ensure payments service isn't computing balances
+- Monitor account creation patterns and transaction failures due to missing accounts
 
 ---
 

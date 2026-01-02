@@ -121,9 +121,11 @@ class LedgerRepositoryConcurrencyTest {
         // Create test account
         accountId = UUID.randomUUID()
         jdbcTemplate.update(
-            "INSERT INTO ledger_accounts (account_id, currency) VALUES (?, ?)",
+            "INSERT INTO ledger_accounts (id, type, currency, status) VALUES (?, ?, ?, ?)",
             accountId,
-            "USD"
+            "CUSTOMER",
+            "USD",
+            "ACTIVE"
         )
 
         // Clear any existing transactions

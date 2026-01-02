@@ -51,14 +51,40 @@ class InternalLedgerController(
         }
 
         return try {
+            val accountType = if (request.type != null) {
+                try {
+                    com.payments.platform.ledger.domain.AccountType.valueOf(request.type)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("Invalid account type: ${request.type}. Must be one of: CUSTOMER, MERCHANT, PSP_CLEARING, FEE, REFUND")
+                }
+            } else {
+                com.payments.platform.ledger.domain.AccountType.CUSTOMER
+            }
+            
+            val accountStatus = if (request.status != null) {
+                try {
+                    com.payments.platform.ledger.domain.AccountStatus.valueOf(request.status)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("Invalid account status: ${request.status}. Must be one of: ACTIVE, INACTIVE, SUSPENDED, CLOSED")
+                }
+            } else {
+                com.payments.platform.ledger.domain.AccountStatus.ACTIVE
+            }
+            
             val account = ledgerService.createAccount(
                 accountId = request.accountId ?: UUID.randomUUID(),
-                currency = request.currency
+                type = accountType,
+                currency = request.currency,
+                status = accountStatus,
+                metadata = request.metadata
             )
             ResponseEntity.status(HttpStatus.CREATED).body(
                 AccountResponse(
                     accountId = account.accountId,
+                    type = account.type.name,
                     currency = account.currency,
+                    status = account.status.name,
+                    metadata = account.metadata,
                     createdAt = account.createdAt.toString()
                 )
             )
@@ -99,12 +125,18 @@ class InternalLedgerController(
 
 data class CreateAccountRequest(
     val accountId: UUID? = null,  // If null, will be generated
-    val currency: String
+    val type: String? = null,  // CUSTOMER, MERCHANT, PSP_CLEARING, FEE, REFUND
+    val currency: String,
+    val status: String? = null,  // ACTIVE, INACTIVE, SUSPENDED, CLOSED
+    val metadata: Map<String, Any>? = null
 )
 
 data class AccountResponse(
     val accountId: UUID? = null,
+    val type: String? = null,
     val currency: String? = null,
+    val status: String? = null,
+    val metadata: Map<String, Any>? = null,
     val createdAt: String? = null,
     val message: String? = null,
     val error: String? = null

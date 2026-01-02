@@ -6,8 +6,6 @@ plugins {
     kotlin("plugin.jpa") version "1.9.20"
 }
 
-import java.io.File
-
 group = "com.payments.platform"
 version = "1.0.0-SNAPSHOT"
 
@@ -22,7 +20,7 @@ repositories {
 dependencies {
     // Spring Boot
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     
     // Kotlin
@@ -36,6 +34,9 @@ dependencies {
     
     // JSON
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    
+    // HTTP Client (for Ledger service)
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
     
     // OpenAPI/Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0")
@@ -60,11 +61,11 @@ tasks.withType<Test> {
     testLogging {
         events("passed", "skipped", "failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-        showStandardStreams = true  // Shows println() output
+        showStandardStreams = true
         showCauses = true
         showStackTraces = true
     }
     
-    // Show output on console
     outputs.upToDateWhen { false }
 }
+

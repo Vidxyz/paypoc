@@ -1,0 +1,103 @@
+package com.payments.platform.payments.client
+
+import com.payments.platform.payments.client.dto.LedgerBalanceResponse
+import com.payments.platform.payments.client.dto.LedgerTransactionRequest
+import com.payments.platform.payments.client.dto.LedgerTransactionResponse
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.HttpStatus
+import org.springframework.stereotype.Component
+import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
+import reactor.core.publisher.Mono
+import java.util.UUID
+
+/**
+ * HTTP client for communicating with the Ledger Service.
+ * 
+ * This is a synchronous client (using block()) because we're in a synchronous
+ * orchestration phase. Later, this could be made async when we add Kafka.
+ */
+@Component
+class LedgerClient(
+    private val webClient: WebClient,
+    @Value("\${ledger.service.url}") private val ledgerServiceUrl: String
+) {
+    
+    /**
+     * Creates a transaction in the ledger.
+     * 
+     * This is the critical call - if this fails, the payment should not be created.
+     * 
+     * @param request Transaction request with account, amount, currency, idempotency key
+     * @return Ledger transaction response
+     * @throws LedgerClientException if ledger rejects the transaction
+     */
+    fun postTransaction(request: LedgerTransactionRequest): LedgerTransactionResponse {
+        return try {
+            webClient.post()
+                .uri("$ledgerServiceUrl/ledger/transactions")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(LedgerTransactionResponse::class.java)
+                .block() ?: throw LedgerClientException("Ledger service returned null response")
+        } catch (e: WebClientResponseException) {
+            when (e.statusCode) {
+                HttpStatus.BAD_REQUEST -> throw LedgerClientException(
+                    "Ledger rejected transaction: ${e.responseBodyAsString}",
+                    e
+                )
+                HttpStatus.UNPROCESSABLE_ENTITY -> throw LedgerClientException(
+                    "Insufficient funds in ledger: ${e.responseBodyAsString}",
+                    e
+                )
+                else -> throw LedgerClientException(
+                    "Ledger service error: ${e.statusCode} - ${e.responseBodyAsString}",
+                    e
+                )
+            }
+        } catch (e: Exception) {
+            throw LedgerClientException("Failed to communicate with ledger service", e)
+        }
+    }
+    
+    /**
+     * Gets the balance for an account from the ledger.
+     * 
+     * This is a read-only delegation - Payments never computes balances.
+     * 
+     * @param accountId Account ID to query
+     * @return Balance response from ledger
+     * @throws LedgerClientException if ledger service is unavailable
+     */
+    fun getBalance(accountId: UUID): LedgerBalanceResponse {
+        return try {
+            webClient.get()
+                .uri("$ledgerServiceUrl/ledger/accounts/$accountId/balance")
+                .retrieve()
+                .bodyToMono(LedgerBalanceResponse::class.java)
+                .block() ?: throw LedgerClientException("Ledger service returned null response")
+        } catch (e: WebClientResponseException) {
+            when (e.statusCode) {
+                HttpStatus.NOT_FOUND -> throw LedgerClientException(
+                    "Account not found in ledger: $accountId",
+                    e
+                )
+                else -> throw LedgerClientException(
+                    "Ledger service error: ${e.statusCode} - ${e.responseBodyAsString}",
+                    e
+                )
+            }
+        } catch (e: Exception) {
+            throw LedgerClientException("Failed to communicate with ledger service", e)
+        }
+    }
+}
+
+/**
+ * Exception thrown when ledger client operations fail.
+ */
+class LedgerClientException(
+    message: String,
+    cause: Throwable? = null
+) : RuntimeException(message, cause)
+

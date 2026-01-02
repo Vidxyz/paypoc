@@ -107,6 +107,8 @@ docker run -d \
 
 ```bash
 cd services/ledger
+export DB_USERNAME=postgres # Optional
+export DB_PASSWORD=postgres # Optional
 ./gradlew bootRun
 ```
 

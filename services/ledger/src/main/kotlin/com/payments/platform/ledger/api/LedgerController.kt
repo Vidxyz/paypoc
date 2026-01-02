@@ -19,7 +19,7 @@ import java.util.UUID
 @RequestMapping("/ledger")
 @Tag(name = "Ledger", description = "Ledger Service API - System of record for financial transactions")
 class LedgerController(
-    private val ledgerService: LedgerService
+private val ledgerService: LedgerService
 ) {
     /**
      * POST /ledger/transactions

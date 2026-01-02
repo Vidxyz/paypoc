@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.repository
 
+import com.payments.platform.ledger.domain.Account
 import com.payments.platform.ledger.domain.Balance
 import com.payments.platform.ledger.domain.Transaction
 import org.springframework.dao.CannotAcquireLockException
@@ -263,6 +264,88 @@ class LedgerRepository(
             accountId = UUID.fromString(rs.getString("account_id")),
             currency = rs.getString("currency"),
             balanceCents = rs.getLong("balance_cents")
+        )
+    }
+
+    /**
+     * Creates a new account in the ledger.
+     * 
+     * @param accountId The account ID
+     * @param currency The currency code (ISO 4217, 3 uppercase letters)
+     * @return The created account
+     * @throws IllegalArgumentException if account already exists or currency is invalid
+     */
+    @Transactional
+    fun createAccount(accountId: UUID, currency: String): Account {
+        // Validate currency format
+        require(currency.matches(Regex("^[A-Z]{3}$"))) {
+            "Currency must be 3 uppercase letters (ISO 4217 format)"
+        }
+
+        val sql = """
+            INSERT INTO ledger_accounts (account_id, currency, created_at)
+            VALUES (?, ?, now())
+        """.trimIndent()
+
+        try {
+            jdbcTemplate.update(sql, accountId, currency)
+        } catch (e: DuplicateKeyException) {
+            throw IllegalArgumentException("Account already exists: $accountId", e)
+        } catch (e: DataIntegrityViolationException) {
+            throw IllegalArgumentException("Failed to create account: ${e.message}", e)
+        }
+
+        // Fetch the created account
+        val accountSql = "SELECT account_id, currency, created_at FROM ledger_accounts WHERE account_id = ?"
+        return jdbcTemplate.queryForObject(accountSql, accountRowMapper, accountId)
+            ?: throw IllegalStateException("Account created but not found")
+    }
+
+    /**
+     * Deletes an account and all associated transactions.
+     * 
+     * Note: This cascades to transactions due to foreign key constraints.
+     * 
+     * @param accountId The account ID to delete
+     * @throws IllegalArgumentException if account does not exist
+     */
+    @Transactional
+    fun deleteAccount(accountId: UUID) {
+        // Check if account exists
+        val accountExists = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM ledger_accounts WHERE account_id = ?",
+            Int::class.java,
+            accountId
+        ) ?: 0
+
+        if (accountExists == 0) {
+            throw IllegalArgumentException("Account not found: $accountId")
+        }
+
+        // Delete account (transactions will be deleted due to foreign key CASCADE)
+        // Note: The foreign key constraint in V3 migration uses ON DELETE RESTRICT,
+        // so we need to delete transactions first
+        jdbcTemplate.update("DELETE FROM ledger_transactions WHERE account_id = ?", accountId)
+        jdbcTemplate.update("DELETE FROM ledger_accounts WHERE account_id = ?", accountId)
+    }
+
+    /**
+     * Finds an account by ID.
+     */
+    fun findAccountById(accountId: UUID): Account? {
+        val sql = "SELECT account_id, currency, created_at FROM ledger_accounts WHERE account_id = ?"
+        return try {
+            jdbcTemplate.queryForObject(sql, accountRowMapper, accountId)
+        } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
+            null
+        }
+    }
+
+    private val accountRowMapper = RowMapper<Account> { rs: ResultSet, _ ->
+        Account(
+            accountId = UUID.fromString(rs.getString("account_id")),
+            currency = rs.getString("currency"),
+            createdAt = rs.getTimestamp("created_at").toInstant()
         )
     }
 }

@@ -36,3 +36,9 @@ springdoc:
     tags-sorter: alpha
     operations-sorter: alpha
 
+# Internal API Configuration
+ledger:
+  internal:
+    api:
+      token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
+

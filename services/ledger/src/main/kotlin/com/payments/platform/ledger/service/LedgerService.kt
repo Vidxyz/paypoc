@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.service
 
+import com.payments.platform.ledger.domain.Account
 import com.payments.platform.ledger.domain.Balance
 import com.payments.platform.ledger.domain.CreateTransactionRequest
 import com.payments.platform.ledger.domain.Transaction
@@ -54,6 +55,26 @@ class LedgerService(
      */
     fun getBalance(accountId: UUID): Balance {
         return ledgerRepository.getBalance(accountId)
+    }
+
+    /**
+     * Creates a new account in the ledger.
+     * 
+     * @param accountId The account ID
+     * @param currency The currency code (ISO 4217, 3 uppercase letters)
+     * @return The created account
+     */
+    fun createAccount(accountId: UUID, currency: String): Account {
+        return ledgerRepository.createAccount(accountId, currency)
+    }
+
+    /**
+     * Deletes an account and all associated transactions.
+     * 
+     * @param accountId The account ID to delete
+     */
+    fun deleteAccount(accountId: UUID) {
+        ledgerRepository.deleteAccount(accountId)
     }
 }
 

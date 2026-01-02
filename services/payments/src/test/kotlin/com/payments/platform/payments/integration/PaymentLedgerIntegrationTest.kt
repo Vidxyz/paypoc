@@ -10,6 +10,9 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.TestPropertySource
@@ -34,8 +37,8 @@ import org.slf4j.LoggerFactory
         "spring.datasource.url=jdbc:postgresql://localhost:5432/payments_test",
         "spring.datasource.username=postgres",
         "spring.datasource.password=postgres",
-        // todo-vh: This is not a good idea. We should use a test container for the ledger service.
-        "ledger.service.url=http://localhost:8081"
+        "ledger.service.url=http://localhost:8081",
+        "ledger.internal.api.token=internal-test-token-change-in-production"
     ]
 )
 class PaymentLedgerIntegrationTest {
@@ -56,6 +59,9 @@ class PaymentLedgerIntegrationTest {
 
     private lateinit var customerAccountId: UUID
     private lateinit var merchantAccountId: UUID
+    
+    private val ledgerInternalApiToken = System.getenv("INTERNAL_API_TOKEN") ?: "internal-test-token-change-in-production"
+    private val ledgerServiceUrl = "http://localhost:8081"
 
     companion object {
         private const val TEST_DB_NAME = "payments_test"
@@ -128,61 +134,125 @@ class PaymentLedgerIntegrationTest {
         customerAccountId = UUID.randomUUID()
         merchantAccountId = UUID.randomUUID()
         
-        // Create test accounts directly in ledger database
-        // Note: We connect directly to ledger DB because Ledger Service doesn't have account creation API
-        // In production, accounts would be created through a separate account management service
-        val ledgerDbUrl = "jdbc:postgresql://localhost:5432/ledger_db"
-        val ledgerDbUser = System.getenv("DB_USERNAME") ?: "postgres"
-        val ledgerDbPassword = System.getenv("DB_PASSWORD") ?: "postgres"
-        
+        // Create test accounts via internal API
         try {
-            // todo-vh: Should populate these via internal APIs and not directly to the ledger database
-            DriverManager.getConnection(ledgerDbUrl, ledgerDbUser, ledgerDbPassword).use { connection ->
-                // Create customer account with initial balance
-                connection.prepareStatement(
-                    "INSERT INTO ledger_accounts (account_id, currency) VALUES (?, ?) ON CONFLICT DO NOTHING"
-                ).use { stmt ->
-                    stmt.setObject(1, customerAccountId)
-                    stmt.setString(2, "USD")
-                    stmt.executeUpdate()
-                }
-                
-                // Create merchant account
-                connection.prepareStatement(
-                    "INSERT INTO ledger_accounts (account_id, currency) VALUES (?, ?) ON CONFLICT DO NOTHING"
-                ).use { stmt ->
-                    stmt.setObject(1, merchantAccountId)
-                    stmt.setString(2, "USD")
-                    stmt.executeUpdate()
-                }
-                
-                // Give customer account initial balance of 500 cents for overdraft test
-                // This is done by creating a credit transaction
-                connection.prepareStatement(
-                    """
-                    INSERT INTO ledger_transactions 
-                        (transaction_id, account_id, amount_cents, currency, idempotency_key, description, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, now())
-                    ON CONFLICT DO NOTHING
-                    """.trimIndent()
-                ).use { stmt ->
-                    stmt.setObject(1, UUID.randomUUID())
-                    stmt.setObject(2, customerAccountId)
-                    stmt.setLong(3, 500L)  // Credit 500 cents
-                    stmt.setString(4, "USD")
-                    stmt.setString(5, "test_setup_${customerAccountId}_${System.currentTimeMillis()}")
-                    stmt.setString(6, "Test setup - initial balance")
-                    stmt.executeUpdate()
-                }
+            // Create customer account
+            val createCustomerAccountRequest = mapOf(
+                "accountId" to customerAccountId.toString(),
+                "currency" to "USD"
+            )
+            val customerHeaders = HttpHeaders().apply {
+                set("Authorization", "Bearer $ledgerInternalApiToken")
+                set("Content-Type", "application/json")
+            }
+            val customerAccountResponse = restTemplate.postForEntity(
+                "$ledgerServiceUrl/internal/accounts",
+                HttpEntity(createCustomerAccountRequest, customerHeaders),
+                Map::class.java
+            )
+            
+            if (customerAccountResponse.statusCode.is2xxSuccessful) {
+                logger.info("Created customer account: $customerAccountId")
+            } else {
+                logger.warn("Failed to create customer account: ${customerAccountResponse.statusCode} - ${customerAccountResponse.body}")
+            }
+            
+            // Create merchant account
+            val createMerchantAccountRequest = mapOf(
+                "accountId" to merchantAccountId.toString(),
+                "currency" to "USD"
+            )
+            val merchantHeaders = HttpHeaders().apply {
+                set("Authorization", "Bearer $ledgerInternalApiToken")
+                set("Content-Type", "application/json")
+            }
+            val merchantAccountResponse = restTemplate.postForEntity(
+                "$ledgerServiceUrl/internal/accounts",
+                HttpEntity(createMerchantAccountRequest, merchantHeaders),
+                Map::class.java
+            )
+            
+            if (merchantAccountResponse.statusCode.is2xxSuccessful) {
+                logger.info("Created merchant account: $merchantAccountId")
+            } else {
+                logger.warn("Failed to create merchant account: ${merchantAccountResponse.statusCode} - ${merchantAccountResponse.body}")
+            }
+            
+            // Credit customer account with 500 cents for overdraft test
+            // Use the regular ledger transactions API
+            val creditRequest = mapOf(
+                "accountId" to customerAccountId,
+                "amountCents" to 500L,  // Positive = credit
+                "currency" to "USD",
+                "idempotencyKey" to "test_setup_credit_${customerAccountId}_${System.currentTimeMillis()}",
+                "description" to "Test setup - initial balance"
+            )
+            val creditHeaders = HttpHeaders().apply {
+                set("Content-Type", "application/json")
+            }
+            val creditResponse = restTemplate.postForEntity(
+                "$ledgerServiceUrl/ledger/transactions",
+                HttpEntity(creditRequest, creditHeaders),
+                Map::class.java
+            )
+            
+            if (creditResponse.statusCode.is2xxSuccessful) {
+                logger.info("Credited customer account $customerAccountId with 500 cents")
+            } else {
+                logger.warn("Failed to credit customer account: ${creditResponse.statusCode} - ${creditResponse.body}")
             }
         } catch (e: Exception) {
+            logger.error("Failed to set up ledger accounts via API: ${e.message}", e)
             println("Warning: Could not set up ledger accounts: ${e.message}")
-            println("Make sure ledger database exists and is accessible")
+            println("Make sure ledger service is running on port 8081")
             // Test will fail if accounts don't exist, which is expected
         }
         
         // Clear payments table
         jdbcTemplate.update("DELETE FROM payments")
+    }
+    
+    @org.junit.jupiter.api.AfterEach
+    fun tearDown() {
+        // Clean up: Delete accounts created during tests via internal API
+        try {
+            // Delete customer account
+            val deleteCustomerHeaders = HttpHeaders().apply {
+                set("Authorization", "Bearer $ledgerInternalApiToken")
+            }
+            val deleteCustomerResponse = restTemplate.exchange(
+                "$ledgerServiceUrl/internal/accounts/$customerAccountId",
+                HttpMethod.DELETE,
+                HttpEntity<Any>(null, deleteCustomerHeaders),
+                Map::class.java
+            )
+            
+            if (deleteCustomerResponse.statusCode.is2xxSuccessful) {
+                logger.info("Deleted customer account: $customerAccountId")
+            } else {
+                logger.warn("Failed to delete customer account: ${deleteCustomerResponse.statusCode}")
+            }
+            
+            // Delete merchant account
+            val deleteMerchantHeaders = HttpHeaders().apply {
+                set("Authorization", "Bearer $ledgerInternalApiToken")
+            }
+            val deleteMerchantResponse = restTemplate.exchange(
+                "$ledgerServiceUrl/internal/accounts/$merchantAccountId",
+                HttpMethod.DELETE,
+                HttpEntity<Any>(null, deleteMerchantHeaders),
+                Map::class.java
+            )
+            
+            if (deleteMerchantResponse.statusCode.is2xxSuccessful) {
+                logger.info("Deleted merchant account: $merchantAccountId")
+            } else {
+                logger.warn("Failed to delete merchant account: ${deleteMerchantResponse.statusCode}")
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to clean up ledger accounts: ${e.message}")
+            // Don't fail the test if cleanup fails
+        }
     }
 
     /**

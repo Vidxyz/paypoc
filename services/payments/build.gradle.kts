@@ -38,6 +38,10 @@ dependencies {
     // HTTP Client (for Ledger service)
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     
+    // Kafka
+    implementation("org.springframework.kafka:spring-kafka:3.1.0")
+    implementation("org.apache.kafka:kafka-clients:3.6.0")
+    
     // OpenAPI/Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0")
     

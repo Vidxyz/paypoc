@@ -1,0 +1,8 @@
+# Copy this file to terraform.tfvars and customize as needed
+
+kubeconfig_path = "~/.kube/config"
+kube_context    = "minikube"
+kafka_namespace = "kafka"
+strimzi_chart_version = "0.38.0"
+kowl_chart_version = "2.3.0"
+

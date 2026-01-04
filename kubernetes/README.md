@@ -31,6 +31,11 @@ helm/
    minikube start
    minikube addons enable ingress  # Required for Ingress
    ```
+   
+    - In a new tab, run ingress tunnel
+    ```bash
+    minikube tunnel [--alsologtostderr]
+    ```
 
 2. **kubectl** configured to use minikube
    ```bash

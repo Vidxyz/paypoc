@@ -53,6 +53,7 @@ infra/minikube/
 
 4. **Apply the configuration:**
    ```bash
+   terraform apply -target=module.strimzi.helm_release.strimzi_kafka_operator
    terraform apply
    ```
 

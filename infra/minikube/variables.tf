@@ -19,7 +19,7 @@ variable "kafka_namespace" {
 variable "strimzi_chart_version" {
   description = "Version of the Strimzi Kafka Operator Helm chart"
   type        = string
-  default     = "0.49.1"
+  default     = "0.45.0"
 }
 
 variable "kowl_chart_version" {

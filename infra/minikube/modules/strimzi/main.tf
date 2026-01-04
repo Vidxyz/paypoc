@@ -28,11 +28,14 @@ resource "helm_release" "strimzi_kafka_operator" {
   namespace  = var.namespace
   wait       = true
   timeout    = 600
+  wait_for_jobs = true
 
   set {
     name  = "watchAnyNamespace"
     value = "true"
   }
+
+  
 }
 
 # Wait for CRDs to be installed by the operator
@@ -56,7 +59,7 @@ resource "kubernetes_manifest" "kafka_cluster" {
     spec = {
       kafka = {
         replicas = 1
-        version  = "3.6.0"
+        version  = "3.9.0"
         listeners = [
           {
             name = "plain"

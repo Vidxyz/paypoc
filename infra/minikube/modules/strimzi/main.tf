@@ -34,16 +34,7 @@ resource "helm_release" "strimzi_kafka_operator" {
     name  = "watchAnyNamespace"
     value = "true"
   }
-
-  
 }
-
-# Wait for CRDs to be installed by the operator
-# The Strimzi operator installs CRDs, but they need time to be registered in the API server
-# resource "time_sleep" "wait_for_crds" {
-#   depends_on = [helm_release.strimzi_kafka_operator]
-#   create_duration = "30s"
-# }
 
 # Create Kafka cluster
 resource "kubernetes_manifest" "kafka_cluster" {
@@ -74,8 +65,8 @@ resource "kubernetes_manifest" "kafka_cluster" {
           "transaction.state.log.min.isr"               = "1"
           "default.replication.factor"                  = "1"
           "min.insync.replicas"                         = "1"
-          "inter.broker.protocol.version"               = "3.6"
-          "log.message.format.version"                  = "3.6"
+          # "inter.broker.protocol.version"               = "3.6"
+          # "log.message.format.version"                  = "3.6"
         }
         storage = {
           type = "ephemeral"
@@ -107,39 +98,16 @@ resource "kubernetes_manifest" "kafka_cluster" {
           }
         }
       }
+      
       entityOperator = {
         topicOperator = {
           resources = {
-            requests = {
-              memory = "64Mi"
-              cpu    = "50m"
-            }
-            limits = {
-              memory = "128Mi"
-              cpu    = "100m"
-            }
+            requests = { memory = "64Mi", cpu = "50m" }
+            limits   = { memory = "128Mi", cpu = "100m" }
           }
         }
-        userOperator = {
-          resources = {
-            requests = {
-              memory = "64Mi"
-              cpu    = "50m"
-            }
-            limits = {
-              memory = "128Mi"
-              cpu    = "100m"
-            }
-          }
-        }
+
       }
     }
   }
 }
-
-# Wait for Kafka cluster to be ready before other resources try to connect
-# resource "time_sleep" "wait_for_kafka" {
-#   depends_on = [kubernetes_manifest.kafka_cluster]
-#   create_duration = "180s"  # Allow Kafka cluster to fully start (3 minutes)
-# }
-

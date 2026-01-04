@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-config
+  namespace: payments-platform
+data:
+  application.yml: |
+    spring:
+      application:
+        name: ledger-service
+      
+      datasource:
+        url: jdbc:postgresql://postgres-service.payments-platform.svc.cluster.local:5432/ledger_db
+        driver-class-name: org.postgresql.Driver
+        hikari:
+          maximum-pool-size: 10
+          minimum-idle: 5
+          connection-timeout: 30000
+          transaction-isolation: 8  # TRANSACTION_SERIALIZABLE
+      
+      flyway:
+        enabled: true
+        locations: classpath:db/migration
+        baseline-on-migrate: true
+        validate-on-migrate: true
+    
+    server:
+      port: 8081
+    
+    logging:
+      level:
+        com.payments.platform.ledger: INFO
+        org.springframework.jdbc: WARN
+    
+    springdoc:
+      api-docs:
+        path: /v3/api-docs
+      swagger-ui:
+        path: /swagger-ui.html
+        enabled: true
+        tags-sorter: alpha
+        operations-sorter: alpha
+

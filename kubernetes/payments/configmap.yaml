@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-config
+  namespace: payments-platform
+data:
+  application.yml: |
+    spring:
+      application:
+        name: payments-service
+      
+      datasource:
+        url: jdbc:postgresql://postgres-service.payments-platform.svc.cluster.local:5432/payments_db
+        driver-class-name: org.postgresql.Driver
+        hikari:
+          maximum-pool-size: 10
+          minimum-idle: 5
+          connection-timeout: 30000
+      
+      flyway:
+        enabled: true
+        locations: classpath:db/migration
+        baseline-on-migrate: true
+        validate-on-migrate: true
+      
+      jpa:
+        hibernate:
+          ddl-auto: validate
+        show-sql: false
+        properties:
+          hibernate:
+            format_sql: true
+      
+      kafka:
+        bootstrap-servers: kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+        producer:
+          key-serializer: org.apache.kafka.common.serialization.StringSerializer
+          value-serializer: org.apache.kafka.common.serialization.StringSerializer
+        consumer:
+          group-id: payments-service
+          key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+          value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+          auto-offset-reset: earliest
+    
+    ledger:
+      service:
+        url: http://ledger-service.payments-platform.svc.cluster.local:8081
+    
+    kafka:
+      topics:
+        commands: payment.commands
+        events: payment.events
+        retry: payment.retry
+    
+    server:
+      port: 8080
+    
+    logging:
+      level:
+        com.payments.platform.payments: INFO
+        org.springframework.web: WARN
+    
+    springdoc:
+      api-docs:
+        path: /v3/api-docs
+      swagger-ui:
+        path: /swagger-ui.html
+        enabled: true
+        tags-sorter: alpha
+        operations-sorter: alpha
+

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments-platform
+  labels:
+    name: payments-platform
+    environment: development
+

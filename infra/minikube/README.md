@@ -28,7 +28,8 @@ infra/minikube/
 ├── terraform.tfvars.example # Example variable values
 ├── modules/
 │   ├── strimzi/           # Strimzi Kafka Operator module
-│   └── kowl/              # KOWL UI module
+│   ├── kowl/              # KOWL UI module
+│   └── postgres/          # PostgreSQL module
 └── README.md              # This file
 ```
 
@@ -53,7 +54,6 @@ infra/minikube/
 
 4. **Apply the configuration:**
    ```bash
-   terraform apply -target=module.strimzi.helm_release.strimzi_kafka_operator
    terraform apply
    ```
 
@@ -62,6 +62,8 @@ infra/minikube/
    - Install Strimzi Kafka Operator via Helm
    - Deploy a Kafka cluster (1 broker, 1 Zookeeper)
    - Install KOWL UI via Helm
+   - Create a `payments-platform` namespace
+   - Deploy PostgreSQL via Bitnami Helm chart
 
 5. **Get outputs:**
    ```bash
@@ -83,6 +85,13 @@ infra/minikube/
 - Exposes UI on NodePort 30080
 - Automatically configured to connect to the Kafka cluster
 
+### PostgreSQL
+- Installs PostgreSQL via Bitnami Helm chart
+- Creates databases: `ledger_db` and `payments_db`
+- Creates user `ledger_user` for ledger database
+- Persistent storage (1Gi)
+- Resource limits appropriate for minikube
+
 ## Accessing KOWL UI
 
 After deployment, access KOWL UI at:
@@ -103,12 +112,52 @@ The Kafka bootstrap servers address is:
 kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
 ```
 
+Get it from Terraform outputs:
+```bash
+terraform output kafka_bootstrap_servers
+```
+
 For local development (outside Kubernetes), you can port-forward:
 ```bash
 kubectl port-forward -n kafka svc/kafka-cluster-kafka-bootstrap 9092:9092
 ```
 
 Then use: `localhost:9092`
+
+## PostgreSQL Database
+
+PostgreSQL is deployed via Terraform using the Bitnami Helm chart.
+
+**Service Address:**
+```
+postgres-service.payments-platform.svc.cluster.local:5432
+```
+
+**Databases Created:**
+- `ledger_db` (user: `ledger_user`, password: `ledger_password`)
+- `payments_db` (user: `postgres`, password: from terraform.tfvars)
+
+**Get PostgreSQL connection info:**
+```bash
+terraform output postgres_service_host
+terraform output postgres_service_port
+```
+
+**Access PostgreSQL:**
+```bash
+# Port-forward for local access
+kubectl port-forward -n payments-platform svc/postgres-service 5432:5432
+
+# Connect
+psql -h localhost -U postgres -d ledger_db
+```
+
+## PostgreSQL Database
+
+PostgreSQL is deployed via Terraform and automatically:
+- Creates `ledger_db` database with `ledger_user` user
+- Creates `payments_db` database
+- Exposes service at: `postgres-service.payments-platform.svc.cluster.local:5432`
 
 ## Payments Service Integration
 

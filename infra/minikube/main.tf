@@ -60,8 +60,28 @@ module "kowl" {
   
   namespace = kubernetes_namespace.kafka.metadata[0].name
   kafka_bootstrap_servers = module.strimzi.bootstrap_servers
-  chart_version = var.kowl_chart_version
+  chart_version = var.redpanda_console_chart_version
   
   depends_on = [module.strimzi.kafka_ready]
+}
+
+# Create namespace for payments platform
+resource "kubernetes_namespace" "payments_platform" {
+  metadata {
+    name = var.payments_namespace
+    labels = {
+      app = "payments-platform"
+    }
+  }
+}
+
+# Module for PostgreSQL
+module "postgres" {
+  source = "./modules/postgres"
+  
+  namespace = kubernetes_namespace.payments_platform.metadata[0].name
+  chart_version = var.postgres_chart_version
+  postgres_username = var.postgres_username
+  postgres_password = var.postgres_password
 }
 

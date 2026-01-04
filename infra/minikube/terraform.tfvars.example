@@ -4,5 +4,11 @@ kubeconfig_path = "~/.kube/config"
 kube_context    = "minikube"
 kafka_namespace = "kafka"
 strimzi_chart_version = "0.38.0"
-kowl_chart_version = "2.3.0"
+redpanda_console_chart_version = "3.3.0"
+
+# Payments Platform Configuration
+payments_namespace = "payments-platform"
+postgres_chart_version = "15.5.x"
+postgres_username = "postgres"
+postgres_password = "postgres"  # Change in production!
 

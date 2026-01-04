@@ -13,3 +13,18 @@ output "kowl_ui_url" {
   value       = module.kowl.ui_url
 }
 
+output "payments_namespace" {
+  description = "Kubernetes namespace where payments platform services are deployed"
+  value       = kubernetes_namespace.payments_platform.metadata[0].name
+}
+
+output "postgres_service_host" {
+  description = "PostgreSQL service host"
+  value       = module.postgres.service_host
+}
+
+output "postgres_service_port" {
+  description = "PostgreSQL service port"
+  value       = module.postgres.service_port
+}
+

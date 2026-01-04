@@ -154,9 +154,10 @@ The Swagger UI provides:
 
 Tests require:
 - Local PostgreSQL instance running
-- Ledger Service running on port 8081
+- Ledger Service running on port 8081 (for integration tests)
+- Java 17+
 
-### Run Tests
+### Run All Tests
 
 ```bash
 ./gradlew test
@@ -164,10 +165,12 @@ Tests require:
 
 The tests will:
 1. **Before all tests**: Create a fresh `payments_test` database
-2. **Run all tests**: Execute integration tests
+2. **Run all tests**: Execute all unit and integration tests
 3. **After all tests**: Drop the `payments_test` database
 
-### Integration Test
+### Integration Tests
+
+#### Payment-Ledger Integration Test
 
 The critical integration test `PaymentLedgerIntegrationTest` proves:
 
@@ -177,6 +180,59 @@ The critical integration test `PaymentLedgerIntegrationTest` proves:
 - Ledger balance is unchanged if payment creation fails
 
 This is a **design proof**, not just a unit test.
+
+**Run this test:**
+```bash
+./gradlew test --tests PaymentLedgerIntegrationTest
+```
+
+**Prerequisites:**
+- Ledger Service must be running on port 8081
+- PostgreSQL must be running on localhost:5432
+
+#### Kafka Resilience Tests
+
+The `KafkaPaymentResilienceTest` suite verifies Kafka-based payment processing resilience:
+
+- **Idempotency**: Duplicate commands don't cause duplicate side effects
+- **Resilience**: Consumer failures don't corrupt state
+- **Correctness**: Ledger state remains correct under all scenarios
+- **State machine**: Payment state transitions are correct
+
+**Test scenarios:**
+1. Consumer killed mid-processing (message replay)
+2. Duplicate commands (idempotency verification)
+3. Handler exceptions (error handling)
+4. Message replay after partial processing
+5. Ledger state unchanged during Kafka processing
+
+**Run this test:**
+```bash
+./gradlew test --tests KafkaPaymentResilienceTest
+```
+
+**Prerequisites:**
+- PostgreSQL must be running on localhost:5432
+- **No Ledger Service required** (uses mocked `LedgerClient`)
+- **EmbeddedKafka** is automatically started by Spring Test (no external Kafka needed)
+
+**Test behavior:**
+- Uses EmbeddedKafka for in-memory Kafka testing
+- Creates/tears down `payments_test` database automatically
+- Mocks `LedgerClient` to isolate Kafka processing logic
+- Verifies idempotency, state correctness, and error handling
+
+**Running individual test methods:**
+```bash
+# Test duplicate commands
+./gradlew test --tests KafkaPaymentResilienceTest.duplicate\ commands\ should\ be\ handled\ idempotently
+
+# Test message replay
+./gradlew test --tests KafkaPaymentResilienceTest.message\ replay\ after\ partial\ processing\ should\ be\ idempotent
+
+# Test exception handling
+./gradlew test --tests KafkaPaymentResilienceTest.handler\ exception\ should\ not\ corrupt\ state
+```
 
 ## Configuration
 

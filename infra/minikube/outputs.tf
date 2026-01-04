@@ -28,3 +28,8 @@ output "postgres_service_port" {
   value       = module.postgres.service_port
 }
 
+output "postgres_databases_initialized" {
+  description = "Confirmation that PostgreSQL databases and users have been initialized"
+  value       = module.postgres.databases_initialized
+}
+

@@ -4,8 +4,8 @@ spring:
   
   datasource:
     url: jdbc:postgresql://localhost:5432/payments_db
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    username: ${DB_USERNAME:payments_user}
+    password: ${DB_PASSWORD:payments_password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -26,13 +26,6 @@ spring:
       hibernate:
         format_sql: true
 
-# Ledger Service Configuration
-ledger:
-  service:
-    url: http://localhost:8081
-
-# Kafka Configuration
-spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -43,6 +36,11 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       auto-offset-reset: earliest
+
+# Ledger Service Configuration
+ledger:
+  service:
+    url: http://localhost:8081
 
 # Kafka Topics Configuration
 kafka:

@@ -13,3 +13,9 @@ output "service_port" {
   value       = 5432
 }
 
+output "databases_initialized" {
+  description = "Indicates that databases and users have been initialized"
+  value       = null_resource.init_databases.id
+  depends_on  = [null_resource.init_databases]
+}
+

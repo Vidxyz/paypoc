@@ -6,8 +6,11 @@ import com.payments.platform.payments.client.dto.LedgerTransactionRequest
 import com.payments.platform.payments.domain.Payment
 import com.payments.platform.payments.domain.PaymentState
 import com.payments.platform.payments.domain.PaymentStateMachine
+import com.payments.platform.payments.kafka.AuthorizePaymentCommand
+import com.payments.platform.payments.kafka.PaymentKafkaProducer
 import com.payments.platform.payments.persistence.PaymentEntity
 import com.payments.platform.payments.persistence.PaymentRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
@@ -25,8 +28,10 @@ import java.util.UUID
 class PaymentService(
     private val paymentRepository: PaymentRepository,
     private val ledgerClient: LedgerClient,
-    private val stateMachine: PaymentStateMachine
+    private val stateMachine: PaymentStateMachine,
+    private val kafkaProducer: PaymentKafkaProducer
 ) {
+    private val logger = LoggerFactory.getLogger(javaClass)
     
     /**
      * Creates a payment with ledger-first approach.
@@ -88,6 +93,22 @@ class PaymentService(
         
         val entity = PaymentEntity.fromDomain(payment)
         val saved = paymentRepository.save(entity)
+        
+        // Publish AuthorizePayment command to Kafka (async, after ledger write)
+        // Client does not wait for this - money is already safe
+        try {
+            val command = AuthorizePaymentCommand(
+                paymentId = saved.id,
+                idempotencyKey = saved.idempotencyKey,
+                attempt = 1
+            )
+            kafkaProducer.publishCommand(command)
+            logger.info("Published AuthorizePayment command for payment ${saved.id}")
+        } catch (e: Exception) {
+            // Log error but don't fail the request - payment is already created and money is safe
+            logger.error("Failed to publish AuthorizePayment command for payment ${saved.id}", e)
+            // In production, you might want to retry this or use a dead letter queue
+        }
         
         return saved.toDomain()
     }

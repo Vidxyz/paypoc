@@ -63,6 +63,9 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 tasks.withType<Test> {
     useJUnitPlatform()
     
+    // Enable Byte Buddy experimental mode for Java 24+ support
+    jvmArgs("-Dnet.bytebuddy.experimental=true")
+    
     // Show test output
     testLogging {
         events("passed", "skipped", "failed")

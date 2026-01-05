@@ -23,7 +23,6 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.kafka.test.context.EmbeddedKafka
 import org.springframework.test.context.TestPropertySource
-import org.springframework.transaction.annotation.Transactional
 import java.sql.DriverManager
 import java.util.UUID
 
@@ -178,6 +177,7 @@ class KafkaPaymentResilienceTest {
                     amountCents = -1000L, // Debit $10.00
                     currency = "USD",
                     idempotencyKey = idempotencyKey,
+                    description = "Test payment",
                     createdAt = java.time.Instant.now().toString()
                 )
             )
@@ -221,7 +221,6 @@ class KafkaPaymentResilienceTest {
      * - Ledger unchanged (no new transactions)
      */
     @Test
-    @Transactional
     fun `consumer killed mid-processing - message replay should be idempotent`() {
         val command = AuthorizePaymentCommand(
             paymentId = paymentId,
@@ -233,11 +232,16 @@ class KafkaPaymentResilienceTest {
         kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         
-        // Wait for processing
-        Thread.sleep(5000)
+        // Wait for processing with retries
+        var payment = paymentRepository.findById(paymentId).get().toDomain()
+        var attempts = 0
+        while (payment.state == PaymentState.CREATED && attempts < 20) {
+            Thread.sleep(500)
+            payment = paymentRepository.findById(paymentId).get().toDomain()
+            attempts++
+        }
         
         // Verify payment state - should be AUTHORIZED (idempotency prevents duplicate processing)
-        val payment = paymentRepository.findById(paymentId).get().toDomain()
         assertThat(payment.state).isIn(PaymentState.AUTHORIZED, PaymentState.CONFIRMING)
         
         // Verify ledger was NOT called during Kafka processing (transaction was created during payment creation)
@@ -258,7 +262,6 @@ class KafkaPaymentResilienceTest {
      * - No duplicate side effects (no duplicate ledger transactions, events, etc.)
      */
     @Test
-    @Transactional
     fun `duplicate commands should be handled idempotently`() {
         val command = AuthorizePaymentCommand(
             paymentId = paymentId,
@@ -271,11 +274,16 @@ class KafkaPaymentResilienceTest {
             kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         }
         
-        // Wait for processing
-        Thread.sleep(7000)
+        // Wait for processing with retries
+        var payment = paymentRepository.findById(paymentId).get().toDomain()
+        var attempts = 0
+        while (payment.state == PaymentState.CREATED && attempts < 30) {
+            Thread.sleep(500)
+            payment = paymentRepository.findById(paymentId).get().toDomain()
+            attempts++
+        }
         
         // Verify payment state - should be AUTHORIZED (idempotency prevents duplicate processing)
-        val payment = paymentRepository.findById(paymentId).get().toDomain()
         assertThat(payment.state).isIn(PaymentState.AUTHORIZED, PaymentState.CONFIRMING)
         
         // Verify no duplicate ledger transactions (ledger client should not be called during processing)
@@ -298,7 +306,6 @@ class KafkaPaymentResilienceTest {
      * - No state corruption
      */
     @Test
-    @Transactional
     fun `handler exception should not corrupt state`() {
         val nonExistentPaymentId = UUID.randomUUID()
         val command = AuthorizePaymentCommand(
@@ -339,7 +346,6 @@ class KafkaPaymentResilienceTest {
      * - Final state is correct
      */
     @Test
-    @Transactional
     fun `message replay after partial processing should be idempotent`() {
         val command = AuthorizePaymentCommand(
             paymentId = paymentId,
@@ -350,21 +356,29 @@ class KafkaPaymentResilienceTest {
         // Send first command
         kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         
-        // Wait a bit for partial processing
-        Thread.sleep(2000)
-        
-        // Check intermediate state
-        val intermediatePayment = paymentRepository.findById(paymentId).get().toDomain()
+        // Wait for state to change from CREATED
+        var intermediatePayment = paymentRepository.findById(paymentId).get().toDomain()
+        var attempts = 0
+        while (intermediatePayment.state == PaymentState.CREATED && attempts < 20) {
+            Thread.sleep(500)
+            intermediatePayment = paymentRepository.findById(paymentId).get().toDomain()
+            attempts++
+        }
         logger.info("Intermediate state: ${intermediatePayment.state}")
         
         // Send same command again (simulating replay after consumer restart)
         kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         
-        // Wait for processing
-        Thread.sleep(5000)
+        // Wait for final processing
+        var finalPayment = paymentRepository.findById(paymentId).get().toDomain()
+        attempts = 0
+        while (finalPayment.state == PaymentState.CREATED && attempts < 20) {
+            Thread.sleep(500)
+            finalPayment = paymentRepository.findById(paymentId).get().toDomain()
+            attempts++
+        }
         
         // Verify final state
-        val finalPayment = paymentRepository.findById(paymentId).get().toDomain()
         assertThat(finalPayment.state).isIn(PaymentState.AUTHORIZED, PaymentState.CONFIRMING)
         
         // Verify no duplicate ledger transactions
@@ -386,7 +400,6 @@ class KafkaPaymentResilienceTest {
      * - No duplicate ledger transactions
      */
     @Test
-    @Transactional
     fun `ledger state should remain unchanged during Kafka processing`() {
         val initialBalance = initialLedgerBalance
         
@@ -399,8 +412,14 @@ class KafkaPaymentResilienceTest {
         // Send command
         kafkaTemplate.send("payment.commands", paymentId.toString(), command).get()
         
-        // Wait for processing
-        Thread.sleep(5000)
+        // Wait for processing with retries
+        var payment = paymentRepository.findById(paymentId).get().toDomain()
+        var attempts = 0
+        while (payment.state == PaymentState.CREATED && attempts < 20) {
+            Thread.sleep(500)
+            payment = paymentRepository.findById(paymentId).get().toDomain()
+            attempts++
+        }
         
         // Verify ledger balance is unchanged (authorization is workflow-only, ledger was already debited)
         val balanceAfter = ledgerClient.getBalance(customerAccountId)

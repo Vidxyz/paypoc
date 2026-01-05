@@ -268,4 +268,3 @@ Why? Because once async enters, reasoning becomes harder. We lock correctness **
 - **PostgreSQL**: For workflow state storage
 - **Spring Boot**: Framework
 - **Flyway**: Database migrations
-

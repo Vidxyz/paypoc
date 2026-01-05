@@ -37,12 +37,23 @@ ledger:
   service:
     url: http://localhost:8081
 
+# Internal API Configuration
+payments:
+  internal:
+    api:
+      token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
+
 # Kafka Topics Configuration
 kafka:
   topics:
     commands: payment.commands
     events: payment.events
     retry: payment.retry
+
+# Stripe Configuration
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY:sk_test_placeholder}  # Set via environment variable
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:}  # Set via environment variable for webhook signature verification
 
 server:
   port: 8080

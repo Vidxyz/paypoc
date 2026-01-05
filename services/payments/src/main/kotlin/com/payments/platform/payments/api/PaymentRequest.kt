@@ -2,7 +2,6 @@ package com.payments.platform.payments.api
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.payments.platform.payments.domain.Payment
-import com.payments.platform.payments.domain.PaymentState
 import io.swagger.v3.oas.annotations.media.Schema
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
@@ -15,16 +14,21 @@ import java.util.UUID
  */
 @Schema(description = "Request to create a new payment")
 data class CreatePaymentRequestDto(
-    @field:NotNull(message = "accountId is required")
-    @JsonProperty("accountId")
-    @Schema(description = "The customer account ID to debit from", example = "550e8400-e29b-41d4-a716-446655440000", required = true)
-    val accountId: UUID,
+    @field:NotBlank(message = "buyerId is required")
+    @JsonProperty("buyerId")
+    @Schema(description = "The buyer ID", example = "buyer_123", required = true)
+    val buyerId: String,
     
-    @field:NotNull(message = "amountCents is required")
-    @field:Positive(message = "amountCents must be positive")
-    @JsonProperty("amountCents")
-    @Schema(description = "Payment amount in cents. Must be positive.", example = "1000", required = true)
-    val amountCents: Long,
+    @field:NotBlank(message = "sellerId is required")
+    @JsonProperty("sellerId")
+    @Schema(description = "The seller ID", example = "seller_456", required = true)
+    val sellerId: String,
+    
+    @field:NotNull(message = "grossAmountCents is required")
+    @field:Positive(message = "grossAmountCents must be positive")
+    @JsonProperty("grossAmountCents")
+    @Schema(description = "Total payment amount in cents (before platform fee). Must be positive.", example = "10000", required = true)
+    val grossAmountCents: Long,
     
     @field:NotBlank(message = "currency is required")
     @field:Pattern(regexp = "^[A-Z]{3}$", message = "currency must be 3 uppercase letters")
@@ -45,8 +49,20 @@ data class PaymentResponseDto(
     @Schema(description = "Unique payment ID", example = "660e8400-e29b-41d4-a716-446655440000")
     val id: UUID? = null,
     
-    @Schema(description = "Payment amount in cents", example = "1000")
-    val amountCents: Long? = null,
+    @Schema(description = "Buyer ID", example = "buyer_123")
+    val buyerId: String? = null,
+    
+    @Schema(description = "Seller ID", example = "seller_456")
+    val sellerId: String? = null,
+    
+    @Schema(description = "Total payment amount in cents (gross)", example = "10000")
+    val grossAmountCents: Long? = null,
+    
+    @Schema(description = "Platform fee in cents (10% of gross)", example = "1000")
+    val platformFeeCents: Long? = null,
+    
+    @Schema(description = "Net seller amount in cents (90% of gross)", example = "9000")
+    val netSellerAmountCents: Long? = null,
     
     @Schema(description = "ISO 4217 currency code", example = "USD")
     val currency: String? = null,
@@ -54,7 +70,13 @@ data class PaymentResponseDto(
     @Schema(description = "Payment state (CREATED, CONFIRMING, AUTHORIZED, CAPTURED, FAILED)", example = "CREATED")
     val state: String? = null,
     
-    @Schema(description = "Reference to the ledger transaction (ledger is source of truth)", example = "770e8400-e29b-41d4-a716-446655440000")
+    @Schema(description = "Stripe PaymentIntent ID", example = "pi_1234567890")
+    val stripePaymentIntentId: String? = null,
+    
+    @Schema(description = "Stripe client secret for confirming payment on frontend", example = "pi_1234567890_secret_abc123")
+    val clientSecret: String? = null,
+    
+    @Schema(description = "Reference to the ledger transaction (NULL until capture, ledger is source of truth)", example = "770e8400-e29b-41d4-a716-446655440000")
     val ledgerTransactionId: UUID? = null,
     
     @Schema(description = "Idempotency key for this payment", example = "payment_660e8400_1234567890")
@@ -66,16 +88,22 @@ data class PaymentResponseDto(
     @Schema(description = "Payment last update timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
     val updatedAt: String? = null,
     
-    @Schema(description = "Error message if the request failed", example = "Payment creation failed: Ledger rejected transaction. Insufficient funds...")
+    @Schema(description = "Error message if the request failed", example = "Payment creation failed: Invalid request")
     val error: String? = null
 ) {
     companion object {
-        fun fromDomain(payment: Payment): PaymentResponseDto {
+        fun fromDomain(payment: Payment, clientSecret: String? = null): PaymentResponseDto {
             return PaymentResponseDto(
                 id = payment.id,
-                amountCents = payment.amountCents,
+                buyerId = payment.buyerId,
+                sellerId = payment.sellerId,
+                grossAmountCents = payment.grossAmountCents,
+                platformFeeCents = payment.platformFeeCents,
+                netSellerAmountCents = payment.netSellerAmountCents,
                 currency = payment.currency,
                 state = payment.state.name,
+                stripePaymentIntentId = payment.stripePaymentIntentId,
+                clientSecret = clientSecret,
                 ledgerTransactionId = payment.ledgerTransactionId,
                 idempotencyKey = payment.idempotencyKey,
                 createdAt = payment.createdAt.toString(),
@@ -102,4 +130,3 @@ data class BalanceResponseDto(
     @Schema(description = "Error message if the request failed", example = "Failed to get balance from ledger: Account not found")
     val error: String? = null
 )
-

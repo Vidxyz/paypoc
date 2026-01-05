@@ -3,37 +3,29 @@ package com.payments.platform.ledger.domain
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Ledger account for double-entry bookkeeping.
+ * 
+ * Accounts represent economic buckets (not bank accounts):
+ * - STRIPE_CLEARING: Money received from Stripe
+ * - SELLER_PAYABLE: Money owed to sellers (reference_id = seller_id)
+ * - BUYIT_REVENUE: Platform commission
+ * - etc.
+ */
 data class Account(
-    val accountId: UUID,  // Maps to 'id' column in database
-    val type: AccountType,
+    val id: UUID,
+    val accountType: AccountType,
+    val referenceId: String?,  // e.g., seller_id for SELLER_PAYABLE accounts
     val currency: String,
-    val status: AccountStatus,
-    val metadata: Map<String, Any>?,
     val createdAt: Instant
 )
 
 enum class AccountType {
-    CUSTOMER,
-    MERCHANT,
-    PSP_CLEARING,
-    FEE,
-    REFUND
+    STRIPE_CLEARING,
+    SELLER_PAYABLE,
+    BUYIT_REVENUE,
+    FEES_EXPENSE,
+    REFUNDS_CLEARING,
+    CHARGEBACK_CLEARING,
+    BUYER_EXTERNAL  // Logical account, not real balance
 }
-
-enum class AccountStatus {
-    ACTIVE,
-    INACTIVE,
-    SUSPENDED,
-    CLOSED
-}
-
-data class AccountMetadata(
-    val accountId: UUID,
-    val userId: String?,
-    val userEmail: String?,
-    val displayName: String?,
-    val metadata: Map<String, Any>?,
-    val createdAt: Instant,
-    val updatedAt: Instant
-)
-

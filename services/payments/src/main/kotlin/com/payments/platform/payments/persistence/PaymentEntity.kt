@@ -17,8 +17,20 @@ class PaymentEntity(
     @Column(name = "id")
     val id: UUID,
     
-    @Column(name = "amount_cents", nullable = false)
-    val amountCents: Long,
+    @Column(name = "buyer_id", nullable = false)
+    val buyerId: String,
+    
+    @Column(name = "seller_id", nullable = false)
+    val sellerId: String,
+    
+    @Column(name = "gross_amount_cents", nullable = false)
+    val grossAmountCents: Long,
+    
+    @Column(name = "platform_fee_cents", nullable = false)
+    val platformFeeCents: Long,
+    
+    @Column(name = "net_seller_amount_cents", nullable = false)
+    val netSellerAmountCents: Long,
     
     @Column(name = "currency", nullable = false)
     val currency: String,
@@ -27,8 +39,11 @@ class PaymentEntity(
     @Column(name = "state", nullable = false)
     val state: PaymentState,
     
-    @Column(name = "ledger_transaction_id", nullable = false)
-    val ledgerTransactionId: UUID,
+    @Column(name = "stripe_payment_intent_id")
+    val stripePaymentIntentId: String?,
+    
+    @Column(name = "ledger_transaction_id")
+    val ledgerTransactionId: UUID?,  // NULL until capture
     
     @Column(name = "idempotency_key", nullable = false, unique = true)
     val idempotencyKey: String,
@@ -42,10 +57,15 @@ class PaymentEntity(
     // JPA requires no-arg constructor
     constructor() : this(
         id = UUID.randomUUID(),
-        amountCents = 0,
+        buyerId = "",
+        sellerId = "",
+        grossAmountCents = 0,
+        platformFeeCents = 0,
+        netSellerAmountCents = 0,
         currency = "",
         state = PaymentState.CREATED,
-        ledgerTransactionId = UUID.randomUUID(),
+        stripePaymentIntentId = null,
+        ledgerTransactionId = null,
         idempotencyKey = "",
         createdAt = Instant.now(),
         updatedAt = Instant.now()
@@ -54,9 +74,14 @@ class PaymentEntity(
     fun toDomain(): Payment {
         return Payment(
             id = id,
-            amountCents = amountCents,
+            buyerId = buyerId,
+            sellerId = sellerId,
+            grossAmountCents = grossAmountCents,
+            platformFeeCents = platformFeeCents,
+            netSellerAmountCents = netSellerAmountCents,
             currency = currency,
             state = state,
+            stripePaymentIntentId = stripePaymentIntentId,
             ledgerTransactionId = ledgerTransactionId,
             idempotencyKey = idempotencyKey,
             createdAt = createdAt,
@@ -68,9 +93,14 @@ class PaymentEntity(
         fun fromDomain(payment: Payment): PaymentEntity {
             return PaymentEntity(
                 id = payment.id,
-                amountCents = payment.amountCents,
+                buyerId = payment.buyerId,
+                sellerId = payment.sellerId,
+                grossAmountCents = payment.grossAmountCents,
+                platformFeeCents = payment.platformFeeCents,
+                netSellerAmountCents = payment.netSellerAmountCents,
                 currency = payment.currency,
                 state = payment.state,
+                stripePaymentIntentId = payment.stripePaymentIntentId,
                 ledgerTransactionId = payment.ledgerTransactionId,
                 idempotencyKey = payment.idempotencyKey,
                 createdAt = payment.createdAt,
@@ -79,4 +109,3 @@ class PaymentEntity(
         }
     }
 }
-

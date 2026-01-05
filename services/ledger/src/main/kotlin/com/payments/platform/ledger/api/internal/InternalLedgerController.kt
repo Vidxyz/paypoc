@@ -1,6 +1,7 @@
 package com.payments.platform.ledger.api.internal
 
 import com.payments.platform.ledger.domain.Account
+import com.payments.platform.ledger.domain.AccountType
 import com.payments.platform.ledger.service.LedgerService
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.beans.factory.annotation.Value
@@ -51,40 +52,28 @@ class InternalLedgerController(
         }
 
         return try {
-            val accountType = if (request.type != null) {
-                try {
-                    com.payments.platform.ledger.domain.AccountType.valueOf(request.type)
-                } catch (e: IllegalArgumentException) {
-                    throw IllegalArgumentException("Invalid account type: ${request.type}. Must be one of: CUSTOMER, MERCHANT, PSP_CLEARING, FEE, REFUND")
-                }
-            } else {
-                com.payments.platform.ledger.domain.AccountType.CUSTOMER
-            }
-            
-            val accountStatus = if (request.status != null) {
-                try {
-                    com.payments.platform.ledger.domain.AccountStatus.valueOf(request.status)
-                } catch (e: IllegalArgumentException) {
-                    throw IllegalArgumentException("Invalid account status: ${request.status}. Must be one of: ACTIVE, INACTIVE, SUSPENDED, CLOSED")
-                }
-            } else {
-                com.payments.platform.ledger.domain.AccountStatus.ACTIVE
+            val accountType = try {
+                AccountType.valueOf(request.accountType)
+            } catch (e: IllegalArgumentException) {
+                throw IllegalArgumentException(
+                    "Invalid account type: ${request.accountType}. " +
+                    "Must be one of: ${AccountType.values().joinToString(", ")}"
+                )
             }
             
             val account = ledgerService.createAccount(
                 accountId = request.accountId ?: UUID.randomUUID(),
-                type = accountType,
-                currency = request.currency,
-                status = accountStatus,
-                metadata = request.metadata
+                accountType = accountType,
+                referenceId = request.referenceId,
+                currency = request.currency
             )
+            
             ResponseEntity.status(HttpStatus.CREATED).body(
                 AccountResponse(
-                    accountId = account.accountId,
-                    type = account.type.name,
+                    accountId = account.id,
+                    accountType = account.accountType.name,
+                    referenceId = account.referenceId,
                     currency = account.currency,
-                    status = account.status.name,
-                    metadata = account.metadata,
                     createdAt = account.createdAt.toString()
                 )
             )
@@ -97,7 +86,9 @@ class InternalLedgerController(
 
     /**
      * DELETE /internal/accounts/{accountId}
-     * Deletes an account and all associated transactions.
+     * Deletes an account.
+     * 
+     * Note: This will fail if there are associated ledger entries (foreign key constraint).
      * 
      * Requires: Authorization: Bearer {token}
      */
@@ -112,34 +103,32 @@ class InternalLedgerController(
         }
 
         return try {
-            ledgerService.deleteAccount(accountId)
-            ResponseEntity.ok(AccountResponse(message = "Account deleted successfully"))
+            // Note: We don't have a deleteAccount method in LedgerService yet
+            // For now, return an error. This can be implemented later if needed.
+            ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(
+                AccountResponse(error = "Account deletion not yet implemented")
+            )
         } catch (e: IllegalArgumentException) {
             ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 AccountResponse(error = "Account not found: ${e.message}")
             )
         }
     }
-
 }
 
 data class CreateAccountRequest(
     val accountId: UUID? = null,  // If null, will be generated
-    val type: String? = null,  // CUSTOMER, MERCHANT, PSP_CLEARING, FEE, REFUND
-    val currency: String,
-    val status: String? = null,  // ACTIVE, INACTIVE, SUSPENDED, CLOSED
-    val metadata: Map<String, Any>? = null
+    val accountType: String,  // STRIPE_CLEARING, SELLER_PAYABLE, BUYIT_REVENUE, etc.
+    val referenceId: String? = null,  // e.g., seller_id for SELLER_PAYABLE
+    val currency: String
 )
 
 data class AccountResponse(
     val accountId: UUID? = null,
-    val type: String? = null,
+    val accountType: String? = null,
+    val referenceId: String? = null,
     val currency: String? = null,
-    val status: String? = null,
-    val metadata: Map<String, Any>? = null,
     val createdAt: String? = null,
     val message: String? = null,
     val error: String? = null
 )
-
-

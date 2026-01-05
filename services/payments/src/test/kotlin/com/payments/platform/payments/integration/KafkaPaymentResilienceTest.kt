@@ -1,6 +1,7 @@
 package com.payments.platform.payments.integration
 
 import com.payments.platform.payments.client.LedgerClient
+import com.payments.platform.payments.integration.TestHelper
 import com.payments.platform.payments.client.dto.LedgerBalanceResponse
 import com.payments.platform.payments.client.dto.LedgerTransactionResponse
 import com.payments.platform.payments.domain.PaymentState
@@ -57,6 +58,9 @@ import java.util.UUID
         "spring.datasource.password=postgres",
         "spring.kafka.bootstrap-servers=\${spring.embedded.kafka.brokers}",
         "ledger.service.url=http://localhost:8081",
+        "payments.internal.api.token=internal-test-token-change-in-production",
+        "stripe.secret-key=sk_test_placeholder",
+        "stripe.webhook-secret=",
         "kafka.topics.commands=payment.commands",
         "kafka.topics.events=payment.events",
         "kafka.topics.retry=payment.retry"
@@ -84,11 +88,17 @@ class KafkaPaymentResilienceTest {
     @Autowired
     private lateinit var restTemplate: TestRestTemplate
 
+    private val buyerId = "test_buyer_kafka_123"
+    private val sellerId = "test_seller_kafka_456"
+    private val testStripeAccountId = "acct_test_kafka_1234567890"
+    
     private lateinit var customerAccountId: UUID
     private lateinit var paymentId: UUID
     private lateinit var idempotencyKey: String
     private var initialLedgerBalance: Long = 0L
     private val ledgerTransactionId = UUID.randomUUID()
+    
+    private val paymentsInternalApiToken = System.getenv("PAYMENTS_INTERNAL_API_TOKEN") ?: "internal-test-token-change-in-production"
 
     companion object {
         private const val TEST_DB_NAME = "payments_test"
@@ -158,8 +168,19 @@ class KafkaPaymentResilienceTest {
 
     @BeforeEach
     fun setUp() {
-        // Clear all payments
+        // Clear all payments and seller_stripe_accounts
         paymentRepository.deleteAll()
+        jdbcTemplate.update("DELETE FROM seller_stripe_accounts")
+        
+        // Register seller Stripe account (required before creating payments)
+        TestHelper.registerSellerStripeAccount(
+            restTemplate = restTemplate,
+            port = port,
+            sellerId = sellerId,
+            stripeAccountId = testStripeAccountId,
+            currency = "USD",
+            internalApiToken = paymentsInternalApiToken
+        )
         
         // Create test account ID
         customerAccountId = UUID.randomUUID()
@@ -192,18 +213,40 @@ class KafkaPaymentResilienceTest {
             )
         
         // Create a payment record in CREATED state (simulating payment creation via API)
+        // Using new Payment schema with buyerId, sellerId, grossAmountCents, etc.
         paymentId = UUID.randomUUID()
+        val grossAmountCents = 10000L  // $100.00
+        val platformFeeCents = 1000L   // 10% platform fee
+        val netSellerAmountCents = 9000L  // 90% to seller
+        
         val payment = PaymentEntity(
             id = paymentId,
-            amountCents = 1000L,
+            buyerId = buyerId,
+            sellerId = sellerId,
+            grossAmountCents = grossAmountCents,
+            platformFeeCents = platformFeeCents,
+            netSellerAmountCents = netSellerAmountCents,
             currency = "USD",
             state = PaymentState.CREATED,
-            ledgerTransactionId = ledgerTransactionId,
+            stripePaymentIntentId = "pi_test_${paymentId}",
+            ledgerTransactionId = null,  // NULL until capture (ledger write happens after Stripe webhook)
             idempotencyKey = idempotencyKey,
             createdAt = java.time.Instant.now(),
             updatedAt = java.time.Instant.now()
         )
         paymentRepository.save(payment)
+    }
+    
+    @org.junit.jupiter.api.AfterEach
+    fun tearDown() {
+        // Clean up seller Stripe account
+        TestHelper.deleteSellerStripeAccount(
+            restTemplate = restTemplate,
+            port = port,
+            sellerId = sellerId,
+            currency = "USD",
+            internalApiToken = paymentsInternalApiToken
+        )
     }
 
     /**

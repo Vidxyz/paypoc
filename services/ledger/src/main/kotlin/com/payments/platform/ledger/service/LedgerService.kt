@@ -1,13 +1,8 @@
 package com.payments.platform.ledger.service
 
-import com.payments.platform.ledger.domain.Account
-import com.payments.platform.ledger.domain.AccountStatus
-import com.payments.platform.ledger.domain.AccountType
-import com.payments.platform.ledger.domain.Balance
-import com.payments.platform.ledger.domain.CreateTransactionRequest
-import com.payments.platform.ledger.domain.Transaction
-import com.payments.platform.ledger.repository.InsufficientFundsException
+import com.payments.platform.ledger.domain.*
 import com.payments.platform.ledger.repository.LedgerRepository
+import com.payments.platform.ledger.repository.UnbalancedTransactionException
 import org.springframework.stereotype.Service
 import java.util.UUID
 
@@ -16,44 +11,25 @@ class LedgerService(
     private val ledgerRepository: LedgerRepository
 ) {
     /**
-     * Creates a ledger transaction.
+     * Creates a double-entry ledger transaction.
+     * 
      * Enforces all invariants:
      * - Atomicity (via database transaction)
-     * - No overdrafts (balance check)
-     * - Idempotency (unique constraint)
+     * - Balanced transaction (sum of debits = sum of credits)
+     * - Idempotency (unique constraint on idempotency_key)
      * - Correctness under concurrency (SERIALIZABLE isolation)
+     * 
+     * @param request Double-entry transaction request
+     * @return Created transaction
+     * @throws UnbalancedTransactionException if transaction doesn't balance
      */
-    fun createTransaction(request: CreateTransactionRequest): Transaction {
-        // Validate amount is non-zero (database constraint also enforces this)
-        require(request.amountCents != 0L) { "Amount must be non-zero" }
-
-        // Validate currency format (database constraint also enforces this)
-        require(request.currency.matches(Regex("^[A-Z]{3}$"))) {
-            "Currency must be 3 uppercase letters (ISO 4217 format)"
-        }
-
-        // Generate transaction ID
-        val transactionId = UUID.randomUUID()
-
-        return try {
-            ledgerRepository.createTransaction(
-                transactionId = transactionId,
-                accountId = request.accountId,
-                amountCents = request.amountCents,
-                currency = request.currency,
-                idempotencyKey = request.idempotencyKey,
-                description = request.description
-            )
-        } catch (e: InsufficientFundsException) {
-            throw InsufficientFundsException(
-                "Cannot create transaction: ${e.message}"
-            )
-        }
+    fun createDoubleEntryTransaction(request: CreateDoubleEntryTransactionRequest): Transaction {
+        return ledgerRepository.createDoubleEntryTransaction(request)
     }
 
     /**
      * Gets the balance for an account.
-     * Balance is derived by summing all transactions for the account.
+     * Balance is derived by summing all entries: DEBIT entries - CREDIT entries
      */
     fun getBalance(accountId: UUID): Balance {
         return ledgerRepository.getBalance(accountId)
@@ -63,29 +39,47 @@ class LedgerService(
      * Creates a new account in the ledger.
      * 
      * @param accountId The account ID
-     * @param type The account type
+     * @param accountType The account type
+     * @param referenceId Optional reference ID (e.g., seller_id for SELLER_PAYABLE)
      * @param currency The currency code (ISO 4217, 3 uppercase letters)
-     * @param status The account status (defaults to ACTIVE)
-     * @param metadata Optional metadata as JSON
      * @return The created account
      */
     fun createAccount(
         accountId: UUID,
-        type: AccountType,
-        currency: String,
-        status: AccountStatus = AccountStatus.ACTIVE,
-        metadata: Map<String, Any>? = null
+        accountType: AccountType,
+        referenceId: String?,
+        currency: String
     ): Account {
-        return ledgerRepository.createAccount(accountId, type, currency, status, metadata)
+        return ledgerRepository.createAccount(accountId, accountType, referenceId, currency)
     }
 
     /**
-     * Deletes an account and all associated transactions.
-     * 
-     * @param accountId The account ID to delete
+     * Finds an account by ID.
      */
-    fun deleteAccount(accountId: UUID) {
-        ledgerRepository.deleteAccount(accountId)
+    fun findAccountById(accountId: UUID): Account? {
+        return ledgerRepository.findAccountById(accountId)
+    }
+
+    /**
+     * Finds an account by type and reference ID.
+     * 
+     * @param accountType The account type
+     * @param referenceId The reference ID (e.g., seller_id for SELLER_PAYABLE)
+     * @param currency The currency
+     * @return The account if found, null otherwise
+     */
+    fun findAccountByTypeAndReference(
+        accountType: AccountType,
+        referenceId: String?,
+        currency: String
+    ): Account? {
+        return ledgerRepository.findAccountByTypeAndReference(accountType, referenceId, currency)
+    }
+
+    /**
+     * Gets all entries for a transaction (for auditing/reconciliation).
+     */
+    fun getTransactionEntries(transactionId: UUID): List<LedgerEntry> {
+        return ledgerRepository.getTransactionEntries(transactionId)
     }
 }
-

@@ -39,7 +39,7 @@ class PaymentStateMachine {
     
     /**
      * Checks if a transition is valid without throwing.
-     */
+    */
     fun isValidTransition(from: PaymentState, to: PaymentState): Boolean {
         return allowedTransitions[from]?.contains(to) == true
     }

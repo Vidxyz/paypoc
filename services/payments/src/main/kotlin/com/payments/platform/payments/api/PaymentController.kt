@@ -2,7 +2,6 @@ package com.payments.platform.payments.api
 
 import com.payments.platform.payments.client.LedgerClient
 import com.payments.platform.payments.client.LedgerClientException
-import com.payments.platform.payments.service.PaymentCreationException
 import com.payments.platform.payments.service.PaymentService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
@@ -29,15 +28,20 @@ class PaymentController(
      * Creates a new payment.
      * 
      * This endpoint orchestrates the payment workflow:
-     * 1. Calls ledger FIRST (ledger-first approach)
-     * 2. If ledger succeeds, creates payment record
-     * 3. If ledger fails, returns error (no payment record)
+     * 1. Looks up seller's Stripe account from database (based on sellerId and currency)
+     * 2. Creates Stripe PaymentIntent with marketplace split
+     * 3. Creates payment record (NO ledger write - money hasn't moved yet)
+     * 4. Publishes AuthorizePayment command to Kafka
+     * 5. Returns payment with client_secret (client doesn't wait for Stripe/Kafka processing)
      * 
-     * This ensures: "If payment exists, money exists"
+     * Ledger write happens AFTER Stripe webhook confirms capture.
+     * 
+     * Note: The seller's Stripe account must be configured via the internal API before
+     * payments can be processed for that seller.
      */
     @Operation(
         summary = "Create a payment",
-        description = "Creates a new payment using ledger-first approach. Calls the Ledger Service BEFORE creating a payment record. If ledger rejects (e.g., insufficient funds), no payment record is created."
+        description = "Creates a new payment and Stripe PaymentIntent. The seller's Stripe account is automatically looked up from the database based on sellerId and currency. NO ledger write at this stage - money hasn't moved yet. Returns client_secret for frontend payment confirmation. Ledger write happens after Stripe webhook confirms capture."
     )
     @ApiResponses(
         value = [
@@ -48,7 +52,7 @@ class PaymentController(
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "Payment creation failed (ledger rejected, validation error)",
+                description = "Payment creation failed (validation error)",
                 content = [Content(schema = Schema(implementation = PaymentResponseDto::class))]
             )
         ]
@@ -58,20 +62,20 @@ class PaymentController(
         @Valid @RequestBody request: CreatePaymentRequestDto
     ): ResponseEntity<PaymentResponseDto> {
         return try {
-            val payment = paymentService.createPayment(
+            val createPaymentResponse = paymentService.createPayment(
                 com.payments.platform.payments.service.CreatePaymentRequest(
-                    accountId = request.accountId,
-                    amountCents = request.amountCents,
+                    buyerId = request.buyerId,
+                    sellerId = request.sellerId,
+                    grossAmountCents = request.grossAmountCents,
                     currency = request.currency,
                     description = request.description
                 )
             )
             
             ResponseEntity.status(HttpStatus.CREATED).body(
-                PaymentResponseDto.fromDomain(payment)
+                PaymentResponseDto.fromDomain(createPaymentResponse.payment, createPaymentResponse.clientSecret)
             )
-        } catch (e: PaymentCreationException) {
-            // Ledger rejected - return 400
+        } catch (e: com.payments.platform.payments.service.PaymentCreationException) {
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 PaymentResponseDto(
                     error = "Payment creation failed: ${e.message}"
@@ -167,4 +171,3 @@ class PaymentController(
         }
     }
 }
-

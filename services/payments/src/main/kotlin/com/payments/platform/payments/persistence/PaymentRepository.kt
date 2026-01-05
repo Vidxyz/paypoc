@@ -7,5 +7,6 @@ import java.util.UUID
 @Repository
 interface PaymentRepository : JpaRepository<PaymentEntity, UUID> {
     fun findByIdempotencyKey(idempotencyKey: String): PaymentEntity?
+    fun findByStripePaymentIntentId(stripePaymentIntentId: String): PaymentEntity?
 }
 

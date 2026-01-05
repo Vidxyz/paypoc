@@ -1,7 +1,9 @@
 package com.payments.platform.ledger.api
 
-import com.payments.platform.ledger.domain.CreateTransactionRequest
-import com.payments.platform.ledger.repository.InsufficientFundsException
+import com.payments.platform.ledger.domain.CreateDoubleEntryTransactionRequest
+import com.payments.platform.ledger.domain.EntryDirection
+import com.payments.platform.ledger.domain.EntryRequest
+import com.payments.platform.ledger.repository.UnbalancedTransactionException
 import com.payments.platform.ledger.service.LedgerService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
@@ -19,21 +21,21 @@ import java.util.UUID
 @RequestMapping("/ledger")
 @Tag(name = "Ledger", description = "Ledger Service API - System of record for financial transactions")
 class LedgerController(
-private val ledgerService: LedgerService
+    private val ledgerService: LedgerService
 ) {
     /**
      * POST /ledger/transactions
-     * Creates a new ledger transaction.
+     * Creates a new double-entry ledger transaction.
      * 
      * Enforces:
-     * - Atomicity
-     * - No overdrafts
+     * - Atomicity (all entries created in single DB transaction)
+     * - Balanced transaction (sum of debits = sum of credits)
      * - Idempotency
      * - Correctness under concurrency
      */
     @Operation(
-        summary = "Create a ledger transaction",
-        description = "Creates a new transaction in the ledger. Enforces atomicity, no overdrafts, idempotency, and correctness under concurrency using SERIALIZABLE isolation."
+        summary = "Create a double-entry ledger transaction",
+        description = "Creates a new double-entry transaction in the ledger. All entries must balance (sum of debits = sum of credits). Enforces atomicity, idempotency, and correctness under concurrency using SERIALIZABLE isolation."
     )
     @ApiResponses(
         value = [
@@ -44,46 +46,47 @@ private val ledgerService: LedgerService
             ),
             ApiResponse(
                 responseCode = "400",
-                description = "Invalid request (validation error, account not found, currency mismatch)",
-                content = [Content(schema = Schema(implementation = TransactionResponseDto::class))]
-            ),
-            ApiResponse(
-                responseCode = "422",
-                description = "Insufficient funds (overdraft attempt)",
+                description = "Invalid request (validation error, unbalanced transaction, account not found)",
                 content = [Content(schema = Schema(implementation = TransactionResponseDto::class))]
             )
         ]
     )
     @PostMapping("/transactions")
     fun createTransaction(
-        @Valid @RequestBody request: CreateTransactionRequestDto
+        @Valid @RequestBody request: CreateDoubleEntryTransactionRequestDto
     ): ResponseEntity<TransactionResponseDto> {
         return try {
-            val transaction = ledgerService.createTransaction(
-                CreateTransactionRequest(
-                    accountId = request.accountId,
-                    amountCents = request.amountCents,
-                    currency = request.currency,
+            val entryRequests = request.entries.map { entryDto ->
+                EntryRequest(
+                    accountId = entryDto.accountId,
+                    direction = EntryDirection.valueOf(entryDto.direction),
+                    amountCents = entryDto.amountCents,
+                    currency = entryDto.currency
+                )
+            }
+            
+            val transaction = ledgerService.createDoubleEntryTransaction(
+                CreateDoubleEntryTransactionRequest(
+                    referenceId = request.referenceId,
                     idempotencyKey = request.idempotencyKey,
-                    description = request.description
+                    description = request.description,
+                    entries = entryRequests
                 )
             )
 
             ResponseEntity.status(HttpStatus.CREATED).body(
                 TransactionResponseDto(
-                    transactionId = transaction.transactionId,
-                    accountId = transaction.accountId,
-                    amountCents = transaction.amountCents,
-                    currency = transaction.currency,
+                    transactionId = transaction.id,
+                    referenceId = transaction.referenceId,
                     idempotencyKey = transaction.idempotencyKey,
                     description = transaction.description,
                     createdAt = transaction.createdAt.toString()
                 )
             )
-        } catch (e: InsufficientFundsException) {
-            ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(
+        } catch (e: UnbalancedTransactionException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 TransactionResponseDto(
-                    error = "Insufficient funds: ${e.message}"
+                    error = "Unbalanced transaction: ${e.message}"
                 )
             )
         } catch (e: IllegalArgumentException) {
@@ -98,11 +101,11 @@ private val ledgerService: LedgerService
     /**
      * GET /ledger/accounts/{accountId}/balance
      * Gets the balance for an account.
-     * Balance is derived by summing all transactions.
+     * Balance = sum of DEBIT entries - sum of CREDIT entries
      */
     @Operation(
         summary = "Get account balance",
-        description = "Retrieves the current balance for an account by summing all transactions. Safe and explainable under SERIALIZABLE isolation."
+        description = "Retrieves the current balance for an account. Balance = sum of DEBIT entries - sum of CREDIT entries. Safe and explainable under SERIALIZABLE isolation."
     )
     @ApiResponses(
         value = [
@@ -144,30 +147,68 @@ private val ledgerService: LedgerService
     }
 }
 
+@Schema(description = "Double-entry transaction request")
+data class CreateDoubleEntryTransactionRequestDto(
+    @Schema(description = "External reference ID (e.g., Stripe paymentIntent ID)", example = "pi_1234567890")
+    val referenceId: String,
+    
+    @Schema(description = "Idempotency key to prevent duplicate processing", example = "payment_abc_123")
+    val idempotencyKey: String,
+    
+    @Schema(description = "Human-readable description", example = "Payment capture: $100.00")
+    val description: String,
+    
+    @Schema(description = "List of ledger entries (must balance: sum of debits = sum of credits)")
+    val entries: List<EntryDto>
+)
+
+@Schema(description = "Ledger entry")
+data class EntryDto(
+    @Schema(description = "Account ID", example = "550e8400-e29b-41d4-a716-446655440000")
+    val accountId: UUID,
+    
+    @Schema(description = "Entry direction: DEBIT or CREDIT", example = "DEBIT")
+    val direction: String,
+    
+    @Schema(description = "Amount in cents (always positive)", example = "10000")
+    val amountCents: Long,
+    
+    @Schema(description = "ISO 4217 currency code", example = "USD")
+    val currency: String
+)
+
 @Schema(description = "Transaction response")
 data class TransactionResponseDto(
     @Schema(description = "Unique transaction ID", example = "660e8400-e29b-41d4-a716-446655440000")
     val transactionId: UUID? = null,
     
-    @Schema(description = "The account ID", example = "550e8400-e29b-41d4-a716-446655440000")
-    val accountId: UUID? = null,
+    @Schema(description = "External reference ID", example = "pi_1234567890")
+    val referenceId: String? = null,
     
-    @Schema(description = "Amount in cents. Positive for credits, negative for debits.", example = "-2500")
-    val amountCents: Long? = null,
-    
-    @Schema(description = "ISO 4217 currency code", example = "USD")
-    val currency: String? = null,
-    
-    @Schema(description = "Idempotency key used for this transaction", example = "refund_abc_123")
+    @Schema(description = "Idempotency key used for this transaction", example = "payment_abc_123")
     val idempotencyKey: String? = null,
     
-    @Schema(description = "Transaction description", example = "Refund for order #123")
+    @Schema(description = "Transaction description", example = "Payment capture: $100.00")
     val description: String? = null,
     
     @Schema(description = "Transaction creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
     val createdAt: String? = null,
     
-    @Schema(description = "Error message if the request failed", example = "Insufficient funds: Current balance: 1000 cents, attempted transaction: -2000 cents")
+    @Schema(description = "Error message if the request failed")
     val error: String? = null
 )
 
+@Schema(description = "Balance response")
+data class BalanceResponseDto(
+    @Schema(description = "Account ID", example = "550e8400-e29b-41d4-a716-446655440000")
+    val accountId: UUID,
+    
+    @Schema(description = "ISO 4217 currency code", example = "USD")
+    val currency: String,
+    
+    @Schema(description = "Balance in cents", example = "125000")
+    val balanceCents: Long,
+    
+    @Schema(description = "Error message if the request failed")
+    val error: String? = null
+)

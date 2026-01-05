@@ -83,12 +83,24 @@ data class PaymentFailedEvent(
     override val payload: Map<String, Any> = emptyMap()
 ) : PaymentMessage(eventId, paymentId, idempotencyKey, "PAYMENT_FAILED", attempt, createdAt, payload)
 
+/**
+ * PaymentCapturedEvent - published after Stripe webhook confirms payment capture.
+ * 
+ * This event triggers the ledger write (double-entry bookkeeping).
+ * Contains all information needed for ledger entry creation.
+ */
 data class PaymentCapturedEvent(
     override val eventId: UUID = UUID.randomUUID(),
     override val paymentId: UUID,
     override val idempotencyKey: String,
+    val buyerId: String,
+    val sellerId: String,
+    val grossAmountCents: Long,
+    val platformFeeCents: Long,
+    val netSellerAmountCents: Long,
+    val currency: String,
+    val stripePaymentIntentId: String,
     override val attempt: Int = 1,
     override val createdAt: Instant = Instant.now(),
     override val payload: Map<String, Any> = emptyMap()
 ) : PaymentMessage(eventId, paymentId, idempotencyKey, "PAYMENT_CAPTURED", attempt, createdAt, payload)
-

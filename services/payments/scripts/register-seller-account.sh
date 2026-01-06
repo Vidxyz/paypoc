@@ -15,7 +15,7 @@
 set -e
 
 # Configuration
-PAYMENTS_SERVICE_URL="${PAYMENTS_SERVICE_URL:-http://localhost:8080}"
+PAYMENTS_SERVICE_URL="${PAYMENTS_SERVICE_URL:-http://payments.local}"
 INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:-internal-test-token-change-in-production}"
 
 # Parse arguments

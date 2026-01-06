@@ -36,6 +36,16 @@ spec:
             secretKeyRef:
               name: payments-secrets
               key: DB_PASSWORD
+        - name: STRIPE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: STRIPE_SECRET_KEY
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: STRIPE_WEBHOOK_SECRET
         - name: SPRING_CONFIG_LOCATION
           value: "classpath:/application.yml,file:/config/application.yml"
         volumeMounts:

@@ -20,7 +20,7 @@ STRIPE_API_KEY="${STRIPE_API_KEY:-}"
 # Test card details (Stripe test card for successful payment)
 TEST_CARD_NUMBER="4242424242424242"
 TEST_CARD_EXP_MONTH="12"
-TEST_CARD_EXP_YEAR="2025"
+TEST_CARD_EXP_YEAR="2028"
 TEST_CARD_CVC="123"
 
 # Parse arguments
@@ -94,11 +94,18 @@ PAYMENT_METHOD_RESPONSE=$(curl -s -X POST https://api.stripe.com/v1/payment_meth
     -d "card[exp_year]=$TEST_CARD_EXP_YEAR" \
     -d "card[cvc]=$TEST_CARD_CVC")
 
-PAYMENT_METHOD_ID=$(echo "$PAYMENT_METHOD_RESPONSE" | grep -o '"id":"pm_[^"]*"' | cut -d'"' -f4)
+PAYMENT_METHOD_ID=$(echo "$PAYMENT_METHOD_RESPONSE" | jq -r '.id // empty')
 
 if [ -z "$PAYMENT_METHOD_ID" ]; then
     echo "✗ Failed to create payment method"
-    echo "$PAYMENT_METHOD_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 || echo "$PAYMENT_METHOD_RESPONSE"
+    echo "Payment method ID: $PAYMENT_METHOD_ID"
+    echo "Raw response: $PAYMENT_METHOD_RESPONSE"
+    ERROR_MSG=$(echo "$PAYMENT_METHOD_RESPONSE" | jq -r '.error.message // empty' 2>/dev/null || echo "")
+    if [ -n "$ERROR_MSG" ]; then
+        echo "Error: $ERROR_MSG"
+    else
+        echo "$PAYMENT_METHOD_RESPONSE"
+    fi
     exit 1
 fi
 
@@ -114,12 +121,17 @@ if [ -n "$CLIENT_SECRET" ]; then
     CONFIRM_DATA="$CONFIRM_DATA&client_secret=$CLIENT_SECRET"
 fi
 
+# Add return_url to handle redirect-based payment methods (e.g., Link)
+# Using a dummy URL since we're using a card payment method that won't redirect
+CONFIRM_DATA="$CONFIRM_DATA&return_url=https://example.com/return"
+
 CONFIRM_RESPONSE=$(curl -s -X POST "https://api.stripe.com/v1/payment_intents/$PAYMENT_INTENT_ID/confirm" \
     -u "$STRIPE_API_KEY:" \
     -d "$CONFIRM_DATA")
 
 # Check if confirmation was successful
-if echo "$CONFIRM_RESPONSE" | grep -q '"status":"succeeded"\|"status":"requires_capture"'; then
+STATUS_CHECK=$(echo "$CONFIRM_RESPONSE" | jq -r '.status // empty' 2>/dev/null || echo "")
+if [ "$STATUS_CHECK" = "succeeded" ] || [ "$STATUS_CHECK" = "requires_capture" ]; then
     echo ""
     echo "=========================================="
     echo "✓ Payment confirmed successfully!"
@@ -127,7 +139,7 @@ if echo "$CONFIRM_RESPONSE" | grep -q '"status":"succeeded"\|"status":"requires_
     echo ""
     
     # Extract status from response
-    STATUS=$(echo "$CONFIRM_RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+    STATUS=$(echo "$CONFIRM_RESPONSE" | jq -r '.status // empty')
     echo "PaymentIntent Status: $STATUS"
     echo ""
     
@@ -152,7 +164,7 @@ else
     echo ""
     
     # Extract error message
-    ERROR_MSG=$(echo "$CONFIRM_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+    ERROR_MSG=$(echo "$CONFIRM_RESPONSE" | jq -r '.error.message // empty' 2>/dev/null || echo "")
     if [ -n "$ERROR_MSG" ]; then
         echo "Error: $ERROR_MSG"
         echo ""

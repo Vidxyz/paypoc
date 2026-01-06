@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.kafka
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 import java.util.UUID
@@ -8,7 +9,10 @@ import java.util.UUID
  * PaymentCapturedEvent - published by Payments Service after Stripe webhook confirms capture.
  * 
  * This event triggers the ledger write (double-entry bookkeeping).
+ * 
+ * Note: The JSON includes a "type" field from PaymentMessage, which we ignore.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PaymentCapturedEvent(
     @JsonProperty("eventId")
     val eventId: UUID,

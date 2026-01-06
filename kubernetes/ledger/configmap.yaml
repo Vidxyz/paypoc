@@ -10,6 +10,8 @@ data:
         url: jdbc:postgresql://postgres-service.payments-platform.svc.cluster.local:5432/ledger_db
         username: ${DB_USERNAME:ledger_user}
         password: ${DB_PASSWORD:ledger_password}
+      kafka:
+        bootstrap-servers: kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
     
     logging:
       level:

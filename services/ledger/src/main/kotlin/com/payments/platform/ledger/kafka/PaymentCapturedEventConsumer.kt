@@ -1,5 +1,7 @@
 package com.payments.platform.ledger.kafka
 
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.payments.platform.ledger.domain.AccountType
 import com.payments.platform.ledger.domain.CreateDoubleEntryTransactionRequest
 import com.payments.platform.ledger.domain.EntryDirection
@@ -18,20 +20,23 @@ import java.util.UUID
  * This consumer writes double-entry ledger entries when a payment is captured.
  * 
  * Flow:
- * 1. Receive PaymentCapturedEvent (after Stripe webhook confirms capture)
- * 2. Get or create accounts:
+ * 1. Receive generic message as Map<String, Any>
+ * 2. Check the "type" field - only process "PAYMENT_CAPTURED" events
+ * 3. Deserialize to PaymentCapturedEvent
+ * 4. Get or create accounts:
  *    - STRIPE_CLEARING (debit - money received from Stripe)
  *    - SELLER_PAYABLE:{sellerId} (credit - money owed to seller)
  *    - BUYIT_REVENUE (credit - platform commission)
- * 3. Create double-entry transaction:
+ * 5. Create double-entry transaction:
  *    DR STRIPE_CLEARING         grossAmountCents
  *    CR SELLER_PAYABLE          netSellerAmountCents
  *    CR BUYIT_REVENUE           platformFeeCents
- * 4. Transaction is atomic, balanced, and idempotent
+ * 6. Transaction is atomic, balanced, and idempotent
  */
 @Component
 class PaymentCapturedEventConsumer(
-    private val ledgerService: LedgerService
+    private val ledgerService: LedgerService,
+    private val objectMapper: ObjectMapper
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
@@ -42,9 +47,36 @@ class PaymentCapturedEventConsumer(
     )
     @Transactional
     fun handlePaymentCapturedEvent(
-        event: PaymentCapturedEvent,
+        messageBytes: ByteArray,
         acknowledgment: Acknowledgment
     ) {
+        // Manually deserialize bytes to Map<String, Any> to bypass Spring Kafka's type resolution
+        val message = try {
+            val typeRef = object : TypeReference<Map<String, Any>>() {}
+            objectMapper.readValue(messageBytes, typeRef)
+        } catch (e: Exception) {
+            logger.error("Failed to deserialize message bytes to Map: ${e.message}", e)
+            // Acknowledge to skip this malformed message
+            acknowledgment.acknowledge()
+            return
+        }
+        
+        // Check the event type - only process PAYMENT_CAPTURED events
+        val eventType = message["type"] as? String
+        if (eventType != "PAYMENT_CAPTURED") {
+            logger.debug("Skipping message with type: $eventType (only processing PAYMENT_CAPTURED events)")
+            acknowledgment.acknowledge() // Acknowledge to skip this message
+            return
+        }
+        
+        // Deserialize to PaymentCapturedEvent
+        val event = try {
+            objectMapper.convertValue(message, PaymentCapturedEvent::class.java)
+        } catch (e: Exception) {
+            logger.error("Failed to deserialize PAYMENT_CAPTURED event: ${e.message}", e)
+            // Don't acknowledge - message will be retried
+            throw e
+        }
         try {
             logger.info("Received PaymentCapturedEvent for payment ${event.paymentId} (idempotency: ${event.idempotencyKey})")
             

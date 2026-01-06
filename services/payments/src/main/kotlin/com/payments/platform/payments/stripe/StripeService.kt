@@ -59,12 +59,19 @@ class StripeService(
             val transferDataBuilder = PaymentIntentCreateParams.TransferData.builder()
                 .setDestination(sellerStripeAccountId)
             
+            // Configure automatic payment methods to disallow redirects
+            // This prevents the need for return_url when confirming with card payment methods
+            val automaticPaymentMethodsBuilder = PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
+                .setEnabled(true)
+                .setAllowRedirects(PaymentIntentCreateParams.AutomaticPaymentMethods.AllowRedirects.NEVER)
+            
             val paramsBuilder = PaymentIntentCreateParams.builder()
                 .setAmount(amountCents)
                 .setCurrency(currency.lowercase())  // Stripe expects lowercase
                 .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)  // Manual capture
                 .setApplicationFeeAmount(platformFeeCents)
                 .setTransferData(transferDataBuilder.build())
+                .setAutomaticPaymentMethods(automaticPaymentMethodsBuilder.build())
             
             if (description != null) {
                 paramsBuilder.setDescription(description)

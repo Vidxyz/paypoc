@@ -13,3 +13,4 @@ build/*
 /services/payments/.gradle/
 /services/payments/build/
 .idea/*
+.stripe_logs

@@ -4,10 +4,12 @@
 # This simulates a buyer confirming payment with a test card
 #
 # Usage:
-#   ./confirm-payment.sh <payment_intent_id> [client_secret]
+#   ./confirm-payment.sh <payment_intent_id> [client_secret] [card_type]
 #
 # Example:
+#   ./confirm-payment.sh pi_1234567890
 #   ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123
+#   ./confirm-payment.sh pi_1234567890 "" decline
 #
 # Environment variables:
 #   STRIPE_API_KEY - Stripe API key (required, e.g., sk_test_...)
@@ -17,32 +19,90 @@ set -e
 # Configuration
 STRIPE_API_KEY="${STRIPE_API_KEY:-}"
 
-# Test card details (Stripe test card for successful payment)
-TEST_CARD_NUMBER="4242424242424242"
-TEST_CARD_EXP_MONTH="12"
-TEST_CARD_EXP_YEAR="2028"
-TEST_CARD_CVC="123"
+# Function to get test card details based on card type
+get_test_card() {
+    local card_type="${1:-success}"
+    
+    case "$card_type" in
+        success)
+            echo "4242424242424242|12|2028|123|Visa - Success"
+            ;;
+        decline)
+            echo "4000000000000002|12|2028|123|Visa - Card declined"
+            ;;
+        insufficient_funds)
+            echo "4000000000009995|12|2028|123|Visa - Insufficient funds"
+            ;;
+        lost_card)
+            echo "4000000000009987|12|2028|123|Visa - Lost card"
+            ;;
+        stolen_card)
+            echo "4000000000009979|12|2028|123|Visa - Stolen card"
+            ;;
+        requires_authentication|3ds)
+            echo "4000002500003155|12|2028|123|Visa - Requires 3D Secure authentication"
+            ;;
+        requires_payment_method)
+            echo "4000000000000341|12|2028|123|Visa - Requires payment method"
+            ;;
+        processing_error)
+            echo "4000000000000119|12|2028|123|Visa - Processing error"
+            ;;
+        *)
+            echo "Error: Unknown card type: $card_type" >&2
+            echo "" >&2
+            echo "Available card types:" >&2
+            echo "  success              - Payment succeeds (default)"
+            echo "  decline              - Card is declined"
+            echo "  insufficient_funds   - Insufficient funds"
+            echo "  lost_card            - Lost card"
+            echo "  stolen_card          - Stolen card"
+            echo "  requires_authentication, 3ds - Requires 3D Secure authentication"
+            echo "  requires_payment_method - Requires payment method"
+            echo "  processing_error     - Processing error"
+            exit 1
+            ;;
+    esac
+}
 
 # Parse arguments
 if [ $# -lt 1 ]; then
     echo "Error: Missing required arguments"
-    echo "Usage: $0 <payment_intent_id> [client_secret]"
+    echo "Usage: $0 <payment_intent_id> [client_secret] [card_type]"
     echo ""
     echo "Arguments:"
     echo "  payment_intent_id - The Stripe PaymentIntent ID (e.g., pi_1234567890)"
     echo "  client_secret     - Optional: The client secret for the PaymentIntent"
+    echo "  card_type         - Optional: Type of test card to use (default: success)"
+    echo ""
+    echo "Available card types:"
+    echo "  success              - Payment succeeds (default)"
+    echo "  decline              - Card is declined"
+    echo "  insufficient_funds   - Insufficient funds"
+    echo "  lost_card            - Lost card"
+    echo "  stolen_card          - Stolen card"
+    echo "  requires_authentication, 3ds - Requires 3D Secure authentication"
+    echo "  requires_payment_method - Requires payment method"
+    echo "  processing_error     - Processing error"
     echo ""
     echo "Environment variables:"
     echo "  STRIPE_API_KEY    - Stripe API key (required, e.g., sk_test_...)"
     echo ""
-    echo "Example:"
+    echo "Examples:"
     echo "  ./confirm-payment.sh pi_1234567890"
     echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123"
+    echo "  ./confirm-payment.sh pi_1234567890 \"\" decline"
+    echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123 requires_authentication"
     exit 1
 fi
 
 PAYMENT_INTENT_ID="$1"
 CLIENT_SECRET="${2:-}"
+CARD_TYPE="${3:-success}"
+
+# Validate and get card details
+CARD_INFO=$(get_test_card "$CARD_TYPE")
+IFS='|' read -r TEST_CARD_NUMBER TEST_CARD_EXP_MONTH TEST_CARD_EXP_YEAR TEST_CARD_CVC CARD_DESCRIPTION <<< "$CARD_INFO"
 
 # Validate PaymentIntent ID format
 if ! [[ "$PAYMENT_INTENT_ID" =~ ^pi_ ]]; then
@@ -58,6 +118,7 @@ echo "PaymentIntent ID: $PAYMENT_INTENT_ID"
 if [ -n "$CLIENT_SECRET" ]; then
     echo "Client Secret: ${CLIENT_SECRET:0:20}..."
 fi
+echo "Card Type: $CARD_TYPE"
 echo ""
 
 # Get Stripe API key (required)
@@ -80,7 +141,7 @@ if [ -z "$STRIPE_API_KEY" ]; then
 fi
 
 echo "Confirming payment with test card..."
-echo "Card: $TEST_CARD_NUMBER (Visa test card - will succeed)"
+echo "Card: $TEST_CARD_NUMBER ($CARD_DESCRIPTION)"
 echo "Expiry: $TEST_CARD_EXP_MONTH/$TEST_CARD_EXP_YEAR"
 echo ""
 

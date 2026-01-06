@@ -131,7 +131,8 @@ class LedgerController(
                 BalanceResponseDto(
                     accountId = balance.accountId,
                     currency = balance.currency,
-                    balanceCents = balance.balanceCents
+                    balanceCents = balance.balanceCents,
+                    error = null
                 )
             )
         } catch (e: IllegalArgumentException) {
@@ -193,21 +194,6 @@ data class TransactionResponseDto(
     
     @Schema(description = "Transaction creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
     val createdAt: String? = null,
-    
-    @Schema(description = "Error message if the request failed")
-    val error: String? = null
-)
-
-@Schema(description = "Balance response")
-data class BalanceResponseDto(
-    @Schema(description = "Account ID", example = "550e8400-e29b-41d4-a716-446655440000")
-    val accountId: UUID,
-    
-    @Schema(description = "ISO 4217 currency code", example = "USD")
-    val currency: String,
-    
-    @Schema(description = "Balance in cents", example = "125000")
-    val balanceCents: Long,
     
     @Schema(description = "Error message if the request failed")
     val error: String? = null

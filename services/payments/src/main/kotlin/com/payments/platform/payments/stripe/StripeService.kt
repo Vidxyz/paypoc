@@ -4,10 +4,10 @@ import com.stripe.Stripe
 import com.stripe.exception.StripeException
 import com.stripe.model.PaymentIntent
 import com.stripe.param.PaymentIntentCreateParams
+import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
-import javax.annotation.PostConstruct
 
 /**
  * Service for interacting with Stripe API.
@@ -56,21 +56,31 @@ class StripeService(
         metadata: Map<String, String>
     ): PaymentIntent {
         try {
-            val params = PaymentIntentCreateParams.builder()
+            val transferDataBuilder = PaymentIntentCreateParams.TransferData.builder()
+                .setDestination(sellerStripeAccountId)
+            
+            val paramsBuilder = PaymentIntentCreateParams.builder()
                 .setAmount(amountCents)
                 .setCurrency(currency.lowercase())  // Stripe expects lowercase
                 .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)  // Manual capture
                 .setApplicationFeeAmount(platformFeeCents)
-                .setTransferData(
-                    PaymentIntentCreateParams.TransferData.builder()
-                        .setDestination(sellerStripeAccountId)
-                        .build()
-                )
-                .setDescription(description)
-                .setMetadata(metadata)
-                .build()
+                .setTransferData(transferDataBuilder.build())
             
-            val paymentIntent = PaymentIntent.create(params)
+            if (description != null) {
+                paramsBuilder.setDescription(description)
+            }
+            
+            // Add metadata if provided
+            if (metadata.isNotEmpty()) {
+                metadata.forEach { (key, value) ->
+                    paramsBuilder.putMetadata(key, value)
+                }
+            }
+            
+            val params: PaymentIntentCreateParams = paramsBuilder.build()
+            
+            // Create PaymentIntent - explicitly specify type to resolve overload ambiguity
+            val paymentIntent: PaymentIntent = PaymentIntent.create(params)
             
             logger.info(
                 "Created Stripe PaymentIntent: ${paymentIntent.id} " +

@@ -18,6 +18,9 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     validate-on-migrate: true
+  
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 server:
   port: 8081
@@ -41,11 +44,6 @@ ledger:
   internal:
     api:
       token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
-
-# Kafka Configuration
-spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 # Kafka Topics
 kafka:

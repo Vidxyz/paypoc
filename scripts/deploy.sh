@@ -64,7 +64,6 @@ build_images() {
     log_info "Building frontend image..."
     cd "$PROJECT_ROOT/services/frontend"
     docker build \
-      --build-arg VITE_API_BASE_URL=http://payments-service.payments-platform.svc.cluster.local:8080 \
       --build-arg VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q \
       -t frontend:latest .
     

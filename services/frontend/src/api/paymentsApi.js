@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://payments-service.payments-platform.svc.cluster.local:8080'
+// Use /api which nginx will proxy to the payments service
+// For browser access, this will work whether frontend is at buyit.local or payments.local
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -8,6 +10,31 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Add request interceptor to include bearer token
+api.interceptors.request.use(
+  (config) => {
+    let token = localStorage.getItem('bearerToken')
+    
+    // If token is missing but user is authenticated, restore it
+    // This handles cases where localStorage was partially cleared
+    if (!token) {
+      const buyerId = localStorage.getItem('buyerId')
+      if (buyerId === 'buyer123') {
+        token = 'buyer123_token'
+        localStorage.setItem('bearerToken', token)
+      }
+    }
+    
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
 
 export const paymentsApi = {
   /**
@@ -31,19 +58,25 @@ export const paymentsApi = {
   },
 
   /**
-   * Get multiple payments by IDs
-   * @param {string[]} paymentIds - Array of payment UUIDs
-   * @returns {Promise<Array>} Array of payment data
+   * Get payments for the authenticated user
+   * @param {Object} options - Query options
+   * @param {number} options.page - Page number (0-indexed, default: 0)
+   * @param {number} options.size - Page size (default: 50)
+   * @param {string} options.sortBy - Field to sort by (default: "createdAt")
+   * @param {string} options.sortDirection - Sort direction: "ASC" or "DESC" (default: "DESC")
+   * @returns {Promise<Object>} Response with payments array, page, size, and total
    */
-  getPayments: async (paymentIds) => {
-    const promises = paymentIds.map(id => 
-      paymentsApi.getPayment(id).catch(err => {
-        console.error(`Failed to fetch payment ${id}:`, err)
-        return null
-      })
-    )
-    const results = await Promise.all(promises)
-    return results.filter(payment => payment !== null && !payment.error)
+  getPayments: async (options = {}) => {
+    const { page = 0, size = 50, sortBy = 'createdAt', sortDirection = 'DESC' } = options
+    const response = await api.get('/payments', {
+      params: {
+        page,
+        size,
+        sortBy,
+        sortDirection,
+      },
+    })
+    return response.data
   },
 }
 

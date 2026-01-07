@@ -243,12 +243,6 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
 
       if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'requires_capture') {
         setSuccess(true)
-        // Store payment ID in localStorage for payments page
-        const storedIds = JSON.parse(localStorage.getItem('paymentIds') || '[]')
-        if (!storedIds.includes(paymentResponse.id)) {
-          storedIds.push(paymentResponse.id)
-          localStorage.setItem('paymentIds', JSON.stringify(storedIds))
-        }
         if (onPaymentSuccess) {
           onPaymentSuccess(paymentResponse.id)
         }

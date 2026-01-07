@@ -17,35 +17,27 @@ function Payments({ buyerId }) {
     setError('')
     
     try {
-      // Get payment IDs from localStorage
-      const storedIds = JSON.parse(localStorage.getItem('paymentIds') || '[]')
-      
-      if (storedIds.length === 0) {
-        setPayments([])
-        setFilteredPayments([])
-        setLoading(false)
-        return
-      }
-
-      // Fetch all payments
-      const paymentData = await paymentsApi.getPayments(storedIds)
-      
-      // Filter by buyerId
-      const buyerPayments = paymentData.filter(
-        payment => payment.buyerId === buyerId
-      )
-      
-      // Sort by creation date (newest first)
-      buyerPayments.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0)
-        const dateB = new Date(b.createdAt || 0)
-        return dateB - dateA
+      // Fetch payments from API (filtered by buyerId via bearer token)
+      const response = await paymentsApi.getPayments({
+        page: 0,
+        size: 100, // Get up to 100 payments
+        sortBy: 'createdAt',
+        sortDirection: 'DESC',
       })
       
-      setPayments(buyerPayments)
-      setFilteredPayments(buyerPayments)
+      if (response.error) {
+        throw new Error(response.error)
+      }
+      
+      const paymentList = response.payments || []
+      setPayments(paymentList)
+      setFilteredPayments(paymentList)
     } catch (err) {
-      setError(err.message || 'Failed to load payments')
+      if (err.response?.status === 401) {
+        setError('Unauthorized. Please log in again.')
+      } else {
+        setError(err.message || 'Failed to load payments')
+      }
     } finally {
       setLoading(false)
     }

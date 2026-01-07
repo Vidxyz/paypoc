@@ -17,6 +17,7 @@ class OpenApiConfig {
                 Info()
                     .title("Payments Service API")
                     .version("1.0.0")
+                    // todo-vh: Update invariant description
                     .description(
                         """
                         The Payments Service is an orchestration layer that coordinates payment workflows.

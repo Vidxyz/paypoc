@@ -26,6 +26,7 @@ Payment Record Created (if ledger succeeds)
 
 > **If payment exists, money exists.**
 
+<!-- todo-vh: Update invariant description -->
 This is enforced by the ledger-first approach:
 - If ledger rejects → payment is NOT created
 - If ledger accepts → payment is created with `ledger_transaction_id`

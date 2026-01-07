@@ -114,6 +114,27 @@ data class PaymentResponseDto(
 }
 
 /**
+ * Response DTO for listing payments.
+ */
+@Schema(description = "List of payments response")
+data class ListPaymentsResponseDto(
+    @Schema(description = "List of payments")
+    val payments: List<PaymentResponseDto> = emptyList(),
+    
+    @Schema(description = "Current page number (0-indexed)", example = "0")
+    val page: Int = 0,
+    
+    @Schema(description = "Page size", example = "50")
+    val size: Int = 0,
+    
+    @Schema(description = "Total number of payments in this page", example = "10")
+    val total: Int = 0,
+    
+    @Schema(description = "Error message if the request failed", example = "Unauthorized: buyerId not found in request")
+    val error: String? = null
+)
+
+/**
  * Response DTO for balance query.
  */
 @Schema(description = "Account balance response (delegated from Ledger Service)")

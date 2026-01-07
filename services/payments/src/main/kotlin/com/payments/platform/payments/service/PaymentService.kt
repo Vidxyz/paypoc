@@ -266,6 +266,35 @@ class PaymentService(
             .orElseThrow { IllegalArgumentException("Payment not found: $paymentId") }
         return entity.toDomain()
     }
+    
+    /**
+     * Gets payments for a buyer with pagination and sorting.
+     * 
+     * @param buyerId The buyer ID to filter by
+     * @param page Page number (0-indexed)
+     * @param size Page size
+     * @param sortBy Field to sort by (default: "createdAt")
+     * @param sortDirection Sort direction (ASC or DESC, default: DESC)
+     * @return List of payments for the buyer
+     */
+    fun getPaymentsByBuyerId(
+        buyerId: String,
+        page: Int = 0,
+        size: Int = 50,
+        sortBy: String = "createdAt",
+        sortDirection: String = "DESC"
+    ): List<Payment> {
+        val sort = if (sortDirection.uppercase() == "ASC") {
+            org.springframework.data.domain.Sort.by(sortBy).ascending()
+        } else {
+            org.springframework.data.domain.Sort.by(sortBy).descending()
+        }
+        
+        val pageable = org.springframework.data.domain.PageRequest.of(page, size, sort)
+        val pageResult = paymentRepository.findByBuyerId(buyerId, pageable)
+        
+        return pageResult.content.map { it.toDomain() }
+    }
 }
 
 /**

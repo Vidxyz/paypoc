@@ -13,10 +13,9 @@ RUN npm ci
 COPY . .
 
 # Set build-time environment variables (with defaults)
-ARG VITE_API_BASE_URL=http://payments-service.payments-platform.svc.cluster.local:8080
+# Note: VITE_API_BASE_URL is no longer needed - we use /api which nginx proxies
 ARG VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q
 
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_STRIPE_PUBLISHABLE_KEY=$VITE_STRIPE_PUBLISHABLE_KEY
 
 # Build the app

@@ -16,9 +16,15 @@ function App() {
     // Check if user is already logged in
     const storedAuth = localStorage.getItem('isAuthenticated')
     const storedBuyerId = localStorage.getItem('buyerId')
+    const storedToken = localStorage.getItem('bearerToken')
     if (storedAuth === 'true' && storedBuyerId) {
       setIsAuthenticated(true)
       setBuyerId(storedBuyerId)
+      // If bearerToken is missing but user is authenticated, restore it
+      // This handles cases where localStorage was partially cleared
+      if (!storedToken && storedBuyerId === 'buyer123') {
+        localStorage.setItem('bearerToken', 'buyer123_token')
+      }
     }
   }, [])
 
@@ -27,8 +33,11 @@ function App() {
     if (username === 'buyer123' && password === 'buyer123') {
       setIsAuthenticated(true)
       setBuyerId('buyer123')
+      // Store authentication state
       localStorage.setItem('isAuthenticated', 'true')
       localStorage.setItem('buyerId', 'buyer123')
+      // Store bearer token (static for now - in production this would come from login API)
+      localStorage.setItem('bearerToken', 'buyer123_token')
       setShowLoginModal(false)
       return true
     }
@@ -40,6 +49,7 @@ function App() {
     setBuyerId(null)
     localStorage.removeItem('isAuthenticated')
     localStorage.removeItem('buyerId')
+    localStorage.removeItem('bearerToken')
     setShowLoginModal(true)
   }
 

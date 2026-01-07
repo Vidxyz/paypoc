@@ -127,6 +127,93 @@ class PaymentController(
     }
     
     /**
+     * GET /payments
+     * Gets payments for the authenticated user (buyerId from bearer token).
+     * 
+     * Supports filtering and sorting:
+     * - page: Page number (0-indexed, default: 0)
+     * - size: Page size (default: 50)
+     * - sortBy: Field to sort by (default: "createdAt")
+     * - sortDirection: Sort direction - ASC or DESC (default: DESC)
+     * 
+     * Requires Bearer token authentication. The buyerId is extracted from the token.
+     */
+    @Operation(
+        summary = "Get payments for authenticated user",
+        description = "Retrieves payments for the authenticated user (buyerId extracted from bearer token). Supports pagination and sorting. Requires Bearer token authentication."
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Payments retrieved successfully",
+                content = [Content(schema = Schema(implementation = ListPaymentsResponseDto::class))]
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "Unauthorized - missing or invalid bearer token"
+            )
+        ]
+    )
+    @GetMapping
+    fun getPayments(
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "50") size: Int,
+        @RequestParam(defaultValue = "createdAt") sortBy: String,
+        @RequestParam(defaultValue = "DESC") sortDirection: String,
+        request: jakarta.servlet.http.HttpServletRequest
+    ): ResponseEntity<ListPaymentsResponseDto> {
+        // Get buyerId from request attribute (set by AuthenticationInterceptor)
+        val buyerId = request.getAttribute("buyerId") as? String
+            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                ListPaymentsResponseDto(
+                    error = "Unauthorized: buyerId not found in request"
+                )
+            )
+        
+        // Validate pagination parameters
+        val validPage = if (page < 0) 0 else page
+        val validSize = when {
+            size < 1 -> 1
+            size > 100 -> 100  // Max page size
+            else -> size
+        }
+        
+        // Validate sortBy field
+        val validSortBy = when (sortBy.lowercase()) {
+            "createdat", "created_at" -> "createdAt"
+            "updatedat", "updated_at" -> "updatedAt"
+            "state" -> "state"
+            "grossamountcents", "gross_amount_cents" -> "grossAmountCents"
+            else -> "createdAt"  // Default
+        }
+        
+        // Validate sortDirection
+        val validSortDirection = when (sortDirection.uppercase()) {
+            "ASC" -> "ASC"
+            "DESC" -> "DESC"
+            else -> "DESC"  // Default
+        }
+        
+        val payments = paymentService.getPaymentsByBuyerId(
+            buyerId = buyerId,
+            page = validPage,
+            size = validSize,
+            sortBy = validSortBy,
+            sortDirection = validSortDirection
+        )
+        
+        return ResponseEntity.ok(
+            ListPaymentsResponseDto(
+                payments = payments.map { PaymentResponseDto.fromDomain(it) },
+                page = validPage,
+                size = validSize,
+                total = payments.size
+            )
+        )
+    }
+    
+    /**
      * GET /balance?accountId={accountId}
      * Gets balance for an account.
      * 

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: payments-platform
+data:
+  VITE_API_BASE_URL: "http://payments-service.payments-platform.svc.cluster.local:8080"
+  VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q"
+

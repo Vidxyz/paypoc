@@ -60,10 +60,19 @@ build_images() {
     log_info "Building payments-service image..."
     docker build -t payments-service:latest -f scripts/Dockerfile.payments .
     
+    # Build frontend
+    log_info "Building frontend image..."
+    cd "$PROJECT_ROOT/services/frontend"
+    docker build \
+      --build-arg VITE_API_BASE_URL=http://payments-service.payments-platform.svc.cluster.local:8080 \
+      --build-arg VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q \
+      -t frontend:latest .
+    
     # Load images into minikube
     log_info "Loading images into minikube..."
     minikube image load ledger-service:latest || true
     minikube image load payments-service:latest || true
+    minikube image load frontend:latest || true
     
     log_info "Images built and loaded"
 }
@@ -121,6 +130,18 @@ deploy_payments() {
     kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || true
 }
 
+deploy_frontend() {
+    log_info "Deploying Frontend..."
+    kubectl apply -f "$K8S_DIR/frontend/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/service.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/ingress.yaml"
+    
+    log_info "Waiting for Frontend to be ready..."
+    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || true
+}
+
 wait_for_services() {
     log_info "Waiting for all services to be ready..."
     
@@ -135,6 +156,10 @@ wait_for_services() {
     # Wait for Payments Service
     log_info "Waiting for Payments Service..."
     kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || log_warn "Payments Service not ready yet"
+    
+    # Wait for Frontend
+    log_info "Waiting for Frontend..."
+    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet"
     
     log_info "Services deployment complete"
 }
@@ -151,18 +176,28 @@ show_status() {
     
     log_info "Access URLs:"
     MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "localhost")
-    INGRESS_IP=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP=$(kubectl get ingress frontend-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     
     if [ -n "$INGRESS_IP" ]; then
-        echo "  Payments Service (Ingress): http://$INGRESS_IP"
+        echo "  Frontend (Ingress): http://buyit.local"
+    else
+        echo "  Frontend (Ingress): http://buyit.local"
+        echo "    Add to /etc/hosts: $MINIKUBE_IP buyit.local"
+        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
+    fi
+    
+    INGRESS_IP_PAYMENTS=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    if [ -n "$INGRESS_IP_PAYMENTS" ]; then
+        echo "  Payments Service (Ingress): http://$INGRESS_IP_PAYMENTS"
     else
         echo "  Payments Service (Ingress): http://payments.local (add to /etc/hosts: $MINIKUBE_IP payments.local)"
-        echo "  Or use port-forward: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
+        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     fi
     
     echo "  Ledger Service: http://$(kubectl get svc ledger-service -n $NAMESPACE -o jsonpath='{.spec.clusterIP}'):8081 (ClusterIP only)"
     echo ""
     log_info "To port-forward services:"
+    echo "  Frontend: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
 }
@@ -180,6 +215,8 @@ main() {
     deploy_ledger
     sleep 10  # Give Ledger time to initialize
     deploy_payments
+    sleep 10  # Give Payments time to initialize
+    deploy_frontend
     wait_for_services
     show_status
     
@@ -208,6 +245,11 @@ case "${1:-}" in
         check_prerequisites
         create_namespace
         deploy_payments
+        ;;
+    frontend)
+        check_prerequisites
+        create_namespace
+        deploy_frontend
         ;;
     status)
         show_status

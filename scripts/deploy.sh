@@ -63,8 +63,22 @@ build_images() {
     # Build frontend
     log_info "Building frontend image..."
     cd "$PROJECT_ROOT/services/frontend"
+    
+    # Use environment variable or fallback to test key
+    # Test key is safe to commit, live keys should come from CI/CD secrets
+    local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
+    
+    # Log which key type is being used (masked for security)
+    if [[ "$stripe_key" == pk_test_* ]]; then
+        log_info "Using Stripe TEST publishable key: ${stripe_key:0:20}..."
+    elif [[ "$stripe_key" == pk_live_* ]]; then
+        log_info "Using Stripe LIVE publishable key: ${stripe_key:0:20}..."
+    else
+        log_warn "Unknown Stripe key format, using as-is: ${stripe_key:0:20}..."
+    fi
+    
     docker build \
-      --build-arg VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q \
+      --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
       -t frontend:latest .
     
     # Load images into minikube

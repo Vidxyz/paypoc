@@ -14,7 +14,11 @@ COPY . .
 
 # Set build-time environment variables (with defaults)
 # Note: VITE_API_BASE_URL is no longer needed - we use /api which nginx proxies
-ARG VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q
+# 
+# VITE_STRIPE_PUBLISHABLE_KEY: Test key is safe to commit as default.
+# For production, override via --build-arg using STRIPE_PUBLISHABLE_KEY env var.
+# Live keys should come from CI/CD secrets, never committed to git.
+ARG VITE_STRIPE_PUBLISHABLE_KEY=missing_stripe_publishable_key
 
 ENV VITE_STRIPE_PUBLISHABLE_KEY=$VITE_STRIPE_PUBLISHABLE_KEY
 

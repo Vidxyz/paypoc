@@ -57,12 +57,25 @@ The built files will be in the `dist/` directory.
 
 ## Docker Build
 
+### Development (uses test key by default)
+
 ```bash
+docker build -t frontend:latest .
+```
+
+The Dockerfile includes a test Stripe publishable key as the default, which is safe to commit.
+
+### Production (use environment variable)
+
+```bash
+# Set the live key from environment variable
+export STRIPE_PUBLISHABLE_KEY=pk_live_YOUR_LIVE_KEY_HERE
 docker build \
-  --build-arg VITE_API_BASE_URL=http://payments-service.payments-platform.svc.cluster.local:8080 \
-  --build-arg VITE_STRIPE_PUBLISHABLE_KEY=pk_test_... \
+  --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY" \
   -t frontend:latest .
 ```
+
+**Note**: Live keys should never be committed to git. Use CI/CD secrets or environment variables.
 
 ## Deployment
 

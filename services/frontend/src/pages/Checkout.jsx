@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react'
 import { loadStripe } from '@stripe/stripe-js'
+import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import paymentsApi from '../api/paymentsApi'
 import '../App.css'
 import './Checkout.css'
 
 // Initialize Stripe - using test publishable key
 // In production, this should come from environment variables
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_51SmG1S2SQYvDNXZz5bkKmq1XENOih8R6WUPY9US0l2OXJr0HrkFTpMqhjy4Uo5cxMTT0bSpGmtrlaSPDk14RNgRC00Em4yYJ4q')
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'missing_stripe_publishable_key')
 
 function CheckoutForm({ buyerId, onPaymentSuccess }) {
-  const [stripe, setStripe] = useState(null)
+  const stripe = useStripe()
+  const elements = useElements()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
@@ -22,19 +24,7 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
     description: 'Test payment from BuyIt frontend'
   })
   
-  const [cardData, setCardData] = useState({
-    cardNumber: '',
-    expiry: '',
-    cvc: '',
-    zip: ''
-  })
-  
   const [selectedTestCard, setSelectedTestCard] = useState(null)
-
-  // Initialize Stripe
-  useEffect(() => {
-    stripePromise.then(setStripe)
-  }, [])
 
   // Test card presets based on Stripe test cards
   const testCardPresets = [
@@ -112,46 +102,34 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
     }
   ]
 
-  const handleTestCardSelect = (preset) => {
-    setSelectedTestCard(preset)
-    // Auto-fill the card form fields
-    setCardData({
-      cardNumber: preset.cardNumber.replace(/\s/g, ''),
-      expiry: preset.expiry,
-      cvc: preset.cvc,
-      zip: preset.zip
-    })
-  }
-
-  const handleCardInputChange = (e) => {
-    const { name, value } = e.target
-    let formattedValue = value
-    
-    // Format card number with spaces
-    if (name === 'cardNumber') {
-      formattedValue = value.replace(/\s/g, '').replace(/(.{4})/g, '$1 ').trim()
-      if (formattedValue.length > 19) formattedValue = formattedValue.substring(0, 19)
-    }
-    // Format expiry as MM/YY
-    else if (name === 'expiry') {
-      formattedValue = value.replace(/\D/g, '')
-      if (formattedValue.length >= 2) {
-        formattedValue = formattedValue.substring(0, 2) + '/' + formattedValue.substring(2, 4)
+  const copyToClipboard = (text, buttonElement) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Show a brief success message
+      if (buttonElement) {
+        const originalText = buttonElement.textContent
+        buttonElement.textContent = 'Copied!'
+        buttonElement.style.background = '#28a745'
+        setTimeout(() => {
+          buttonElement.textContent = originalText
+          buttonElement.style.background = ''
+        }, 1000)
       }
-    }
-    // Limit CVC to 3-4 digits
-    else if (name === 'cvc') {
-      formattedValue = value.replace(/\D/g, '').substring(0, 4)
-    }
-    // Limit ZIP to 5 digits
-    else if (name === 'zip') {
-      formattedValue = value.replace(/\D/g, '').substring(0, 5)
-    }
-    
-    setCardData(prev => ({
-      ...prev,
-      [name]: formattedValue
-    }))
+    }).catch(() => {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      if (buttonElement) {
+        const originalText = buttonElement.textContent
+        buttonElement.textContent = 'Copied!'
+        setTimeout(() => {
+          buttonElement.textContent = originalText
+        }, 1000)
+      }
+    })
   }
 
   const handleInputChange = (e) => {
@@ -167,15 +145,8 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
     setError('')
     setLoading(true)
 
-    if (!stripe) {
+    if (!stripe || !elements) {
       setError('Stripe not loaded. Please wait...')
-      setLoading(false)
-      return
-    }
-
-    // Validate card fields
-    if (!cardData.cardNumber || !cardData.expiry || !cardData.cvc || !cardData.zip) {
-      setError('Please fill in all card details')
       setLoading(false)
       return
     }
@@ -200,38 +171,22 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
 
       setPaymentId(paymentResponse.id)
 
-      // Step 2: Parse expiry date
-      const [expMonth, expYear] = cardData.expiry.split('/')
-      if (!expMonth || !expYear) {
-        throw new Error('Invalid expiry date format. Use MM/YY')
+      // Step 2: Get card element from Stripe Elements
+      const cardElement = elements.getElement(CardElement)
+      if (!cardElement) {
+        throw new Error('Card element not found')
       }
 
-      // Step 3: Create payment method with card details
-      const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({
-        type: 'card',
-        card: {
-          number: cardData.cardNumber.replace(/\s/g, ''),
-          exp_month: parseInt(expMonth),
-          exp_year: parseInt('20' + expYear),
-          cvc: cardData.cvc,
-        },
-        billing_details: {
-          name: buyerId,
-          address: {
-            postal_code: cardData.zip,
-          },
-        },
-      })
-
-      if (pmError || !paymentMethod) {
-        throw new Error(pmError?.message || 'Failed to create payment method')
-      }
-
-      // Step 4: Confirm payment with the payment method
+      // Step 3: Confirm payment with Stripe Elements
       const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
         paymentResponse.clientSecret,
         {
-          payment_method: paymentMethod.id,
+          payment_method: {
+            card: cardElement,
+            billing_details: {
+              name: buyerId,
+            },
+          },
         }
       )
 
@@ -275,7 +230,6 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
               setSuccess(false)
               setPaymentId(null)
               setError('')
-              setCardData({ cardNumber: '', expiry: '', cvc: '', zip: '' })
               setSelectedTestCard(null)
             }}
             className="btn btn-primary"
@@ -319,7 +273,7 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
             required
           />
           <small style={{ color: '#666', marginTop: '0.25rem', display: 'block' }}>
-            ${(formData.grossAmountCents / 100).toFixed(2)} USD
+            ${(formData.grossAmountCents / 100).toFixed(2)} {formData.currency}
           </small>
         </div>
 
@@ -332,9 +286,9 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
             onChange={handleInputChange}
             required
           >
+            <option value="CAD">CAD</option>
             <option value="USD">USD</option>
             <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
           </select>
         </div>
 
@@ -359,7 +313,7 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
                 <button
                   key={preset.id}
                   type="button"
-                  onClick={() => handleTestCardSelect(preset)}
+                  onClick={() => setSelectedTestCard(preset)}
                   className={`btn ${selectedTestCard?.id === preset.id ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ 
                     padding: '0.5rem 1rem', 
@@ -373,89 +327,189 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
             </div>
             
             {selectedTestCard && (
-              <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="alert alert-info" style={{ marginBottom: '1rem', padding: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
                   <div>
                     <strong>{selectedTestCard.name}</strong>
                     <div style={{ fontSize: '0.875rem', color: '#666', marginTop: '0.25rem' }}>
-                      {selectedTestCard.description} - Card details have been auto-filled below
+                      {selectedTestCard.description}
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedTestCard(null)
-                      setCardData({ cardNumber: '', expiry: '', cvc: '', zip: '' })
-                    }}
+                    onClick={() => setSelectedTestCard(null)}
                     style={{ 
                       background: 'none', 
                       border: 'none', 
                       fontSize: '1.25rem', 
                       cursor: 'pointer',
-                      color: '#666'
+                      color: '#666',
+                      padding: '0',
+                      lineHeight: '1'
                     }}
                   >
                     ×
                   </button>
                 </div>
+                
+                <div style={{ 
+                  background: '#f8f9fa', 
+                  padding: '1rem', 
+                  borderRadius: '8px',
+                  border: '1px solid #dee2e6'
+                }}>
+                  <div style={{ 
+                    fontSize: '0.875rem', 
+                    color: '#666', 
+                    marginBottom: '0.75rem',
+                    fontWeight: '500'
+                  }}>
+                    Copy and paste these details into the Stripe card element below:
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>Card Number</div>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <code style={{ 
+                          flex: 1, 
+                          padding: '0.5rem', 
+                          background: 'white', 
+                          borderRadius: '4px',
+                          border: '1px solid #dee2e6',
+                          fontSize: '0.875rem',
+                          fontFamily: 'monospace'
+                        }}>
+                          {selectedTestCard.cardNumber}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={(e) => copyToClipboard(selectedTestCard.cardNumber.replace(/\s/g, ''), e.target)}
+                          className="btn btn-secondary"
+                          style={{ 
+                            padding: '0.5rem 0.75rem', 
+                            fontSize: '0.75rem',
+                            whiteSpace: 'nowrap',
+                            minWidth: '60px'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>Expiry</div>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <code style={{ 
+                          flex: 1, 
+                          padding: '0.5rem', 
+                          background: 'white', 
+                          borderRadius: '4px',
+                          border: '1px solid #dee2e6',
+                          fontSize: '0.875rem',
+                          fontFamily: 'monospace'
+                        }}>
+                          {selectedTestCard.expiry}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={(e) => copyToClipboard(selectedTestCard.expiry, e.target)}
+                          className="btn btn-secondary"
+                          style={{ 
+                            padding: '0.5rem 0.75rem', 
+                            fontSize: '0.75rem',
+                            whiteSpace: 'nowrap',
+                            minWidth: '60px'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>CVC</div>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <code style={{ 
+                          flex: 1, 
+                          padding: '0.5rem', 
+                          background: 'white', 
+                          borderRadius: '4px',
+                          border: '1px solid #dee2e6',
+                          fontSize: '0.875rem',
+                          fontFamily: 'monospace'
+                        }}>
+                          {selectedTestCard.cvc}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={(e) => copyToClipboard(selectedTestCard.cvc, e.target)}
+                          className="btn btn-secondary"
+                          style={{ 
+                            padding: '0.5rem 0.75rem', 
+                            fontSize: '0.75rem',
+                            whiteSpace: 'nowrap',
+                            minWidth: '60px'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>ZIP Code</div>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <code style={{ 
+                          flex: 1, 
+                          padding: '0.5rem', 
+                          background: 'white', 
+                          borderRadius: '4px',
+                          border: '1px solid #dee2e6',
+                          fontSize: '0.875rem',
+                          fontFamily: 'monospace'
+                        }}>
+                          {selectedTestCard.zip}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={(e) => copyToClipboard(selectedTestCard.zip, e.target)}
+                          className="btn btn-secondary"
+                          style={{ 
+                            padding: '0.5rem 0.75rem', 
+                            fontSize: '0.75rem',
+                            whiteSpace: 'nowrap',
+                            minWidth: '60px'
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
           
-          {/* Card Input Fields */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="cardNumber">Card Number</label>
-              <input
-                type="text"
-                id="cardNumber"
-                name="cardNumber"
-                value={cardData.cardNumber}
-                onChange={handleCardInputChange}
-                placeholder="4242 4242 4242 4242"
-                maxLength="19"
-                required
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="expiry">Expiry (MM/YY)</label>
-              <input
-                type="text"
-                id="expiry"
-                name="expiry"
-                value={cardData.expiry}
-                onChange={handleCardInputChange}
-                placeholder="12/28"
-                maxLength="5"
-                required
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="cvc">CVC</label>
-              <input
-                type="text"
-                id="cvc"
-                name="cvc"
-                value={cardData.cvc}
-                onChange={handleCardInputChange}
-                placeholder="123"
-                maxLength="4"
-                required
-              />
-            </div>
-          </div>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label htmlFor="zip">ZIP Code</label>
-            <input
-              type="text"
-              id="zip"
-              name="zip"
-              value={cardData.zip}
-              onChange={handleCardInputChange}
-              placeholder="12345"
-              maxLength="5"
-              required
-              style={{ maxWidth: '200px' }}
+          {/* Stripe Card Element */}
+          <div className="stripe-card-element">
+            <CardElement
+              options={{
+                style: {
+                  base: {
+                    fontSize: '16px',
+                    color: '#424770',
+                    '::placeholder': {
+                      color: '#aab7c4',
+                    },
+                  },
+                  invalid: {
+                    color: '#9e2146',
+                  },
+                },
+              }}
             />
           </div>
         </div>
@@ -463,7 +517,7 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
         <button
           type="submit"
           className="btn btn-primary btn-block"
-          disabled={loading || !stripe}
+          disabled={loading || !stripe || !elements}
         >
           {loading ? 'Processing...' : `Pay $${(formData.grossAmountCents / 100).toFixed(2)}`}
         </button>
@@ -475,10 +529,11 @@ function CheckoutForm({ buyerId, onPaymentSuccess }) {
 function Checkout({ buyerId }) {
   return (
     <div className="page-container">
-      <CheckoutForm buyerId={buyerId} />
+      <Elements stripe={stripePromise}>
+        <CheckoutForm buyerId={buyerId} />
+      </Elements>
     </div>
   )
 }
 
 export default Checkout
-

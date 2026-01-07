@@ -17,23 +17,23 @@ class OpenApiConfig {
                 Info()
                     .title("Payments Service API")
                     .version("1.0.0")
-                    // todo-vh: Update invariant description
                     .description(
                         """
                         The Payments Service is an orchestration layer that coordinates payment workflows.
                         
                         **Key Principles:**
-                        - **Ledger-First Approach**: Payments always calls the Ledger Service BEFORE creating a payment record
+                        - **Ledger Writes After Money Movement**: Ledger writes only occur after Stripe webhook confirms payment capture (not at creation)
                         - **Workflow State Only**: Payments database stores orchestration state, not financial truth
                         - **No Balance Computation**: Payments never computes balances - it always delegates to Ledger
                         - **State Machine Enforcement**: Payment state transitions are explicitly defined and enforced
                         
                         **Critical Invariant:**
-                        > If payment exists, money exists.
+                        > If payment exists with ledger_transaction_id, money exists in ledger.
                         
-                        This is enforced by the ledger-first approach:
-                        - If ledger rejects → payment is NOT created
-                        - If ledger accepts → payment is created with ledger_transaction_id
+                        The ledger write happens **after** Stripe confirms money movement via webhook:
+                        - Payment creation: NO ledger write (no money has moved yet)
+                        - Stripe webhook confirms capture: THEN write to ledger
+                        - This ensures: "Ledger only records actual money movement"
                         
                         **Architecture:**
                         Payments Service orchestrates workflows but is NOT a source of financial truth.

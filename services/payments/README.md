@@ -17,19 +17,25 @@ Client Request
     ↓
 Payments Service (Orchestration)
     ↓
-Ledger Service (Source of Truth) ← Called FIRST
+Stripe PaymentIntent Created
     ↓
-Payment Record Created (if ledger succeeds)
+Payment Record Created (state = CREATED, ledger_transaction_id = NULL)
+    ↓
+Stripe Webhook Confirms Capture
+    ↓
+Ledger Service (Source of Truth) ← Called AFTER money movement confirmed
+    ↓
+Payment Updated (ledger_transaction_id set)
 ```
 
 ### Critical Invariant
 
-> **If payment exists, money exists.**
+> **If payment exists with ledger_transaction_id, money exists in ledger.**
 
-<!-- todo-vh: Update invariant description -->
-This is enforced by the ledger-first approach:
-- If ledger rejects → payment is NOT created
-- If ledger accepts → payment is created with `ledger_transaction_id`
+The ledger write happens **after** Stripe confirms money movement via webhook:
+- Payment creation: NO ledger write (no money has moved yet)
+- Stripe webhook confirms capture: THEN write to ledger
+- This ensures: "Ledger only records actual money movement"
 
 ## Database Schema
 
@@ -467,7 +473,7 @@ Composite primary key: `(seller_id, currency)` - supports multiple currencies pe
 
 ## Invariants Enforced
 
-1. **Ledger-First**: Payment creation always calls ledger first
+1. **Ledger Writes After Money Movement**: Ledger writes only occur after Stripe webhook confirms payment capture
 2. **No Balance Computation**: Payments never computes balances
 3. **State Machine**: Payment state transitions are explicit and enforced
 4. **Workflow State Only**: Payments database stores orchestration state, not financial truth

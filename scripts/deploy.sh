@@ -51,9 +51,9 @@ check_prerequisites() {
 build_images() {
     log_info "Deleting deployments..."
     
-    kubectl delete -f "$K8S_DIR/ledger/deployment.yaml"
-    kubectl delete -f "$K8S_DIR/payments/deployment.yaml"
-    kubectl delete -f "$K8S_DIR/frontend/deployment.yaml"
+    kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images..."
     

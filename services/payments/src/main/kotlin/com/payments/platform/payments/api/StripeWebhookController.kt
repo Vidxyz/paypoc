@@ -348,8 +348,13 @@ class StripeWebhookController(
     /**
      * Handles transfer.created event.
      * 
-     * This means a transfer was initiated with Stripe.
-     * We track this but don't process until transfer.paid (money hasn't moved yet).
+     * This means a transfer was initiated with Stripe and money has been debited from our account.
+     * We write to the ledger immediately because the money has left our control.
+     * 
+     * Note: In test mode, transfer.paid may never fire automatically, but the money has already
+     * left our account when the transfer is created. In production, transfer.paid fires when
+     * money arrives at the destination (can take days), but accounting should reflect when
+     * money leaves our control, not when it arrives.
      */
     private fun handleTransferCreated(event: Event) {
         val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
@@ -359,36 +364,12 @@ class StripeWebhookController(
         
         // Find payout by Stripe Transfer ID
         val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
-        if (payout == null) {
-            logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
-            return
-        }
-        
-        // Transfer created - payout should already be in PROCESSING state
-        // Just log for tracking
-        logger.info("Payout ${payout.id} has transfer $stripeTransferId created (state: ${payout.state})")
-    }
-    
-    /**
-     * Handles transfer.paid event.
-     * 
-     * This means the transfer completed successfully and money is in seller's account.
-     * Transitions payout to COMPLETED and publishes PayoutCompletedEvent to trigger ledger write.
-     */
-    private fun handleTransferPaid(event: Event) {
-        val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
-        val stripeTransferId = stripeTransfer.id
-        
-        logger.info("Transfer paid: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
-        
-        // Find payout by Stripe Transfer ID
-        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
             ?: run {
                 logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
                 return
             }
         
-        // Idempotency check: if already completed, skip
+        // Idempotency check: if already completed, skip (ledger already written)
         if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
             logger.info("Payout ${payout.id} already completed, skipping webhook processing")
             return
@@ -398,31 +379,14 @@ class StripeWebhookController(
         if (payout.state != com.payments.platform.payments.domain.PayoutState.PROCESSING) {
             logger.warn(
                 "Payout ${payout.id} is in state ${payout.state}, " +
-                "cannot complete payout. Expected PROCESSING. Stripe Transfer ID: $stripeTransferId"
+                "cannot process transfer.created. Expected PROCESSING. Stripe Transfer ID: $stripeTransferId"
             )
-            // Transition to FAILED if in unexpected state
-            try {
-                payoutService.transitionPayout(
-                    payout.id,
-                    com.payments.platform.payments.domain.PayoutState.FAILED,
-                    failureReason = "Unexpected state: ${payout.state}"
-                )
-            } catch (e: Exception) {
-                logger.error("Failed to transition payout ${payout.id} to FAILED", e)
-            }
             return
         }
         
-        // Transition payout to COMPLETED
+        // Money has left our account - write to ledger immediately
+        // This reduces SELLER_PAYABLE liability and STRIPE_CLEARING asset
         try {
-            val completedAt = Instant.now()
-            payoutService.transitionPayout(
-                payout.id,
-                com.payments.platform.payments.domain.PayoutState.COMPLETED,
-                completedAt = completedAt
-            )
-            logger.info("Payout ${payout.id} transitioned to COMPLETED (Stripe Transfer ID: $stripeTransferId)")
-            
             // Publish PayoutCompletedEvent to Kafka
             // This will trigger the ledger write
             val payoutCompletedEvent = com.payments.platform.payments.kafka.PayoutCompletedEvent(
@@ -439,9 +403,98 @@ class StripeWebhookController(
             )
             kafkaProducer.publishPayoutCompletedEvent(payoutCompletedEvent)
             
-            logger.info("Published PayoutCompletedEvent for payout ${payout.id} (Stripe Transfer ID: $stripeTransferId)")
+            logger.info(
+                "Published PayoutCompletedEvent for payout ${payout.id} " +
+                "(Stripe Transfer ID: $stripeTransferId) - money has left our account"
+            )
+            
+            // Transition payout to COMPLETED
+            // Note: In test mode, transfer.paid may never fire, so we complete it here
+            // In production, transfer.paid will fire later as confirmation
+            val completedAt = Instant.now()
+            payoutService.transitionPayout(
+                payout.id,
+                com.payments.platform.payments.domain.PayoutState.COMPLETED,
+                completedAt = completedAt
+            )
+            logger.info("Payout ${payout.id} transitioned to COMPLETED (Stripe Transfer ID: $stripeTransferId)")
         } catch (e: Exception) {
-            logger.error("Failed to process payout ${payout.id}", e)
+            logger.error("Failed to process transfer.created for payout ${payout.id}", e)
+        }
+    }
+    
+    /**
+     * Handles transfer.paid event.
+     * 
+     * This means the transfer completed successfully and money has arrived in seller's account.
+     * This is a confirmation event - the ledger was already written on transfer.created
+     * when the money left our account.
+     * 
+     * In test mode, this event may never fire automatically, but that's OK because
+     * we already wrote to the ledger on transfer.created.
+     */
+    private fun handleTransferPaid(event: Event) {
+        val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
+        val stripeTransferId = stripeTransfer.id
+        
+        logger.info("Transfer paid: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
+        
+        // Find payout by Stripe Transfer ID
+        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+            ?: run {
+                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+                return
+            }
+        
+        // Idempotency check: if already completed, skip
+        // (Ledger was already written on transfer.created)
+        if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+            logger.info(
+                "Payout ${payout.id} already completed (ledger written on transfer.created), " +
+                "transfer.paid is just confirmation"
+            )
+            return
+        }
+        
+        // If payout is still in PROCESSING, it means transfer.created webhook was missed
+        // Complete it now (ledger write will happen via idempotency)
+        if (payout.state == com.payments.platform.payments.domain.PayoutState.PROCESSING) {
+            logger.warn(
+                "Payout ${payout.id} still in PROCESSING when transfer.paid received. " +
+                "transfer.created webhook may have been missed. Completing payout now."
+            )
+            try {
+                val completedAt = Instant.now()
+                payoutService.transitionPayout(
+                    payout.id,
+                    com.payments.platform.payments.domain.PayoutState.COMPLETED,
+                    completedAt = completedAt
+                )
+                
+                // Publish PayoutCompletedEvent to Kafka (idempotency will prevent duplicate ledger writes)
+                val payoutCompletedEvent = com.payments.platform.payments.kafka.PayoutCompletedEvent(
+                    payoutId = payout.id,
+                    paymentId = payout.id,
+                    idempotencyKey = payout.idempotencyKey,
+                    sellerId = payout.sellerId,
+                    amountCents = payout.amountCents,
+                    currency = payout.currency,
+                    stripeTransferId = stripeTransferId,
+                    attempt = 1,
+                    createdAt = Instant.now(),
+                    payload = emptyMap()
+                )
+                kafkaProducer.publishPayoutCompletedEvent(payoutCompletedEvent)
+                
+                logger.info("Payout ${payout.id} completed via transfer.paid (transfer.created was missed)")
+            } catch (e: Exception) {
+                logger.error("Failed to complete payout ${payout.id} via transfer.paid", e)
+            }
+        } else {
+            logger.warn(
+                "Payout ${payout.id} is in unexpected state ${payout.state} when transfer.paid received. " +
+                "Stripe Transfer ID: $stripeTransferId"
+            )
         }
     }
     

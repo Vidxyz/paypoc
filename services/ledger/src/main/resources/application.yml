@@ -27,8 +27,10 @@ server:
 
 logging:
   level:
-    com.payments.platform.ledger: DEBUG
+    com.payments.platform.ledger: INFO
     org.springframework.jdbc: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: INFO
 
 springdoc:
   api-docs:

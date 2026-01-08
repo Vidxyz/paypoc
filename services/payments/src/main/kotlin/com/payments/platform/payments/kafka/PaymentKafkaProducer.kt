@@ -105,5 +105,27 @@ class PaymentKafkaProducer(
             throw e
         }
     }
+    
+    /**
+     * Publish a PayoutCompletedEvent to the payment.events topic.
+     * The payout ID is used as the Kafka key for partitioning.
+     */
+    fun publishPayoutCompletedEvent(event: PayoutCompletedEvent) {
+        try {
+            // Use PaymentMessage interface - PayoutCompletedEvent implements it
+            val result = kafkaTemplate.send(eventsTopic, event.payoutId.toString(), event)
+            result.whenComplete { result: SendResult<String, PaymentMessage>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish PayoutCompletedEvent for payout ${event.payoutId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published PayoutCompletedEvent for payout ${event.payoutId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing PayoutCompletedEvent for payout ${event.payoutId}", e)
+            throw e
+        }
+    }
 }
 

@@ -65,6 +65,26 @@
   background: #c82333;
 }
 
+.btn-warning {
+  background: #ffc107;
+  color: #212529;
+}
+
+.btn-warning:hover {
+  background: #e0a800;
+}
+
+.btn-warning:disabled {
+  background: #ffc107;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
 /* Form styling */
 .form-group {
   margin-bottom: 1.5rem;
@@ -187,6 +207,11 @@
 .badge-info {
   background: #d1ecf1;
   color: #0c5460;
+}
+
+.badge-secondary {
+  background: #6c757d;
+  color: white;
 }
 
 /* Responsive */

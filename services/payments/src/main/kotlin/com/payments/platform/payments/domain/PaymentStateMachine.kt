@@ -14,12 +14,13 @@ class PaymentStateMachine {
      * Key: current state
      * Value: set of valid next states
      */
-    // todo-vh: Refund state transitions
     private val allowedTransitions = mapOf(
         PaymentState.CREATED to setOf(PaymentState.CONFIRMING, PaymentState.FAILED),
         PaymentState.CONFIRMING to setOf(PaymentState.AUTHORIZED, PaymentState.FAILED),
         PaymentState.AUTHORIZED to setOf(PaymentState.CAPTURED, PaymentState.FAILED),
-        PaymentState.CAPTURED to emptySet<PaymentState>(),  // Terminal state
+        PaymentState.CAPTURED to setOf(PaymentState.REFUNDING),
+        PaymentState.REFUNDING to setOf(PaymentState.REFUNDED, PaymentState.FAILED),
+        PaymentState.REFUNDED to emptySet<PaymentState>(),  // Terminal state
         PaymentState.FAILED to emptySet<PaymentState>()     // Terminal state
     )
     

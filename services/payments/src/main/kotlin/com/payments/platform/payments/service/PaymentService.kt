@@ -190,7 +190,8 @@ class PaymentService(
             ledgerTransactionId = entity.ledgerTransactionId,
             idempotencyKey = entity.idempotencyKey,
             createdAt = entity.createdAt,
-            updatedAt = Instant.now()
+            updatedAt = Instant.now(),
+            refundedAt = entity.refundedAt
         )
         
         return paymentRepository.save(updated).toDomain()
@@ -217,7 +218,8 @@ class PaymentService(
             ledgerTransactionId = ledgerTransactionId,
             idempotencyKey = entity.idempotencyKey,
             createdAt = entity.createdAt,
-            updatedAt = Instant.now()
+            updatedAt = Instant.now(),
+            refundedAt = entity.refundedAt
         )
         
         return paymentRepository.save(updated).toDomain()
@@ -251,7 +253,8 @@ class PaymentService(
             ledgerTransactionId = entity.ledgerTransactionId,
             idempotencyKey = entity.idempotencyKey,
             createdAt = entity.createdAt,
-            updatedAt = Instant.now()
+            updatedAt = Instant.now(),
+            refundedAt = entity.refundedAt
         )
         
         val saved = paymentRepository.save(updated)
@@ -294,6 +297,18 @@ class PaymentService(
         val pageResult = paymentRepository.findByBuyerId(buyerId, pageable)
         
         return pageResult.content.map { it.toDomain() }
+    }
+    
+    /**
+     * Checks if a payment has been refunded.
+     * 
+     * @param paymentId Payment ID
+     * @return true if payment has any refunds, false otherwise
+     */
+    fun isRefunded(paymentId: UUID): Boolean {
+        val entity = paymentRepository.findById(paymentId)
+            .orElseThrow { IllegalArgumentException("Payment not found: $paymentId") }
+        return entity.refundedAt != null
     }
 }
 

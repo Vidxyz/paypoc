@@ -14,6 +14,7 @@ import java.util.UUID
 @Service
 class PaymentKafkaProducer(
     private val kafkaTemplate: KafkaTemplate<String, PaymentMessage>,
+    private val genericKafkaTemplate: KafkaTemplate<String, Any>,
     @Value("\${kafka.topics.commands}") private val commandsTopic: String,
     @Value("\${kafka.topics.events}") private val eventsTopic: String,
     @Value("\${kafka.topics.retry}") private val retryTopic: String
@@ -79,6 +80,28 @@ class PaymentKafkaProducer(
             }
         } catch (e: Exception) {
             logger.error("Error publishing retry command for payment ${command.paymentId}", e)
+            throw e
+        }
+    }
+    
+    /**
+     * Publish a RefundCompletedEvent to the payment.events topic.
+     * The refund ID is used as the Kafka key for partitioning.
+     */
+    fun publishRefundCompletedEvent(event: RefundCompletedEvent) {
+        try {
+            // Use generic KafkaTemplate to send RefundCompletedEvent (it's not a PaymentMessage)
+            val result = genericKafkaTemplate.send(eventsTopic, event.refundId.toString(), event)
+            result.whenComplete { result: SendResult<String, Any>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish RefundCompletedEvent for refund ${event.refundId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published RefundCompletedEvent for refund ${event.refundId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing RefundCompletedEvent for refund ${event.refundId}", e)
             throw e
         }
     }

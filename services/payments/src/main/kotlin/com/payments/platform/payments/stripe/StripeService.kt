@@ -134,6 +134,53 @@ class StripeService(
     }
     
     /**
+     * Creates a Stripe Refund for a PaymentIntent.
+     * 
+     * For full refunds, amountCents should be null (Stripe will refund the full amount).
+     * 
+     * @param paymentIntentId The PaymentIntent ID to refund
+     * @param amountCents Optional amount to refund in cents (null for full refund)
+     * @return Created Refund
+     * @throws StripeException if Stripe API call fails
+     */
+    fun createRefund(paymentIntentId: String, amountCents: Long? = null): com.stripe.model.Refund {
+        try {
+            val paramsBuilder = com.stripe.param.RefundCreateParams.builder()
+                .setPaymentIntent(paymentIntentId)
+            
+            // If amountCents is provided, set it (otherwise Stripe refunds full amount)
+            if (amountCents != null) {
+                paramsBuilder.setAmount(amountCents)
+            }
+            
+            val params = paramsBuilder.build()
+            val refund = com.stripe.model.Refund.create(params)
+            
+            logger.info(
+                "Created Stripe Refund: ${refund.id} for PaymentIntent: $paymentIntentId " +
+                "(amount: ${refund.amount ?: "full"})"
+            )
+            
+            return refund
+        } catch (e: StripeException) {
+            logger.error("Failed to create Stripe Refund for PaymentIntent $paymentIntentId: ${e.message}", e)
+            throw StripeServiceException("Failed to create Stripe Refund: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Retrieves a Refund by ID.
+     */
+    fun getRefund(refundId: String): com.stripe.model.Refund {
+        try {
+            return com.stripe.model.Refund.retrieve(refundId)
+        } catch (e: StripeException) {
+            logger.error("Failed to retrieve Stripe Refund $refundId: ${e.message}", e)
+            throw StripeServiceException("Failed to retrieve Stripe Refund: ${e.message}", e)
+        }
+    }
+    
+    /**
      * Gets the webhook secret for signature verification.
      */
     fun getWebhookSecret(): String {

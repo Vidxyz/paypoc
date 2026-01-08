@@ -52,7 +52,10 @@ class PaymentEntity(
     val createdAt: Instant,
     
     @Column(name = "updated_at", nullable = false)
-    val updatedAt: Instant
+    val updatedAt: Instant,
+    
+    @Column(name = "refunded_at")
+    val refundedAt: Instant?
 ) {
     // JPA requires no-arg constructor
     constructor() : this(
@@ -68,7 +71,8 @@ class PaymentEntity(
         ledgerTransactionId = null,
         idempotencyKey = "",
         createdAt = Instant.now(),
-        updatedAt = Instant.now()
+        updatedAt = Instant.now(),
+        refundedAt = null
     )
     
     fun toDomain(): Payment {
@@ -104,7 +108,8 @@ class PaymentEntity(
                 ledgerTransactionId = payment.ledgerTransactionId,
                 idempotencyKey = payment.idempotencyKey,
                 createdAt = payment.createdAt,
-                updatedAt = payment.updatedAt
+                updatedAt = payment.updatedAt,
+                refundedAt = null  // Set via separate update when refund completes
             )
         }
     }

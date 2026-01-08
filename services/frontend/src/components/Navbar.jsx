@@ -1,46 +1,87 @@
 import { Link, useLocation } from 'react-router-dom'
-import './Navbar.css'
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  Button,
+  Box,
+  Chip,
+} from '@mui/material'
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
+import PersonIcon from '@mui/icons-material/Person'
+import LogoutIcon from '@mui/icons-material/Logout'
 
 function Navbar({ onLogout, buyerId }) {
   const location = useLocation()
 
   return (
-    <nav className="navbar">
-      <div className="navbar-container">
-        <Link to="/" className="navbar-brand">
-          <span className="brand-icon">🛒</span>
-          BuyIt
-        </Link>
-        
-        <div className="navbar-menu">
-          <Link
+    <AppBar position="static" elevation={2}>
+      <Toolbar>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexGrow: 1 }}>
+          <ShoppingCartIcon />
+          <Typography
+            variant="h6"
+            component={Link}
             to="/"
-            className={`navbar-link ${location.pathname === '/' ? 'active' : ''}`}
+            sx={{
+              textDecoration: 'none',
+              color: 'inherit',
+              fontWeight: 600,
+            }}
+          >
+            BuyIt
+          </Typography>
+        </Box>
+        
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mr: 3 }}>
+          <Button
+            component={Link}
+            to="/"
+            color="inherit"
+            variant={location.pathname === '/' ? 'outlined' : 'text'}
+            sx={{ minWidth: 'auto', px: 2 }}
           >
             Home
-          </Link>
-          <Link
+          </Button>
+          <Button
+            component={Link}
             to="/checkout"
-            className={`navbar-link ${location.pathname === '/checkout' ? 'active' : ''}`}
+            color="inherit"
+            variant={location.pathname === '/checkout' ? 'outlined' : 'text'}
+            sx={{ minWidth: 'auto', px: 2 }}
           >
             Checkout
-          </Link>
-          <Link
+          </Button>
+          <Button
+            component={Link}
             to="/payments"
-            className={`navbar-link ${location.pathname === '/payments' ? 'active' : ''}`}
+            color="inherit"
+            variant={location.pathname === '/payments' ? 'outlined' : 'text'}
+            sx={{ minWidth: 'auto', px: 2 }}
           >
             Payments
-          </Link>
-        </div>
+          </Button>
+        </Box>
         
-        <div className="navbar-user">
-          <span className="user-id">👤 {buyerId}</span>
-          <button onClick={onLogout} className="btn btn-secondary btn-sm">
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Chip
+            icon={<PersonIcon />}
+            label={buyerId}
+            variant="outlined"
+            sx={{ borderColor: 'rgba(255, 255, 255, 0.5)', color: 'inherit' }}
+          />
+          <Button
+            onClick={onLogout}
+            color="inherit"
+            variant="outlined"
+            startIcon={<LogoutIcon />}
+            size="small"
+          >
             Logout
-          </button>
-        </div>
-      </div>
-    </nav>
+          </Button>
+        </Box>
+      </Toolbar>
+    </AppBar>
   )
 }
 

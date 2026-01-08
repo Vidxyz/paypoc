@@ -1,50 +1,101 @@
 import { useNavigate } from 'react-router-dom'
-import '../App.css'
+import {
+  Container,
+  Card,
+  CardContent,
+  Typography,
+  Button,
+  Box,
+  Grid,
+} from '@mui/material'
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
+import HistoryIcon from '@mui/icons-material/History'
+import SecurityIcon from '@mui/icons-material/Security'
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 
 function Home() {
   const navigate = useNavigate()
 
   return (
-    <div className="page-container">
-      <div className="card" style={{ textAlign: 'center', padding: '4rem 2rem' }}>
-        <h1 style={{ fontSize: '3rem', marginBottom: '1rem', background: 'linear-gradient(135deg, #20b2aa 0%, #2ecc71 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-          Welcome to BuyIt
-        </h1>
-        <p style={{ fontSize: '1.25rem', color: '#666', marginBottom: '3rem' }}>
-          Your trusted payment platform for seamless transactions
-        </p>
-        <button
-          onClick={() => navigate('/checkout')}
-          className="btn btn-primary"
-          style={{ fontSize: '1.25rem', padding: '1rem 2rem' }}
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Card sx={{ textAlign: 'center', p: 4, mb: 4, background: 'linear-gradient(135deg, rgba(32, 178, 170, 0.1) 0%, rgba(46, 204, 113, 0.1) 100%)' }}>
+        <Typography
+          variant="h2"
+          component="h1"
+          sx={{
+            mb: 2,
+            background: 'linear-gradient(135deg, #20b2aa 0%, #2ecc71 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            fontWeight: 700,
+          }}
         >
-          Go to Checkout →
-        </button>
-      </div>
+          Welcome to BuyIt
+        </Typography>
+        <Typography variant="h6" color="text.secondary" sx={{ mb: 4 }}>
+          Your trusted payment platform for seamless transactions
+        </Typography>
+        <Button
+          onClick={() => navigate('/checkout')}
+          variant="contained"
+          size="large"
+          endIcon={<ArrowForwardIcon />}
+          sx={{ px: 4, py: 1.5 }}
+        >
+          Go to Checkout
+        </Button>
+      </Card>
       
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginTop: '2rem' }}>
-        <div className="card">
-          <h3>🛒 Easy Checkout</h3>
-          <p style={{ color: '#666', marginTop: '1rem' }}>
-            Create payments quickly and securely with our streamlined checkout process.
-          </p>
-        </div>
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <ShoppingCartIcon color="primary" fontSize="large" />
+                <Typography variant="h5" component="h3">
+                  Easy Checkout
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                Create payments quickly and securely with our streamlined checkout process.
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
         
-        <div className="card">
-          <h3>📊 Payment History</h3>
-          <p style={{ color: '#666', marginTop: '1rem' }}>
-            View all your past transactions and track payment status in real-time.
-          </p>
-        </div>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <HistoryIcon color="primary" fontSize="large" />
+                <Typography variant="h5" component="h3">
+                  Payment History
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                View all your past transactions and track payment status in real-time.
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
         
-        <div className="card">
-          <h3>🔒 Secure Payments</h3>
-          <p style={{ color: '#666', marginTop: '1rem' }}>
-            Powered by Stripe, your payment information is always protected.
-          </p>
-        </div>
-      </div>
-    </div>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <SecurityIcon color="primary" fontSize="large" />
+                <Typography variant="h5" component="h3">
+                  Secure Payments
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                Powered by Stripe, your payment information is always protected.
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+    </Container>
   )
 }
 

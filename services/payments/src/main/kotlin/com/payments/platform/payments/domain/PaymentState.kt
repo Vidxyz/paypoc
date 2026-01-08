@@ -9,6 +9,8 @@ enum class PaymentState {
     CONFIRMING,
     AUTHORIZED,
     CAPTURED,
+    REFUNDING,
+    REFUNDED,
     FAILED
 }
 

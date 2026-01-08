@@ -8,6 +8,7 @@ import com.payments.platform.payments.service.PaymentService
 import com.payments.platform.payments.stripe.StripeService
 import com.stripe.model.Event
 import com.stripe.model.PaymentIntent
+import com.stripe.model.Refund
 import com.stripe.net.Webhook
 import io.swagger.v3.oas.annotations.Hidden
 import org.slf4j.LoggerFactory
@@ -23,6 +24,7 @@ import java.util.UUID
  * - payment_intent.succeeded: Payment was captured successfully
  * - payment_intent.payment_failed: Payment authorization failed
  * - payment_intent.amount_capturable_updated: Payment was authorized (ready to capture)
+ * - refund.updated: Refund status changed (process when status is "succeeded")
  * 
  * All webhook handlers are idempotent and validate webhook signatures.
  */
@@ -33,7 +35,9 @@ class StripeWebhookController(
     private val stripeService: StripeService,
     private val paymentRepository: PaymentRepository,
     private val paymentService: PaymentService,
-    private val kafkaProducer: PaymentKafkaProducer
+    private val kafkaProducer: PaymentKafkaProducer,
+    private val refundService: com.payments.platform.payments.service.RefundService,
+    private val refundRepository: com.payments.platform.payments.persistence.RefundRepository
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -69,8 +73,9 @@ class StripeWebhookController(
                 "payment_intent.succeeded" -> handlePaymentIntentSucceeded(event)
                 "payment_intent.payment_failed" -> handlePaymentIntentFailed(event)
                 "payment_intent.amount_capturable_updated" -> handlePaymentIntentAuthorized(event)
+                "refund.updated" -> handleRefundUpdated(event)
                 else -> {
-                    logger.debug("Unhandled webhook event type: ${event.type}")
+                    logger.info("Unhandled webhook event type: ${event.type}")
                 }
             }
             
@@ -176,6 +181,8 @@ class StripeWebhookController(
      * 
      * This means the payment was authorized (funds are on hold, ready to capture).
      * Transitions payment to AUTHORIZED state and triggers capture.
+     * 
+     * Handles the case where payment might be in CREATED state by transitioning through CONFIRMING first.
      */
     private fun handlePaymentIntentAuthorized(event: Event) {
         val paymentIntent = event.dataObjectDeserializer.deserializeUnsafe() as PaymentIntent
@@ -198,10 +205,30 @@ class StripeWebhookController(
             return
         }
         
-        // Transition to AUTHORIZED
         try {
-            paymentService.transitionPayment(payment.id, PaymentState.AUTHORIZED)
-            logger.info("Payment ${payment.id} transitioned to AUTHORIZED (PaymentIntent: $paymentIntentId)")
+            // Handle state transition: if in CREATED, transition through CONFIRMING first
+            when (payment.state) {
+                PaymentState.CREATED -> {
+                    // Transition through intermediate state
+                    paymentService.transitionPayment(payment.id, PaymentState.CONFIRMING)
+                    logger.info("Payment ${payment.id} transitioned from CREATED to CONFIRMING")
+                    // Now transition to AUTHORIZED
+                    paymentService.transitionPayment(payment.id, PaymentState.AUTHORIZED)
+                    logger.info("Payment ${payment.id} transitioned from CONFIRMING to AUTHORIZED")
+                }
+                PaymentState.CONFIRMING -> {
+                    // Direct transition to AUTHORIZED
+                    paymentService.transitionPayment(payment.id, PaymentState.AUTHORIZED)
+                    logger.info("Payment ${payment.id} transitioned from CONFIRMING to AUTHORIZED")
+                }
+                else -> {
+                    logger.warn(
+                        "Payment ${payment.id} is in state ${payment.state}, " +
+                        "cannot transition to AUTHORIZED. Expected CREATED or CONFIRMING. PaymentIntent: $paymentIntentId"
+                    )
+                    return
+                }
+            }
             
             // Trigger capture (manual capture mode)
             // Publish CapturePaymentCommand to Kafka
@@ -213,7 +240,92 @@ class StripeWebhookController(
             kafkaProducer.publishCommand(captureCommand)
             logger.info("Published CapturePaymentCommand for payment ${payment.id} after authorization")
         } catch (e: Exception) {
-            logger.error("Failed to transition payment ${payment.id} to AUTHORIZED", e)
+            logger.error("Failed to transition payment ${payment.id} to AUTHORIZED: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Handles refund.updated event.
+     * 
+     * This means the refund status changed. We only process when status is "succeeded".
+     * Transitions refund to REFUNDED state and publishes RefundCompletedEvent to trigger ledger write.
+     */
+    private fun handleRefundUpdated(event: Event) {
+        val stripeRefund = event.dataObjectDeserializer.deserializeUnsafe() as Refund
+        val stripeRefundId = stripeRefund.id
+        val refundStatus = stripeRefund.status
+        
+        logger.info("Refund updated: $stripeRefundId, status: $refundStatus")
+        
+        // Only process when refund status is "succeeded"
+        if (refundStatus != "succeeded") {
+            logger.debug("Refund $stripeRefundId status is $refundStatus, not processing (only process 'succeeded' status)")
+            return
+        }
+        
+        // Find refund by Stripe Refund ID
+        val refundEntity = refundRepository.findByStripeRefundId(stripeRefundId)
+            ?: run {
+                logger.warn("Refund not found for Stripe Refund ID: $stripeRefundId")
+                return
+            }
+        
+        val refund = refundEntity.toDomain()
+        
+        // Idempotency check: if already refunded, skip
+        if (refund.state == com.payments.platform.payments.domain.RefundState.REFUNDED) {
+            logger.info("Refund ${refund.id} already refunded, skipping webhook processing")
+            return
+        }
+        
+        // Validate state: must be REFUNDING
+        if (refund.state != com.payments.platform.payments.domain.RefundState.REFUNDING) {
+            logger.warn(
+                "Refund ${refund.id} is in state ${refund.state}, " +
+                "cannot complete refund. Expected REFUNDING. Stripe Refund ID: $stripeRefundId"
+            )
+            // Transition to FAILED if in unexpected state
+            try {
+                refundService.transitionRefund(refund.id, com.payments.platform.payments.domain.RefundState.FAILED)
+            } catch (e: Exception) {
+                logger.error("Failed to transition refund ${refund.id} to FAILED", e)
+            }
+            return
+        }
+        
+        // Transition refund to REFUNDED
+        try {
+            refundService.transitionRefund(refund.id, com.payments.platform.payments.domain.RefundState.REFUNDED)
+            logger.info("Refund ${refund.id} transitioned to REFUNDED (Stripe Refund ID: $stripeRefundId)")
+            
+            // Get payment details for the event
+            val paymentEntity = paymentRepository.findById(refund.paymentId).orElse(null)
+            if (paymentEntity == null) {
+                logger.error("Payment ${refund.paymentId} not found for refund ${refund.id}")
+                return
+            }
+            val payment = paymentEntity.toDomain()
+            
+            // Publish RefundCompletedEvent to Kafka
+            // This will trigger the ledger write
+            val refundCompletedEvent = com.payments.platform.payments.kafka.RefundCompletedEvent(
+                refundId = refund.id,
+                paymentId = refund.paymentId,
+                refundAmountCents = refund.refundAmountCents,
+                platformFeeRefundCents = refund.platformFeeRefundCents,
+                netSellerRefundCents = refund.netSellerRefundCents,
+                currency = refund.currency,
+                stripeRefundId = stripeRefundId,
+                stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+                idempotencyKey = refund.idempotencyKey,
+                buyerId = payment.buyerId,
+                sellerId = payment.sellerId
+            )
+            kafkaProducer.publishRefundCompletedEvent(refundCompletedEvent)
+            
+            logger.info("Published RefundCompletedEvent for refund ${refund.id} (Stripe Refund ID: $stripeRefundId)")
+        } catch (e: Exception) {
+            logger.error("Failed to process refund ${refund.id}", e)
         }
     }
 }

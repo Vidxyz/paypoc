@@ -82,6 +82,26 @@ class KafkaConfig(
     }
 
     @Bean
+    fun genericProducerFactory(objectMapper: ObjectMapper): ProducerFactory<String, Any> {
+        val configs = mapOf(
+            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG to bootstrapServers,
+            ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG to StringSerializer::class.java,
+            ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG to JsonSerializer::class.java,
+            ProducerConfig.ACKS_CONFIG to "all",
+            ProducerConfig.RETRIES_CONFIG to 3,
+            ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG to true
+        )
+        val factory = DefaultKafkaProducerFactory<String, Any>(configs)
+        factory.setValueSerializer(JsonSerializer(objectMapper))
+        return factory
+    }
+
+    @Bean
+    fun genericKafkaTemplate(genericProducerFactory: ProducerFactory<String, Any>): KafkaTemplate<String, Any> {
+        return KafkaTemplate(genericProducerFactory)
+    }
+
+    @Bean
     fun consumerFactory(objectMapper: ObjectMapper): ConsumerFactory<String, PaymentMessage> {
         val configs = mapOf(
             ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG to bootstrapServers,

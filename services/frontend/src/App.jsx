@@ -1,11 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { Box } from '@mui/material'
 import Home from './pages/Home'
 import Checkout from './pages/Checkout'
 import Payments from './pages/Payments'
 import LoginModal from './components/LoginModal'
 import Navbar from './components/Navbar'
-import './App.css'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -62,7 +62,7 @@ function App() {
 
   return (
     <BrowserRouter>
-      <div className="app">
+      <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
         {isAuthenticated && (
           <Navbar onLogout={handleLogout} buyerId={buyerId} />
         )}
@@ -101,7 +101,7 @@ function App() {
             }
           />
         </Routes>
-      </div>
+      </Box>
     </BrowserRouter>
   )
 }

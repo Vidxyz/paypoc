@@ -78,6 +78,26 @@ export const paymentsApi = {
     })
     return response.data
   },
+
+  /**
+   * Create a refund for a payment
+   * @param {string} paymentId - Payment UUID
+   * @returns {Promise} Refund response
+   */
+  createRefund: async (paymentId) => {
+    const response = await api.post(`/payments/${paymentId}/refund`)
+    return response.data
+  },
+
+  /**
+   * Get refunds for a payment
+   * @param {string} paymentId - Payment UUID
+   * @returns {Promise} List of refunds
+   */
+  getRefundsForPayment: async (paymentId) => {
+    const response = await api.get(`/payments/${paymentId}/refunds`)
+    return response.data
+  },
 }
 
 export default paymentsApi

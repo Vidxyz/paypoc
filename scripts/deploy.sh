@@ -106,11 +106,12 @@ deploy_ledger() {
     log_info "Deploying Ledger Service..."
     kubectl apply -f "$K8S_DIR/ledger/configmap.yaml"
     kubectl apply -f "$K8S_DIR/ledger/secret.yaml"
+    # kubectl delete -f "$K8S_DIR/ledger/deployment.yaml"
     kubectl apply -f "$K8S_DIR/ledger/deployment.yaml"
     kubectl apply -f "$K8S_DIR/ledger/service.yaml"
     
-    log_info "Waiting for Ledger Service to be ready..."
-    kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || true
+    # log_info "Waiting for Ledger Service to be ready..."
+    # kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || true
 }
 
 deploy_ingress() {
@@ -135,24 +136,26 @@ deploy_payments() {
     log_info "Deploying Payments Service..."
     kubectl apply -f "$K8S_DIR/payments/configmap.yaml"
     kubectl apply -f "$K8S_DIR/payments/secret.yaml"
+    # kubectl delete -f "$K8S_DIR/payments/deployment.yaml"
     kubectl apply -f "$K8S_DIR/payments/deployment.yaml"
     kubectl apply -f "$K8S_DIR/payments/service.yaml"
     kubectl apply -f "$K8S_DIR/payments/ingress.yaml"
     
-    log_info "Waiting for Payments Service to be ready..."
-    kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || true
+    # log_info "Waiting for Payments Service to be ready..."
+    # kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || true
 }
 
 deploy_frontend() {
     log_info "Deploying Frontend..."
     kubectl apply -f "$K8S_DIR/frontend/namespace.yaml"
     kubectl apply -f "$K8S_DIR/frontend/configmap.yaml"
+    # kubectl delete -f "$K8S_DIR/frontend/deployment.yaml"
     kubectl apply -f "$K8S_DIR/frontend/deployment.yaml"
     kubectl apply -f "$K8S_DIR/frontend/service.yaml"
     kubectl apply -f "$K8S_DIR/frontend/ingress.yaml"
     
-    log_info "Waiting for Frontend to be ready..."
-    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || true
+    # log_info "Waiting for Frontend to be ready..."
+    # kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || true
 }
 
 wait_for_services() {

@@ -3,7 +3,9 @@ package com.payments.platform.payments.stripe
 import com.stripe.Stripe
 import com.stripe.exception.StripeException
 import com.stripe.model.PaymentIntent
+import com.stripe.model.Transfer
 import com.stripe.param.PaymentIntentCreateParams
+import com.stripe.param.TransferCreateParams
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -31,17 +33,18 @@ class StripeService(
     }
     
     /**
-     * Creates a Stripe PaymentIntent with marketplace split.
+     * Creates a Stripe PaymentIntent that collects money to the platform account.
      * 
      * Configuration:
      * - capture_method: "manual" (we capture after authorization)
-     * - application_fee_amount: platform fee (10% of gross)
-     * - transfer_data.destination: seller's Stripe account ID
+     * - NO destination: money goes to platform account (not seller)
+     * - NO application_fee: we'll handle split via transfers later
+     * 
+     * Money flow: Buyer → Platform Stripe Account
+     * Platform will later transfer seller portion via Stripe Transfers API.
      * 
      * @param amountCents Total amount in cents
      * @param currency Currency code (e.g., "usd")
-     * @param platformFeeCents Platform fee in cents
-     * @param sellerStripeAccountId Seller's Stripe connected account ID
      * @param description Payment description
      * @param metadata Additional metadata (e.g., paymentId, buyerId, sellerId)
      * @return Created PaymentIntent with client_secret
@@ -50,15 +53,10 @@ class StripeService(
     fun createPaymentIntent(
         amountCents: Long,
         currency: String,
-        platformFeeCents: Long,
-        sellerStripeAccountId: String,
         description: String?,
         metadata: Map<String, String>
     ): PaymentIntent {
         try {
-            val transferDataBuilder = PaymentIntentCreateParams.TransferData.builder()
-                .setDestination(sellerStripeAccountId)
-            
             // Configure automatic payment methods to disallow redirects
             // This prevents the need for return_url when confirming with card payment methods
             val automaticPaymentMethodsBuilder = PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
@@ -69,8 +67,6 @@ class StripeService(
                 .setAmount(amountCents)
                 .setCurrency(currency.lowercase())  // Stripe expects lowercase
                 .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)  // Manual capture
-                .setApplicationFeeAmount(platformFeeCents)
-                .setTransferData(transferDataBuilder.build())
                 .setAutomaticPaymentMethods(automaticPaymentMethodsBuilder.build())
             
             if (description != null) {
@@ -86,13 +82,13 @@ class StripeService(
             
             val params: PaymentIntentCreateParams = paramsBuilder.build()
             
-            // Create PaymentIntent - explicitly specify type to resolve overload ambiguity
+            // Create PaymentIntent - money goes to platform account
             val paymentIntent: PaymentIntent = PaymentIntent.create(params)
             
             logger.info(
                 "Created Stripe PaymentIntent: ${paymentIntent.id} " +
                 "for amount ${amountCents} ${currency} " +
-                "(platform fee: ${platformFeeCents}, seller: ${sellerStripeAccountId})"
+                "(money collected to platform account)"
             )
             
             return paymentIntent
@@ -177,6 +173,66 @@ class StripeService(
         } catch (e: StripeException) {
             logger.error("Failed to retrieve Stripe Refund $refundId: ${e.message}", e)
             throw StripeServiceException("Failed to retrieve Stripe Refund: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Creates a Stripe Transfer to send money from platform account to seller account.
+     * 
+     * This is used for payouts after payment is captured.
+     * Money flows: Platform Stripe Account → Seller Stripe Account
+     * 
+     * @param amountCents Amount to transfer in cents
+     * @param currency Currency code (e.g., "usd")
+     * @param destinationAccountId Seller's Stripe connected account ID
+     * @param metadata Additional metadata (e.g., payoutId, paymentId, sellerId)
+     * @return Created Transfer
+     * @throws StripeException if Stripe API call fails
+     */
+    fun createTransfer(
+        amountCents: Long,
+        currency: String,
+        destinationAccountId: String,
+        metadata: Map<String, String> = emptyMap()
+    ): Transfer {
+        try {
+            val paramsBuilder = TransferCreateParams.builder()
+                .setAmount(amountCents)
+                .setCurrency(currency.lowercase())  // Stripe expects lowercase
+                .setDestination(destinationAccountId)
+            
+            // Add metadata if provided
+            if (metadata.isNotEmpty()) {
+                metadata.forEach { (key, value) ->
+                    paramsBuilder.putMetadata(key, value)
+                }
+            }
+            
+            val params = paramsBuilder.build()
+            val transfer = Transfer.create(params)
+            
+            logger.info(
+                "Created Stripe Transfer: ${transfer.id} " +
+                "for amount ${amountCents} ${currency} " +
+                "to seller account: ${destinationAccountId}"
+            )
+            
+            return transfer
+        } catch (e: StripeException) {
+            logger.error("Failed to create Stripe Transfer: ${e.message}", e)
+            throw StripeServiceException("Failed to create Stripe Transfer: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Retrieves a Transfer by ID.
+     */
+    fun getTransfer(transferId: String): Transfer {
+        try {
+            return Transfer.retrieve(transferId)
+        } catch (e: StripeException) {
+            logger.error("Failed to retrieve Stripe Transfer $transferId: ${e.message}", e)
+            throw StripeServiceException("Failed to retrieve Stripe Transfer: ${e.message}", e)
         }
     }
     

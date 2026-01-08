@@ -69,6 +69,7 @@ The current implementation focuses on **payments infrastructure** - a robust, pr
 - ✅ **Payment Processing**: Full payment lifecycle (CREATED → CONFIRMING → AUTHORIZED → CAPTURED)
 - ✅ **Refunds**: Complete refund workflow with state transitions (CAPTURED → REFUNDING → REFUNDED)
 - ✅ **Marketplace Split**: Automatic 10% platform fee calculation and seller payout
+- ✅ **Payouts**: Manual payout system for transferring seller funds (PENDING → PROCESSING → COMPLETED/FAILED)
 - ✅ **Webhook Reliability**: Idempotent webhook processing with signature verification
 - ✅ **Financial Correctness**: Double-entry bookkeeping with SERIALIZABLE isolation
 - ✅ **Frontend UI**: React-based interface for buyers to create payments and view history
@@ -172,6 +173,7 @@ Payment orchestration layer that coordinates payment workflows with Stripe and m
 - Handle Stripe webhooks (payment status updates)
 - Manage payment state machine
 - Process refunds
+- Manage payouts to sellers
 - Integrate with Ledger Service for financial recording
 
 **Documentation**: [services/payments/README.md](services/payments/README.md)
@@ -201,6 +203,98 @@ React-based web application for buyers to create payments and view payment histo
 - Refund initiation
 
 **Documentation**: [services/frontend/README.md](services/frontend/README.md)
+
+## 💰 Payout Flow
+
+The platform uses a **Separate Charges and Transfers** model with Stripe Connect:
+
+### Money Flow Overview
+
+1. **Payment Capture**: When a buyer pays, all funds are collected into the platform's Stripe account
+2. **Ledger Recording**: The ledger records the transaction, crediting `SELLER_PAYABLE` (a liability account representing money owed to the seller)
+3. **Payout Initiation**: Sellers can request payouts via API, which creates a Stripe Transfer
+4. **Transfer Completion**: When Stripe confirms the transfer is complete, the ledger debits `SELLER_PAYABLE` and credits `STRIPE_CLEARING`
+
+### Payout State Machine
+
+Payouts follow a strict state machine with the following transitions:
+
+```
+PENDING → PROCESSING → COMPLETED
+         ↓
+       FAILED
+```
+
+- **PENDING**: Payout created but not yet initiated with Stripe (not currently used - payouts start in PROCESSING)
+- **PROCESSING**: Stripe Transfer created, waiting for completion webhook
+- **COMPLETED**: Transfer completed successfully, ledger updated
+- **FAILED**: Transfer failed (terminal state)
+
+### Payout API Endpoints
+
+**Create Manual Payout**:
+```http
+POST /api/payouts
+Content-Type: application/json
+
+{
+  "sellerId": "seller123",
+  "amountCents": 10000,
+  "currency": "usd",
+  "description": "Monthly payout"
+}
+```
+
+**Payout All Pending Funds**:
+```http
+POST /api/sellers/{sellerId}/payouts
+Content-Type: application/json
+
+{
+  "currency": "usd"
+}
+```
+
+**Get Payout Details**:
+```http
+GET /api/payouts/{payoutId}
+```
+
+**List Seller Payouts**:
+```http
+GET /api/sellers/{sellerId}/payouts
+```
+
+### Payout Workflow
+
+1. **Payout Creation** (`POST /api/payouts` or `POST /api/sellers/{sellerId}/payouts`):
+   - Validates seller has Stripe Connect account configured
+   - Checks ledger for available balance (for pending funds endpoint)
+   - Creates Stripe Transfer via Stripe API
+   - Persists payout in `PROCESSING` state
+   - **No ledger write yet** - money hasn't moved
+
+2. **Stripe Transfer Webhooks**:
+   - `transfer.created`: Transfer initiated (logged for tracking)
+   - `transfer.paid`: Transfer completed successfully
+     - Transitions payout to `COMPLETED`
+     - Publishes `PayoutCompletedEvent` to Kafka
+   - `transfer.failed`: Transfer failed
+     - Transitions payout to `FAILED`
+     - Records failure reason
+
+3. **Ledger Update** (via Kafka consumer):
+   - `PayoutCompletedEventConsumer` processes the event
+   - Creates ledger transaction:
+     - **DR** `SELLER_PAYABLE` (reduces liability)
+     - **CR** `STRIPE_CLEARING` (money moved to seller's Stripe account)
+
+### Key Principles
+
+- **Ledger writes only after Stripe confirms**: The ledger is only updated when Stripe webhook confirms the transfer is complete
+- **Idempotency**: All payout operations are idempotent using unique idempotency keys
+- **State Machine Enforcement**: Payout state transitions are enforced by `PayoutStateMachine`, preventing invalid transitions
+- **Separation of Concerns**: Payments Service orchestrates payouts; Ledger Service maintains financial truth
 
 ## 🔮 Future State: Full E-Commerce Platform
 

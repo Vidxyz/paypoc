@@ -9,6 +9,7 @@ import com.payments.platform.payments.stripe.StripeService
 import com.stripe.model.Event
 import com.stripe.model.PaymentIntent
 import com.stripe.model.Refund
+import com.stripe.model.Transfer
 import com.stripe.net.Webhook
 import io.swagger.v3.oas.annotations.Hidden
 import org.slf4j.LoggerFactory
@@ -38,7 +39,8 @@ class StripeWebhookController(
     private val paymentService: PaymentService,
     private val kafkaProducer: PaymentKafkaProducer,
     private val refundService: com.payments.platform.payments.service.RefundService,
-    private val refundRepository: com.payments.platform.payments.persistence.RefundRepository
+    private val refundRepository: com.payments.platform.payments.persistence.RefundRepository,
+    private val payoutService: com.payments.platform.payments.service.PayoutService
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -75,6 +77,9 @@ class StripeWebhookController(
                 "payment_intent.payment_failed" -> handlePaymentIntentFailed(event)
                 "payment_intent.amount_capturable_updated" -> handlePaymentIntentAuthorized(event)
                 "refund.updated" -> handleRefundUpdated(event)
+                "transfer.created" -> handleTransferCreated(event)
+                "transfer.paid" -> handleTransferPaid(event)
+                "transfer.failed" -> handleTransferFailed(event)
                 else -> {
                     logger.info("Unhandled webhook event type: ${event.type}")
                 }
@@ -337,6 +342,148 @@ class StripeWebhookController(
             logger.info("Published RefundCompletedEvent for refund ${refund.id} (Stripe Refund ID: $stripeRefundId)")
         } catch (e: Exception) {
             logger.error("Failed to process refund ${refund.id}", e)
+        }
+    }
+    
+    /**
+     * Handles transfer.created event.
+     * 
+     * This means a transfer was initiated with Stripe.
+     * We track this but don't process until transfer.paid (money hasn't moved yet).
+     */
+    private fun handleTransferCreated(event: Event) {
+        val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
+        val stripeTransferId = stripeTransfer.id
+        
+        logger.info("Transfer created: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
+        
+        // Find payout by Stripe Transfer ID
+        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+        if (payout == null) {
+            logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+            return
+        }
+        
+        // Transfer created - payout should already be in PROCESSING state
+        // Just log for tracking
+        logger.info("Payout ${payout.id} has transfer $stripeTransferId created (state: ${payout.state})")
+    }
+    
+    /**
+     * Handles transfer.paid event.
+     * 
+     * This means the transfer completed successfully and money is in seller's account.
+     * Transitions payout to COMPLETED and publishes PayoutCompletedEvent to trigger ledger write.
+     */
+    private fun handleTransferPaid(event: Event) {
+        val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
+        val stripeTransferId = stripeTransfer.id
+        
+        logger.info("Transfer paid: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
+        
+        // Find payout by Stripe Transfer ID
+        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+            ?: run {
+                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+                return
+            }
+        
+        // Idempotency check: if already completed, skip
+        if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+            logger.info("Payout ${payout.id} already completed, skipping webhook processing")
+            return
+        }
+        
+        // Validate state: must be PROCESSING
+        if (payout.state != com.payments.platform.payments.domain.PayoutState.PROCESSING) {
+            logger.warn(
+                "Payout ${payout.id} is in state ${payout.state}, " +
+                "cannot complete payout. Expected PROCESSING. Stripe Transfer ID: $stripeTransferId"
+            )
+            // Transition to FAILED if in unexpected state
+            try {
+                payoutService.transitionPayout(
+                    payout.id,
+                    com.payments.platform.payments.domain.PayoutState.FAILED,
+                    failureReason = "Unexpected state: ${payout.state}"
+                )
+            } catch (e: Exception) {
+                logger.error("Failed to transition payout ${payout.id} to FAILED", e)
+            }
+            return
+        }
+        
+        // Transition payout to COMPLETED
+        try {
+            val completedAt = Instant.now()
+            payoutService.transitionPayout(
+                payout.id,
+                com.payments.platform.payments.domain.PayoutState.COMPLETED,
+                completedAt = completedAt
+            )
+            logger.info("Payout ${payout.id} transitioned to COMPLETED (Stripe Transfer ID: $stripeTransferId)")
+            
+            // Publish PayoutCompletedEvent to Kafka
+            // This will trigger the ledger write
+            val payoutCompletedEvent = com.payments.platform.payments.kafka.PayoutCompletedEvent(
+                payoutId = payout.id,
+                paymentId = payout.id,  // Use payoutId as paymentId for Kafka key
+                idempotencyKey = payout.idempotencyKey,
+                sellerId = payout.sellerId,
+                amountCents = payout.amountCents,
+                currency = payout.currency,
+                stripeTransferId = stripeTransferId,
+                attempt = 1,
+                createdAt = Instant.now(),
+                payload = emptyMap()
+            )
+            kafkaProducer.publishPayoutCompletedEvent(payoutCompletedEvent)
+            
+            logger.info("Published PayoutCompletedEvent for payout ${payout.id} (Stripe Transfer ID: $stripeTransferId)")
+        } catch (e: Exception) {
+            logger.error("Failed to process payout ${payout.id}", e)
+        }
+    }
+    
+    /**
+     * Handles transfer.failed event.
+     * 
+     * This means the transfer failed (e.g., seller account closed, insufficient funds).
+     * Transitions payout to FAILED state.
+     */
+    private fun handleTransferFailed(event: Event) {
+        val stripeTransfer = event.dataObjectDeserializer.deserializeUnsafe() as Transfer
+        val stripeTransferId = stripeTransfer.id
+        // Stripe Transfer failure reason - use a generic message
+        // The actual failure reason can be retrieved from Stripe API if needed
+        val failureReason = "Transfer failed (Stripe Transfer ID: $stripeTransferId)"
+        
+        logger.warn("Transfer failed: $stripeTransferId, reason: $failureReason")
+        
+        // Find payout by Stripe Transfer ID
+        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+            ?: run {
+                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+                return
+            }
+        
+        // Idempotency check: if already failed or completed, skip
+        if (payout.state == com.payments.platform.payments.domain.PayoutState.FAILED ||
+            payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+            logger.info("Payout ${payout.id} already in terminal state ${payout.state}, skipping webhook processing")
+            return
+        }
+        
+        // Transition payout to FAILED
+        try {
+            payoutService.transitionPayout(
+                payout.id,
+                com.payments.platform.payments.domain.PayoutState.FAILED,
+                failureReason = failureReason
+            )
+            logger.info("Payout ${payout.id} transitioned to FAILED (Stripe Transfer ID: $stripeTransferId, reason: $failureReason)")
+        } catch (e: Exception) {
+            logger.error("Failed to transition payout ${payout.id} to FAILED", e)
         }
     }
 }

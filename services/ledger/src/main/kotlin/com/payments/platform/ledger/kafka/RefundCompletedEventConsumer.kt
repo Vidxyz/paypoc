@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.kafka
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.payments.platform.ledger.domain.AccountType
@@ -41,16 +42,18 @@ class RefundCompletedEventConsumer(
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    @KafkaListener(
-        topics = ["\${kafka.topics.events:payment.events}"],
-        groupId = "ledger-service",
-        containerFactory = "kafkaListenerContainerFactory"
-    )
+    /**
+     * Handles REFUND_COMPLETED events.
+     * Called by PaymentCapturedEventConsumer (which acts as the event router).
+     */
     @Transactional
     fun handleRefundCompletedEvent(
         messageBytes: ByteArray,
         acknowledgment: Acknowledgment
     ) {
+        logger.info("=== RefundCompletedEventConsumer.handleRefundCompletedEvent CALLED ===")
+        logger.info("Received REFUND_COMPLETED message from event router (${messageBytes.size} bytes)")
+        
         // Manually deserialize bytes to Map<String, Any> to bypass Spring Kafka's type resolution
         val message = try {
             val typeRef = object : TypeReference<Map<String, Any>>() {}
@@ -196,7 +199,10 @@ class RefundCompletedEventConsumer(
 /**
  * Data class for RefundCompletedEvent.
  * Matches the structure of RefundCompletedEvent from payments service.
+ * 
+ * Note: The JSON includes a "type" field from PaymentMessage, which we ignore.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class RefundCompletedEvent(
     val refundId: UUID,
     val paymentId: UUID,

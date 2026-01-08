@@ -95,13 +95,12 @@ class PaymentService(
             "Found Stripe account for seller ${request.sellerId} (${request.currency}): ${sellerStripeAccount.stripeAccountId}"
         )
         
-        // Create Stripe PaymentIntent with marketplace split
+        // Create Stripe PaymentIntent - money goes to platform account
+        // Platform will later transfer seller portion via Stripe Transfers API
         val paymentIntent = try {
             stripeService.createPaymentIntent(
                 amountCents = request.grossAmountCents,
                 currency = request.currency,
-                platformFeeCents = platformFeeCents,
-                sellerStripeAccountId = sellerStripeAccount.stripeAccountId,
                 description = request.description ?: "Payment: ${request.buyerId} → ${request.sellerId}",
                 metadata = mapOf(
                     "paymentId" to paymentId.toString(),

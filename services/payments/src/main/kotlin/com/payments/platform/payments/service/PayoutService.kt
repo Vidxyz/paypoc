@@ -103,7 +103,9 @@ class PayoutService(
             throw PayoutCreationException("Failed to create Stripe Transfer: ${e.message}", e)
         }
         
-        // Persist payout with Stripe Transfer ID (NO ledger write - money hasn't moved yet)
+        // Persist payout with Stripe Transfer ID
+        // Note: Ledger write happens on transfer.created webhook (when money leaves our account)
+        // The transfer.paid webhook is just confirmation that money arrived (may take days, or never fire in test mode)
         val payout = Payout(
             id = payoutId,
             sellerId = sellerId,
@@ -111,7 +113,7 @@ class PayoutService(
             currency = currency,
             state = PayoutState.PROCESSING,
             stripeTransferId = stripeTransfer.id,
-            ledgerTransactionId = null,  // NULL until transfer confirmed (ledger write happens after Stripe confirms)
+            ledgerTransactionId = null,  // NULL until transfer.created webhook triggers ledger write
             idempotencyKey = idempotencyKey,
             description = description,
             createdAt = Instant.now(),

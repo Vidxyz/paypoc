@@ -27,6 +27,9 @@ get_test_card() {
         success)
             echo "4242424242424242|12|2028|123|Visa - Success"
             ;;
+        add_balance)
+            echo "4000000000000077|12|2028|123|Visa - Funds added to balance"
+            ;;
         decline)
             echo "4000000000000002|12|2028|123|Visa - Card declined"
             ;;
@@ -53,6 +56,7 @@ get_test_card() {
             echo "" >&2
             echo "Available card types:" >&2
             echo "  success              - Payment succeeds (default)"
+            echo "  add_balance          - Funds added to balance"
             echo "  decline              - Card is declined"
             echo "  insufficient_funds   - Insufficient funds"
             echo "  lost_card            - Lost card"
@@ -77,6 +81,7 @@ if [ $# -lt 1 ]; then
     echo ""
     echo "Available card types:"
     echo "  success              - Payment succeeds (default)"
+    echo "  add_balance          - Funds added to balance"
     echo "  decline              - Card is declined"
     echo "  insufficient_funds   - Insufficient funds"
     echo "  lost_card            - Lost card"

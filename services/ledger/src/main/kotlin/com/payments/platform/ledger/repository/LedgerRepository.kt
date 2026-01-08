@@ -180,7 +180,13 @@ class LedgerRepository(
     /**
      * Gets the balance for an account by summing all entries.
      * 
-     * Balance = sum of DEBIT entries - sum of CREDIT entries
+     * Balance calculation is account-type aware:
+     * - For asset accounts (STRIPE_CLEARING, REFUNDS_CLEARING, CHARGEBACK_CLEARING, FEES_EXPENSE): 
+     *   DEBIT - CREDIT (positive = money/assets in)
+     * - For liability accounts (SELLER_PAYABLE): 
+     *   CREDIT - DEBIT (positive = money owed to seller)
+     * - For revenue accounts (BUYIT_REVENUE): 
+     *   CREDIT - DEBIT (positive = revenue earned)
      * 
      * Safe under SERIALIZABLE isolation - reads see committed transactions only.
      */
@@ -189,20 +195,52 @@ class LedgerRepository(
         val account = findAccountById(accountId)
             ?: throw IllegalArgumentException("Account not found: $accountId")
         
-        val sql = """
-            SELECT 
-                COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount_cents ELSE 0 END), 0) -
-                COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount_cents ELSE 0 END), 0) AS balance_cents
-            FROM ledger_entries
-            WHERE account_id = ?
-        """.trimIndent()
-
-        val balanceCents = try {
-            jdbcTemplate.queryForObject(sql, Long::class.java, accountId) ?: 0L
-        } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
-            0L
-        } catch (e: org.springframework.dao.IncorrectResultSizeDataAccessException) {
-            0L
+        // Calculate balance based on account type
+        val balanceCents = when (account.accountType) {
+            // Asset accounts: DEBIT increases, CREDIT decreases
+            com.payments.platform.ledger.domain.AccountType.STRIPE_CLEARING,
+            com.payments.platform.ledger.domain.AccountType.REFUNDS_CLEARING,
+            com.payments.platform.ledger.domain.AccountType.CHARGEBACK_CLEARING,
+            com.payments.platform.ledger.domain.AccountType.FEES_EXPENSE -> {
+                // DEBIT - CREDIT
+                val sql = """
+                    SELECT 
+                        COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount_cents ELSE 0 END), 0) -
+                        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount_cents ELSE 0 END), 0) AS balance_cents
+                    FROM ledger_entries
+                    WHERE account_id = ?
+                """.trimIndent()
+                try {
+                    jdbcTemplate.queryForObject(sql, Long::class.java, accountId) ?: 0L
+                } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
+                    0L
+                } catch (e: org.springframework.dao.IncorrectResultSizeDataAccessException) {
+                    0L
+                }
+            }
+            // Liability and revenue accounts: CREDIT increases, DEBIT decreases
+            com.payments.platform.ledger.domain.AccountType.SELLER_PAYABLE,
+            com.payments.platform.ledger.domain.AccountType.BUYIT_REVENUE -> {
+                // CREDIT - DEBIT
+                val sql = """
+                    SELECT 
+                        COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount_cents ELSE 0 END), 0) -
+                        COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount_cents ELSE 0 END), 0) AS balance_cents
+                    FROM ledger_entries
+                    WHERE account_id = ?
+                """.trimIndent()
+                try {
+                    jdbcTemplate.queryForObject(sql, Long::class.java, accountId) ?: 0L
+                } catch (e: org.springframework.dao.EmptyResultDataAccessException) {
+                    0L
+                } catch (e: org.springframework.dao.IncorrectResultSizeDataAccessException) {
+                    0L
+                }
+            }
+            // Logical accounts don't have real balances
+            com.payments.platform.ledger.domain.AccountType.BUYER_EXTERNAL -> {
+                0L
+            }
         }
         
         return Balance(accountId, account.currency, balanceCents)

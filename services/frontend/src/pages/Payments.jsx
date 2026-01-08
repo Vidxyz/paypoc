@@ -72,25 +72,28 @@ function Payments({ buyerId }) {
 
 
   const handleRefundClick = async (payment) => {
-    // Sanity check: verify no refund exists before showing confirmation
-    try {
-      const existingRefunds = await paymentsApi.getRefundsForPayment(payment.id)
-      if (existingRefunds.refunds && existingRefunds.refunds.length > 0) {
-        // Store refund info for display
-        setRefunds(prev => ({
-          ...prev,
-          [payment.id]: existingRefunds.refunds
-        }))
+    // Sanity check: verify payment is in CAPTURED state (not already refunding or refunded)
+    if (payment.state !== 'CAPTURED') {
+      if (payment.state === 'REFUNDING') {
+        setSnackbar({
+          open: true,
+          message: 'This payment is already being refunded.',
+          severity: 'warning',
+        })
+      } else if (payment.state === 'REFUNDED') {
         setSnackbar({
           open: true,
           message: 'This payment has already been refunded.',
           severity: 'error',
         })
-        return
+      } else {
+        setSnackbar({
+          open: true,
+          message: `This payment cannot be refunded. Current state: ${payment.state}`,
+          severity: 'error',
+        })
       }
-    } catch (err) {
-      // If API call fails, log but continue - we'll catch it in handleRefundConfirm
-      console.error(`Failed to check existing refunds for payment ${payment.id}:`, err)
+      return
     }
 
     setSelectedPaymentForRefund(payment)
@@ -106,10 +109,17 @@ function Payments({ buyerId }) {
     setError('')
 
     try {
-      // Double-check that no refund exists (sanity check)
-      const existingRefunds = await paymentsApi.getRefundsForPayment(payment.id)
-      if (existingRefunds.refunds && existingRefunds.refunds.length > 0) {
-        throw new Error('This payment has already been refunded.')
+      // Double-check that payment is still in CAPTURED state (sanity check)
+      // Reload payment to get latest state
+      const latestPayment = await paymentsApi.getPayment(payment.id)
+      if (latestPayment.state !== 'CAPTURED') {
+        if (latestPayment.state === 'REFUNDING') {
+          throw new Error('This payment is already being refunded.')
+        } else if (latestPayment.state === 'REFUNDED') {
+          throw new Error('This payment has already been refunded.')
+        } else {
+          throw new Error(`This payment cannot be refunded. Current state: ${latestPayment.state}`)
+        }
       }
 
       const refundResponse = await paymentsApi.createRefund(payment.id)
@@ -168,7 +178,7 @@ function Payments({ buyerId }) {
       AUTHORIZED: { label: state, color: 'warning', icon: <WarningIcon /> },
       CAPTURED: { label: state, color: 'success', icon: <CheckCircleIcon /> },
       REFUNDING: { label: state, color: 'warning', icon: <WarningIcon /> },
-      REFUNDED: { label: state, color: 'default', icon: <CheckCircleIcon /> },
+      REFUNDED: { label: state, color: 'secondary', icon: <CheckCircleIcon /> },
       FAILED: { label: state, color: 'error', icon: <ErrorIcon /> },
     }
     const chip = chips[state] || { label: state, color: 'default', icon: <InfoIcon /> }
@@ -282,7 +292,11 @@ function Payments({ buyerId }) {
                   {payments.map((payment) => {
                     const paymentRefunds = refunds[payment.id] || []
                     const refundStatus = getRefundStatus(payment.id)
+                    // Payment is refundable if it's CAPTURED (not REFUNDING or REFUNDED)
                     const isRefundable = payment.state === 'CAPTURED'
+                    // Use payment state as primary indicator for refund status
+                    const isRefunded = payment.state === 'REFUNDED'
+                    const isRefunding = payment.state === 'REFUNDING'
                     
                     return (
                       <TableRow key={payment.id} hover>
@@ -316,16 +330,16 @@ function Payments({ buyerId }) {
                             >
                               {refundingPaymentId === payment.id ? 'Processing...' : 'Refund'}
                             </Button>
-                          ) : refundStatus === 'REFUNDING' ? (
+                          ) : isRefunding ? (
                             <Chip
                               label="Refunding..."
                               color="warning"
                               size="small"
                             />
-                          ) : refundStatus === 'REFUNDED' ? (
+                          ) : isRefunded ? (
                             <Chip
                               label="Refunded"
-                              color="default"
+                              color="secondary"
                               size="small"
                             />
                           ) : hasRefund(payment.id) && refundStatus === 'FAILED' ? (

@@ -89,7 +89,8 @@ class PaymentEntity(
             ledgerTransactionId = ledgerTransactionId,
             idempotencyKey = idempotencyKey,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            refundedAt = refundedAt
         )
     }
     
@@ -109,7 +110,7 @@ class PaymentEntity(
                 idempotencyKey = payment.idempotencyKey,
                 createdAt = payment.createdAt,
                 updatedAt = payment.updatedAt,
-                refundedAt = null  // Set via separate update when refund completes
+                refundedAt = payment.refundedAt
             )
         }
     }

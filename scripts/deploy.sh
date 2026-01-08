@@ -49,6 +49,12 @@ check_prerequisites() {
 }
 
 build_images() {
+    log_info "Deleting deployments..."
+    
+    kubectl delete -f "$K8S_DIR/ledger/deployment.yaml"
+    kubectl delete -f "$K8S_DIR/payments/deployment.yaml"
+    kubectl delete -f "$K8S_DIR/frontend/deployment.yaml"
+
     log_info "Building Docker images..."
     
     # Build ledger service
@@ -106,7 +112,6 @@ deploy_ledger() {
     log_info "Deploying Ledger Service..."
     kubectl apply -f "$K8S_DIR/ledger/configmap.yaml"
     kubectl apply -f "$K8S_DIR/ledger/secret.yaml"
-    # kubectl delete -f "$K8S_DIR/ledger/deployment.yaml"
     kubectl apply -f "$K8S_DIR/ledger/deployment.yaml"
     kubectl apply -f "$K8S_DIR/ledger/service.yaml"
     
@@ -136,7 +141,6 @@ deploy_payments() {
     log_info "Deploying Payments Service..."
     kubectl apply -f "$K8S_DIR/payments/configmap.yaml"
     kubectl apply -f "$K8S_DIR/payments/secret.yaml"
-    # kubectl delete -f "$K8S_DIR/payments/deployment.yaml"
     kubectl apply -f "$K8S_DIR/payments/deployment.yaml"
     kubectl apply -f "$K8S_DIR/payments/service.yaml"
     kubectl apply -f "$K8S_DIR/payments/ingress.yaml"
@@ -149,7 +153,6 @@ deploy_frontend() {
     log_info "Deploying Frontend..."
     kubectl apply -f "$K8S_DIR/frontend/namespace.yaml"
     kubectl apply -f "$K8S_DIR/frontend/configmap.yaml"
-    # kubectl delete -f "$K8S_DIR/frontend/deployment.yaml"
     kubectl apply -f "$K8S_DIR/frontend/deployment.yaml"
     kubectl apply -f "$K8S_DIR/frontend/service.yaml"
     kubectl apply -f "$K8S_DIR/frontend/ingress.yaml"

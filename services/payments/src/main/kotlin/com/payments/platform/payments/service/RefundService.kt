@@ -128,6 +128,15 @@ class RefundService(
         val entity = RefundEntity.fromDomain(refund)
         val saved = refundRepository.save(entity)
         
+        // Transition payment from CAPTURED to REFUNDING
+        try {
+            paymentService.transitionPayment(payment.id, PaymentState.REFUNDING)
+            logger.info("Payment $paymentId transitioned to REFUNDING state")
+        } catch (e: Exception) {
+            logger.error("Failed to transition payment $paymentId to REFUNDING state", e)
+            // Don't fail the refund creation - refund is created, payment state can be corrected later
+        }
+        
         logger.info(
             "Created refund ${refund.id} for payment $paymentId " +
             "(Stripe Refund ID: ${stripeRefund.id}, amount: $refundAmountCents ${payment.currency})"

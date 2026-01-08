@@ -156,6 +156,42 @@ class PaymentService(
     }
     
     /**
+     * Transitions payment to a new state with optional refundedAt timestamp.
+     * Used when transitioning to REFUNDED state to also set refundedAt timestamp.
+     */
+    @Transactional
+    fun transitionPaymentWithRefundedAt(paymentId: UUID, newState: PaymentState, refundedAt: Instant? = null): Payment {
+        val entity = paymentRepository.findById(paymentId)
+            .orElseThrow { IllegalArgumentException("Payment not found: $paymentId") }
+        
+        val currentPayment = entity.toDomain()
+        
+        // Enforce state machine
+        stateMachine.transition(currentPayment.state, newState)
+        
+        // Update state and refundedAt - create new entity with updated fields
+        val updated = PaymentEntity(
+            id = entity.id,
+            buyerId = entity.buyerId,
+            sellerId = entity.sellerId,
+            grossAmountCents = entity.grossAmountCents,
+            platformFeeCents = entity.platformFeeCents,
+            netSellerAmountCents = entity.netSellerAmountCents,
+            currency = entity.currency,
+            state = newState,
+            stripePaymentIntentId = entity.stripePaymentIntentId,
+            ledgerTransactionId = entity.ledgerTransactionId,
+            idempotencyKey = entity.idempotencyKey,
+            createdAt = entity.createdAt,
+            updatedAt = Instant.now(),
+            refundedAt = refundedAt ?: entity.refundedAt  // Set refundedAt if provided, otherwise keep existing
+        )
+        
+        val saved = paymentRepository.save(updated)
+        return saved.toDomain()
+    }
+    
+    /**
      * Gets the client secret for a payment's Stripe PaymentIntent.
      */
     fun getClientSecret(paymentId: UUID): String {

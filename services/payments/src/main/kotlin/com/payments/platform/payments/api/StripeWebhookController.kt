@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -305,6 +306,16 @@ class StripeWebhookController(
                 return
             }
             val payment = paymentEntity.toDomain()
+            
+            // Transition payment from REFUNDING to REFUNDED and set refundedAt timestamp
+            try {
+                val refundedAt = Instant.now()
+                paymentService.transitionPaymentWithRefundedAt(refund.paymentId, PaymentState.REFUNDED, refundedAt)
+                logger.info("Payment ${refund.paymentId} transitioned to REFUNDED state with refundedAt=$refundedAt")
+            } catch (e: Exception) {
+                logger.error("Failed to transition payment ${refund.paymentId} to REFUNDED state", e)
+                // Don't fail the refund processing - refund is complete, payment state can be corrected
+            }
             
             // Publish RefundCompletedEvent to Kafka
             // This will trigger the ledger write

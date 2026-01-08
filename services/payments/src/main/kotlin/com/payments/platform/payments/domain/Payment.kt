@@ -26,5 +26,6 @@ data class Payment(
     val ledgerTransactionId: UUID?,  // NULL until capture
     val idempotencyKey: String,
     val createdAt: Instant,
-    val updatedAt: Instant
+    val updatedAt: Instant,
+    val refundedAt: Instant? = null  // NULL until refund completes
 )

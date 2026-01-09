@@ -17,6 +17,12 @@ import {
   CircularProgress,
   Alert,
   Snackbar,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Divider,
+  Grid,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
@@ -24,6 +30,8 @@ import ErrorIcon from '@mui/icons-material/Error'
 import WarningIcon from '@mui/icons-material/Warning'
 import InfoIcon from '@mui/icons-material/Info'
 import PaymentsIcon from '@mui/icons-material/Payments'
+import GavelIcon from '@mui/icons-material/Gavel'
+import CloseIcon from '@mui/icons-material/Close'
 import ConfirmationModal from '../components/ConfirmationModal'
 import paymentsApi from '../api/paymentsApi'
 
@@ -36,6 +44,12 @@ function Payments({ buyerId }) {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false)
   const [selectedPaymentForRefund, setSelectedPaymentForRefund] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  
+  // Chargeback details modal state
+  const [chargebackModalOpen, setChargebackModalOpen] = useState(false)
+  const [selectedPaymentForChargeback, setSelectedPaymentForChargeback] = useState(null)
+  const [chargebackDetails, setChargebackDetails] = useState(null)
+  const [loadingChargebackDetails, setLoadingChargebackDetails] = useState(false)
 
   useEffect(() => {
     loadPayments()
@@ -59,6 +73,8 @@ function Payments({ buyerId }) {
       
       const paymentList = response.payments || []
       setPayments(paymentList)
+      
+      // Chargeback info is now included in payment response - no need for N+1 calls!
     } catch (err) {
       if (err.response?.status === 401) {
         setError('Unauthorized. Please log in again.')
@@ -205,6 +221,65 @@ function Payments({ buyerId }) {
     return latestRefund.state
   }
 
+  const handleChargebackClick = async (payment) => {
+    if (!payment.hasChargeback || !payment.latestChargebackId) {
+      return
+    }
+    
+    setSelectedPaymentForChargeback(payment)
+    setLoadingChargebackDetails(true)
+    setChargebackModalOpen(true)
+    
+    try {
+      // Fetch full chargeback details
+      const chargeback = await paymentsApi.getChargeback(payment.latestChargebackId)
+      setChargebackDetails(chargeback)
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: `Failed to load chargeback details: ${err.message || 'Unknown error'}`,
+        severity: 'error',
+      })
+      setChargebackModalOpen(false)
+    } finally {
+      setLoadingChargebackDetails(false)
+    }
+  }
+
+  const getChargebackChip = (payment) => {
+    if (!payment.hasChargeback) {
+      return null
+    }
+    
+    const chips = {
+      DISPUTE_CREATED: { label: 'Dispute Created', color: 'warning' },
+      NEEDS_RESPONSE: { label: 'Needs Response', color: 'error' },
+      UNDER_REVIEW: { label: 'Under Review', color: 'info' },
+      WON: { label: 'Won', color: 'success' },
+      LOST: { label: 'Lost', color: 'error' },
+      WITHDRAWN: { label: 'Withdrawn', color: 'info' },
+      WARNING_CLOSED: { label: 'Warning Closed', color: 'warning' },
+    }
+    
+    const chip = chips[payment.chargebackState] || { label: payment.chargebackState, color: 'default' }
+    
+    return (
+      <Box>
+        <Chip
+          label={chip.label}
+          color={chip.color}
+          size="small"
+          sx={{ mb: 0.5, cursor: 'pointer' }}
+          onClick={() => handleChargebackClick(payment)}
+          icon={<GavelIcon />}
+        />
+        <Typography variant="caption" color="text.secondary" display="block">
+          {formatAmount(payment.chargebackAmountCents, payment.currency)}
+        </Typography>
+      </Box>
+    )
+  }
+
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
     try {
@@ -284,6 +359,7 @@ function Payments({ buyerId }) {
                     <TableCell><strong>Seller</strong></TableCell>
                     <TableCell><strong>State</strong></TableCell>
                     <TableCell><strong>Refund</strong></TableCell>
+                    <TableCell><strong>Chargeback</strong></TableCell>
                     <TableCell><strong>Created</strong></TableCell>
                     <TableCell><strong>Stripe PI</strong></TableCell>
                   </TableRow>
@@ -360,6 +436,13 @@ function Payments({ buyerId }) {
                           )}
                         </TableCell>
                         <TableCell>
+                          {getChargebackChip(payment) || (
+                            <Typography variant="body2" color="text.disabled">
+                              —
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
                           <Typography variant="body2">
                             {formatDate(payment.createdAt)}
                           </Typography>
@@ -417,6 +500,166 @@ function Payments({ buyerId }) {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* Chargeback Details Modal */}
+      <Dialog
+        open={chargebackModalOpen}
+        onClose={() => {
+          setChargebackModalOpen(false)
+          setSelectedPaymentForChargeback(null)
+          setChargebackDetails(null)
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <GavelIcon color="error" />
+            <Typography variant="h6">Chargeback Details</Typography>
+          </Box>
+          <Button
+            onClick={() => {
+              setChargebackModalOpen(false)
+              setSelectedPaymentForChargeback(null)
+              setChargebackDetails(null)
+            }}
+            sx={{ minWidth: 'auto', p: 1 }}
+          >
+            <CloseIcon />
+          </Button>
+        </DialogTitle>
+        <DialogContent>
+          {loadingChargebackDetails ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : chargebackDetails ? (
+            <Box>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Chargeback Status
+                  </Typography>
+                  <Chip
+                    label={chargebackDetails.state?.replace(/_/g, ' ') || 'Unknown'}
+                    color={
+                      chargebackDetails.state === 'WON' ? 'success' :
+                      chargebackDetails.state === 'LOST' ? 'error' :
+                      chargebackDetails.state === 'WARNING_CLOSED' ? 'warning' :
+                      chargebackDetails.state === 'NEEDS_RESPONSE' ? 'error' :
+                      chargebackDetails.state === 'UNDER_REVIEW' ? 'info' :
+                      'warning'
+                    }
+                    sx={{ mb: 2 }}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Chargeback Amount
+                  </Typography>
+                  <Typography variant="h6" gutterBottom>
+                    {formatAmount(chargebackDetails.chargebackAmountCents, chargebackDetails.currency)}
+                  </Typography>
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Dispute Fee
+                  </Typography>
+                  <Typography variant="body1" gutterBottom>
+                    {formatAmount(chargebackDetails.disputeFeeCents, chargebackDetails.currency)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    (Not refunded even if won)
+                  </Typography>
+                </Grid>
+                
+                {chargebackDetails.reason && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Dispute Reason
+                    </Typography>
+                    <Typography variant="body1" gutterBottom>
+                      {chargebackDetails.reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </Typography>
+                  </Grid>
+                )}
+                
+                {chargebackDetails.evidenceDueBy && (
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Evidence Due By
+                    </Typography>
+                    <Typography variant="body1" color={new Date(chargebackDetails.evidenceDueBy) < new Date() ? 'error' : 'text.primary'}>
+                      {formatDate(chargebackDetails.evidenceDueBy)}
+                    </Typography>
+                  </Grid>
+                )}
+                
+                {chargebackDetails.outcome && (
+                  <Grid item xs={12}>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Final Outcome
+                    </Typography>
+                    <Chip
+                      label={chargebackDetails.outcome}
+                      color={
+                        chargebackDetails.outcome === 'WON' ? 'success' :
+                        chargebackDetails.outcome === 'LOST' ? 'error' :
+                        chargebackDetails.outcome === 'WARNING_CLOSED' ? 'warning' :
+                        'info'
+                      }
+                      sx={{ mb: 1 }}
+                    />
+                    {chargebackDetails.closedAt && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Closed: {formatDate(chargebackDetails.closedAt)}
+                      </Typography>
+                    )}
+                  </Grid>
+                )}
+                
+                <Grid item xs={12}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Stripe Dispute ID
+                  </Typography>
+                  <Typography variant="body2" component="code" sx={{ fontFamily: 'monospace' }}>
+                    {chargebackDetails.stripeDisputeId}
+                  </Typography>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Created
+                  </Typography>
+                  <Typography variant="body2">
+                    {formatDate(chargebackDetails.createdAt)}
+                  </Typography>
+                </Grid>
+              </Grid>
+            </Box>
+          ) : (
+            <Alert severity="error">
+              Failed to load chargeback details
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => {
+              setChargebackModalOpen(false)
+              setSelectedPaymentForChargeback(null)
+              setChargebackDetails(null)
+            }}
+            variant="contained"
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   )
 }

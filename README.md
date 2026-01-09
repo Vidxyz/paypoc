@@ -68,6 +68,7 @@ The current implementation focuses on **payments infrastructure** - a robust, pr
 
 - ✅ **Payment Processing**: Full payment lifecycle (CREATED → CONFIRMING → AUTHORIZED → CAPTURED)
 - ✅ **Refunds**: Complete refund workflow with state transitions (CAPTURED → REFUNDING → REFUNDED)
+- ✅ **Chargebacks**: Complete chargeback (dispute) workflow with evidence submission and win/loss tracking
 - ✅ **Marketplace Split**: Automatic 10% platform fee calculation and seller payout
 - ✅ **Payouts**: Manual payout system for transferring seller funds (PENDING → PROCESSING → COMPLETED/FAILED)
 - ✅ **Webhook Reliability**: Idempotent webhook processing with signature verification
@@ -295,6 +296,110 @@ GET /api/sellers/{sellerId}/payouts
 - **Idempotency**: All payout operations are idempotent using unique idempotency keys
 - **State Machine Enforcement**: Payout state transitions are enforced by `PayoutStateMachine`, preventing invalid transitions
 - **Separation of Concerns**: Payments Service orchestrates payouts; Ledger Service maintains financial truth
+
+## ⚠️ Chargeback Flow
+
+Chargebacks (disputes) are initiated by the buyer's bank, not the merchant. They represent a more complex workflow than refunds, with evidence submission and potential win/loss outcomes.
+
+### Chargebacks vs Refunds
+
+**Key Differences:**
+- **Refunds**: Initiated by merchant, simple workflow, full control
+- **Chargebacks**: Initiated by buyer's bank, complex workflow, bank decides outcome
+- **Timing**: Chargebacks can occur weeks/months after payment
+- **Financial Impact**: Immediate debit + dispute fees ($15-25) even if you win
+- **Control**: Platform can contest with evidence, but bank makes final decision
+
+### Money Flow Overview
+
+1. **Dispute Created**: Buyer's bank initiates chargeback
+   - Money is **immediately debited** from `STRIPE_CLEARING`
+   - Dispute fee ($15-25) is charged by Stripe
+   - Ledger records: **DR** `CHARGEBACK_CLEARING`, **CR** `STRIPE_CLEARING`
+
+2. **Dispute Resolution**:
+   - **If Won**: Money is returned to `STRIPE_CLEARING` (dispute fee stays as expense)
+     - Ledger records: **DR** `STRIPE_CLEARING`, **CR** `CHARGEBACK_CLEARING`
+   - **If Lost**: Money is permanently debited
+     - Ledger records: **DR** `SELLER_PAYABLE` (reduce seller liability), **DR** `BUYIT_REVENUE` (reduce platform revenue), **CR** `CHARGEBACK_CLEARING`
+     - Dispute fee remains in `CHARGEBACK_CLEARING` as expense
+
+### Chargeback State Machine
+
+Chargebacks follow a strict state machine with the following transitions:
+
+```
+DISPUTE_CREATED → NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST
+       ↓                ↓               ↓
+   WITHDRAWN        WITHDRAWN      WITHDRAWN
+```
+
+- **DISPUTE_CREATED**: Chargeback received from Stripe (early warning or needs response)
+- **NEEDS_RESPONSE**: Must submit evidence within ~7 days
+- **UNDER_REVIEW**: Evidence submitted, being reviewed by Stripe/bank
+- **WON**: Platform won dispute, money returned
+- **LOST**: Platform lost dispute, money permanently debited
+- **WITHDRAWN**: Buyer withdrew dispute (rare)
+
+### Chargeback API Endpoints
+
+**Get Chargebacks for Payment**:
+```http
+GET /api/chargebacks/payments/{paymentId}
+```
+
+**Get Chargeback Details**:
+```http
+GET /api/chargebacks/{chargebackId}
+```
+
+### Chargeback Workflow
+
+1. **Dispute Creation** (`charge.dispute.created` webhook):
+   - Stripe notifies platform of new dispute
+   - Money is immediately debited from Stripe account
+   - Creates chargeback record in `DISPUTE_CREATED` or `NEEDS_RESPONSE` state
+   - Publishes `ChargebackCreatedEvent` to Kafka
+   - **Ledger write happens immediately** (money has left STRIPE_CLEARING)
+
+2. **Dispute Updates** (`charge.dispute.updated` webhook):
+   - Status changes (e.g., `needs_response` → `under_review`)
+   - Updates chargeback state accordingly
+
+3. **Dispute Resolution** (`charge.dispute.closed` webhook):
+   - Final outcome: `won`, `lost`, or `charge_refunded` (withdrawn)
+   - Transitions chargeback to terminal state (`WON`, `LOST`, or `WITHDRAWN`)
+   - Publishes appropriate event (`ChargebackWonEvent` or `ChargebackLostEvent`)
+
+4. **Ledger Updates** (via Kafka consumers):
+   - **ChargebackCreatedEventConsumer**: Records initial debit
+     - **DR** `CHARGEBACK_CLEARING` (chargeback amount + dispute fee)
+     - **CR** `STRIPE_CLEARING` (money debited)
+   - **ChargebackWonEventConsumer**: Records money return
+     - **DR** `STRIPE_CLEARING` (chargeback amount returned)
+     - **CR** `CHARGEBACK_CLEARING` (dispute fee remains as expense)
+   - **ChargebackLostEventConsumer**: Records permanent debit
+     - **DR** `SELLER_PAYABLE` (reduce seller liability)
+     - **DR** `BUYIT_REVENUE` (reduce platform revenue)
+     - **CR** `CHARGEBACK_CLEARING` (dispute fee remains as expense)
+
+### Key Principles
+
+- **Immediate Ledger Write**: Money is debited immediately when dispute is created (not when closed)
+- **Dispute Fees**: Stripe charges $15-25 per dispute, even if you win (never refunded)
+- **Seller Liability**: Seller pays chargeback amount, platform pays dispute fee (common marketplace model)
+- **Evidence Submission**: Platform has ~7 days to submit evidence (currently manual via Stripe Dashboard, API support planned)
+- **State Machine Enforcement**: Chargeback state transitions are enforced by `ChargebackStateMachine`
+- **Multiple Chargebacks**: Same payment can have multiple chargebacks (rare but supported)
+- **Chargeback + Refund**: Payment can be both refunded AND have chargeback (totals validated)
+
+### Best Practices
+
+1. **Respond Quickly**: You have ~7 days to submit evidence - monitor `NEEDS_RESPONSE` state
+2. **Submit Strong Evidence**: Receipts, shipping confirmations, customer communications
+3. **Monitor Dispute Rate**: Should be <0.5% of transactions (high rates indicate issues)
+4. **Track Outcomes**: Monitor win/loss rates to improve processes
+5. **Handle Fees**: Budget for dispute fees as a cost of doing business
 
 ## 🔮 Future State: Full E-Commerce Platform
 

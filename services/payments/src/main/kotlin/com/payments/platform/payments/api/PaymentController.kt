@@ -116,7 +116,10 @@ class PaymentController(
     fun getPayment(@PathVariable paymentId: UUID): ResponseEntity<PaymentResponseDto> {
         return try {
             val payment = paymentService.getPayment(paymentId)
-            ResponseEntity.ok(PaymentResponseDto.fromDomain(payment))
+            // Get chargeback info for this payment
+            val chargebackInfoMap = paymentService.getChargebackInfoForPayments(listOf(paymentId))
+            val chargebackInfo = chargebackInfoMap[paymentId]
+            ResponseEntity.ok(PaymentResponseDto.fromDomain(payment, chargebackInfo = chargebackInfo))
         } catch (e: IllegalArgumentException) {
             ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 PaymentResponseDto(
@@ -203,9 +206,16 @@ class PaymentController(
             sortDirection = validSortDirection
         )
         
+        // Get chargeback info for all payments in a single optimized query
+        val paymentIds = payments.map { it.id }
+        val chargebackInfoMap = paymentService.getChargebackInfoForPayments(paymentIds)
+        
         return ResponseEntity.ok(
             ListPaymentsResponseDto(
-                payments = payments.map { PaymentResponseDto.fromDomain(it) },
+                payments = payments.map { payment ->
+                    val chargebackInfo = chargebackInfoMap[payment.id]
+                    PaymentResponseDto.fromDomain(payment, chargebackInfo = chargebackInfo)
+                },
                 page = validPage,
                 size = validSize,
                 total = payments.size

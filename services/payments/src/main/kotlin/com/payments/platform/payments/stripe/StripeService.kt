@@ -237,6 +237,18 @@ class StripeService(
     }
     
     /**
+     * Retrieves a Dispute by ID.
+     */
+    fun getDispute(disputeId: String): com.stripe.model.Dispute {
+        try {
+            return com.stripe.model.Dispute.retrieve(disputeId)
+        } catch (e: StripeException) {
+            logger.error("Failed to retrieve Stripe Dispute $disputeId: ${e.message}", e)
+            throw StripeServiceException("Failed to retrieve Stripe Dispute: ${e.message}", e)
+        }
+    }
+    
+    /**
      * Gets the webhook secret for signature verification.
      */
     fun getWebhookSecret(): String {

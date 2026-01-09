@@ -98,6 +98,26 @@ export const paymentsApi = {
     const response = await api.get(`/payments/${paymentId}/refunds`)
     return response.data
   },
+
+  /**
+   * Get chargebacks for a payment
+   * @param {string} paymentId - Payment UUID
+   * @returns {Promise} List of chargebacks
+   */
+  getChargebacksForPayment: async (paymentId) => {
+    const response = await api.get(`/chargebacks/payments/${paymentId}`)
+    return response.data
+  },
+
+  /**
+   * Get a chargeback by ID
+   * @param {string} chargebackId - Chargeback UUID
+   * @returns {Promise} Chargeback data
+   */
+  getChargeback: async (chargebackId) => {
+    const response = await api.get(`/chargebacks/${chargebackId}`)
+    return response.data
+  },
 }
 
 export default paymentsApi

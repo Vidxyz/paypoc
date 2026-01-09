@@ -51,6 +51,12 @@ get_test_card() {
         processing_error)
             echo "4000000000000119|12|2028|123|Visa - Processing error"
             ;;
+        chargeback|dispute)
+            echo "4000000000000259|12|2028|123|Visa - Automatically creates chargeback/dispute"
+            ;;
+        inquiry)
+            echo "4000000000001976|12|2028|123|Visa - Creates retrieval request (inquiry) instead of full dispute. Submit any evidence to the dispute to transition it to a inquiry closed"
+            ;;
         *)
             echo "Error: Unknown card type: $card_type" >&2
             echo "" >&2
@@ -64,6 +70,8 @@ get_test_card() {
             echo "  requires_authentication, 3ds - Requires 3D Secure authentication"
             echo "  requires_payment_method - Requires payment method"
             echo "  processing_error     - Processing error"
+            echo "  chargeback, dispute  - Automatically creates chargeback/dispute"
+            echo "  inquiry              - Creates retrieval request (inquiry) instead of full dispute"
             exit 1
             ;;
     esac
@@ -89,6 +97,8 @@ if [ $# -lt 1 ]; then
     echo "  requires_authentication, 3ds - Requires 3D Secure authentication"
     echo "  requires_payment_method - Requires payment method"
     echo "  processing_error     - Processing error"
+    echo "  chargeback, dispute  - Automatically creates chargeback/dispute"
+    echo "  inquiry              - Creates retrieval request (inquiry) instead of full dispute"
     echo ""
     echo "Environment variables:"
     echo "  STRIPE_API_KEY    - Stripe API key (required, e.g., sk_test_...)"
@@ -98,6 +108,8 @@ if [ $# -lt 1 ]; then
     echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123"
     echo "  ./confirm-payment.sh pi_1234567890 \"\" decline"
     echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123 requires_authentication"
+    echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123 chargeback"
+    echo "  ./confirm-payment.sh pi_1234567890 pi_1234567890_secret_abc123 inquiry"
     exit 1
 fi
 

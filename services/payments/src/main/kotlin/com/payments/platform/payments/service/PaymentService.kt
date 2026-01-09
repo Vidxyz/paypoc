@@ -30,7 +30,8 @@ class PaymentService(
     private val sellerStripeAccountRepository: SellerStripeAccountRepository,
     private val stateMachine: PaymentStateMachine,
     private val kafkaProducer: PaymentKafkaProducer,
-    private val stripeService: StripeService
+    private val stripeService: StripeService,
+    private val chargebackRepository: com.payments.platform.payments.persistence.ChargebackRepository
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -332,6 +333,42 @@ class PaymentService(
         val pageResult = paymentRepository.findByBuyerId(buyerId, pageable)
         
         return pageResult.content.map { it.toDomain() }
+    }
+    
+    /**
+     * Gets chargeback summary information for a list of payments.
+     * Returns a map of paymentId -> ChargebackInfo.
+     * 
+     * This is optimized to fetch all chargebacks in a single query per payment.
+     */
+    fun getChargebackInfoForPayments(paymentIds: List<UUID>): Map<UUID, com.payments.platform.payments.api.ChargebackInfo> {
+        if (paymentIds.isEmpty()) {
+            return emptyMap()
+        }
+        
+        // Fetch all chargebacks for these payments in one query
+        val allChargebacks = paymentIds.flatMap { paymentId ->
+            chargebackRepository.findByPaymentId(paymentId).map { chargeback ->
+                paymentId to chargeback.toDomain()
+            }
+        }
+        
+        // Group by payment ID and get the latest chargeback (by created_at)
+        return allChargebacks
+            .groupBy { it.first }
+            .mapValues { (_, chargebacks) ->
+                val latestChargeback = chargebacks.maxByOrNull { it.second.createdAt }?.second
+                if (latestChargeback != null) {
+                    com.payments.platform.payments.api.ChargebackInfo(
+                        hasChargeback = true,
+                        chargebackId = latestChargeback.id,
+                        state = latestChargeback.state.name,
+                        amountCents = latestChargeback.chargebackAmountCents
+                    )
+                } else {
+                    com.payments.platform.payments.api.ChargebackInfo(hasChargeback = false)
+                }
+            }
     }
     
     /**

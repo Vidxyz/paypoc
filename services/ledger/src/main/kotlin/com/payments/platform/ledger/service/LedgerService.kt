@@ -82,4 +82,22 @@ class LedgerService(
     fun getTransactionEntries(transactionId: UUID): List<LedgerEntry> {
         return ledgerRepository.getTransactionEntries(transactionId)
     }
+
+    /**
+     * Queries transactions by date range and optional currency filter.
+     * 
+     * Used for reconciliation to compare ledger transactions with Stripe balance transactions.
+     * 
+     * @param startDate Start date (inclusive) for filtering transactions
+     * @param endDate End date (inclusive) for filtering transactions
+     * @param currency Optional currency filter (ISO 4217, uppercase, e.g., "USD")
+     * @return List of transactions with their entries
+     */
+    fun queryTransactions(
+        startDate: java.time.Instant,
+        endDate: java.time.Instant,
+        currency: String? = null
+    ): List<TransactionWithEntries> {
+        return ledgerRepository.queryTransactions(startDate, endDate, currency)
+    }
 }

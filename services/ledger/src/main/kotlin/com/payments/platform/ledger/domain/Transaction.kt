@@ -61,3 +61,11 @@ data class EntryRequest(
     val amountCents: Long,  // Must be positive
     val currency: String
 )
+
+/**
+ * Transaction with its entries - used for reconciliation queries.
+ */
+data class TransactionWithEntries(
+    val transaction: Transaction,
+    val entries: List<LedgerEntry>
+)

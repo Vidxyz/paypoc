@@ -16,13 +16,21 @@ import org.springframework.transaction.annotation.Transactional
  * - PAYMENT_CAPTURED -> PaymentCapturedEventConsumer
  * - REFUND_COMPLETED -> RefundCompletedEventConsumer
  * - PAYOUT_COMPLETED -> PayoutCompletedEventConsumer
+ * - CHARGEBACK_CREATED -> ChargebackCreatedEventConsumer
+ * - CHARGEBACK_WON -> ChargebackWonEventConsumer
+ * - CHARGEBACK_LOST -> ChargebackLostEventConsumer
+ * - CHARGEBACK_WARNING_CLOSED -> ChargebackWarningClosedEventConsumer
  */
 @Component
 class PaymentEventConsumer(
     private val objectMapper: ObjectMapper,
     private val paymentCapturedEventConsumer: PaymentCapturedEventConsumer,
     private val refundCompletedEventConsumer: RefundCompletedEventConsumer,
-    private val payoutCompletedEventConsumer: PayoutCompletedEventConsumer
+    private val payoutCompletedEventConsumer: PayoutCompletedEventConsumer,
+    private val chargebackCreatedEventConsumer: ChargebackCreatedEventConsumer,
+    private val chargebackWonEventConsumer: ChargebackWonEventConsumer,
+    private val chargebackLostEventConsumer: ChargebackLostEventConsumer,
+    private val chargebackWarningClosedEventConsumer: ChargebackWarningClosedEventConsumer
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -78,6 +86,18 @@ class PaymentEventConsumer(
             }
             "PAYOUT_COMPLETED" -> {
                 payoutCompletedEventConsumer.handlePayoutCompletedEvent(messageBytes, acknowledgment)
+            }
+            "CHARGEBACK_CREATED" -> {
+                chargebackCreatedEventConsumer.handleChargebackCreatedEvent(messageBytes, acknowledgment)
+            }
+            "CHARGEBACK_WON" -> {
+                chargebackWonEventConsumer.handleChargebackWonEvent(messageBytes, acknowledgment)
+            }
+            "CHARGEBACK_LOST" -> {
+                chargebackLostEventConsumer.handleChargebackLostEvent(messageBytes, acknowledgment)
+            }
+            "CHARGEBACK_WARNING_CLOSED" -> {
+                chargebackWarningClosedEventConsumer.handleChargebackWarningClosedEvent(messageBytes, acknowledgment)
             }
             else -> {
                 logger.warn("Unknown event type: $eventType. Acknowledging and skipping.")

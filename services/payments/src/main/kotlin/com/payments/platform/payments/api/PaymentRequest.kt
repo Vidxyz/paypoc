@@ -88,11 +88,27 @@ data class PaymentResponseDto(
     @Schema(description = "Payment last update timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
     val updatedAt: String? = null,
     
+    @Schema(description = "Whether this payment has any chargebacks", example = "false")
+    val hasChargeback: Boolean = false,
+    
+    @Schema(description = "Latest chargeback state (if hasChargeback is true)", example = "NEEDS_RESPONSE", required = false)
+    val chargebackState: String? = null,
+    
+    @Schema(description = "Latest chargeback amount in cents (if hasChargeback is true)", example = "10000", required = false)
+    val chargebackAmountCents: Long? = null,
+    
+    @Schema(description = "Latest chargeback ID (if hasChargeback is true)", example = "880e8400-e29b-41d4-a716-446655440000", required = false)
+    val latestChargebackId: UUID? = null,
+    
     @Schema(description = "Error message if the request failed", example = "Payment creation failed: Invalid request")
     val error: String? = null
 ) {
     companion object {
-        fun fromDomain(payment: Payment, clientSecret: String? = null): PaymentResponseDto {
+        fun fromDomain(
+            payment: Payment, 
+            clientSecret: String? = null,
+            chargebackInfo: ChargebackInfo? = null
+        ): PaymentResponseDto {
             return PaymentResponseDto(
                 id = payment.id,
                 buyerId = payment.buyerId,
@@ -107,11 +123,25 @@ data class PaymentResponseDto(
                 ledgerTransactionId = payment.ledgerTransactionId,
                 idempotencyKey = payment.idempotencyKey,
                 createdAt = payment.createdAt.toString(),
-                updatedAt = payment.updatedAt.toString()
+                updatedAt = payment.updatedAt.toString(),
+                hasChargeback = chargebackInfo?.hasChargeback ?: false,
+                chargebackState = chargebackInfo?.state,
+                chargebackAmountCents = chargebackInfo?.amountCents,
+                latestChargebackId = chargebackInfo?.chargebackId
             )
         }
     }
 }
+
+/**
+ * Chargeback summary information for a payment.
+ */
+data class ChargebackInfo(
+    val hasChargeback: Boolean,
+    val chargebackId: UUID? = null,
+    val state: String? = null,
+    val amountCents: Long? = null
+)
 
 /**
  * Response DTO for listing payments.

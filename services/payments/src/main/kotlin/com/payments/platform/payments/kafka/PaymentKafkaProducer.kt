@@ -127,5 +127,96 @@ class PaymentKafkaProducer(
             throw e
         }
     }
+    
+    /**
+     * Publish a ChargebackCreatedEvent to the payment.events topic.
+     * The chargeback ID is used as the Kafka key for partitioning.
+     */
+    fun publishChargebackCreatedEvent(event: ChargebackCreatedEvent) {
+        try {
+            // Use generic KafkaTemplate to send ChargebackCreatedEvent (it's not a PaymentMessage)
+            val result = genericKafkaTemplate.send(eventsTopic, event.chargebackId.toString(), event)
+            result.whenComplete { result: SendResult<String, Any>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish ChargebackCreatedEvent for chargeback ${event.chargebackId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published ChargebackCreatedEvent for chargeback ${event.chargebackId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing ChargebackCreatedEvent for chargeback ${event.chargebackId}", e)
+            throw e
+        }
+    }
+    
+    /**
+     * Publish a ChargebackWonEvent to the payment.events topic.
+     * The chargeback ID is used as the Kafka key for partitioning.
+     */
+    fun publishChargebackWonEvent(event: ChargebackWonEvent) {
+        try {
+            // Use generic KafkaTemplate to send ChargebackWonEvent (it's not a PaymentMessage)
+            val result = genericKafkaTemplate.send(eventsTopic, event.chargebackId.toString(), event)
+            result.whenComplete { result: SendResult<String, Any>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish ChargebackWonEvent for chargeback ${event.chargebackId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published ChargebackWonEvent for chargeback ${event.chargebackId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing ChargebackWonEvent for chargeback ${event.chargebackId}", e)
+            throw e
+        }
+    }
+    
+    /**
+     * Publish a ChargebackLostEvent to the payment.events topic.
+     * The chargeback ID is used as the Kafka key for partitioning.
+     */
+    fun publishChargebackLostEvent(event: ChargebackLostEvent) {
+        try {
+            // Use generic KafkaTemplate to send ChargebackLostEvent (it's not a PaymentMessage)
+            val result = genericKafkaTemplate.send(eventsTopic, event.chargebackId.toString(), event)
+            result.whenComplete { result: SendResult<String, Any>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish ChargebackLostEvent for chargeback ${event.chargebackId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published ChargebackLostEvent for chargeback ${event.chargebackId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing ChargebackLostEvent for chargeback ${event.chargebackId}", e)
+            throw e
+        }
+    }
+    
+    /**
+     * Publish a ChargebackWarningClosedEvent to the payment.events topic.
+     * The chargeback ID is used as the Kafka key for partitioning.
+     * 
+     * This event is published when a dispute is closed with warning_closed status.
+     * Unlike WON, both the chargeback amount AND dispute fee are returned.
+     */
+    fun publishChargebackWarningClosedEvent(event: ChargebackWarningClosedEvent) {
+        try {
+            // Use generic KafkaTemplate to send ChargebackWarningClosedEvent (it's not a PaymentMessage)
+            val result = genericKafkaTemplate.send(eventsTopic, event.chargebackId.toString(), event)
+            result.whenComplete { result: SendResult<String, Any>?, exception: Throwable? ->
+                if (exception != null) {
+                    logger.error("Failed to publish ChargebackWarningClosedEvent for chargeback ${event.chargebackId}", exception)
+                } else if (result != null) {
+                    val recordMetadata = result.recordMetadata
+                    logger.info("Published ChargebackWarningClosedEvent for chargeback ${event.chargebackId} to partition ${recordMetadata.partition()}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Error publishing ChargebackWarningClosedEvent for chargeback ${event.chargebackId}", e)
+            throw e
+        }
+    }
 }
 

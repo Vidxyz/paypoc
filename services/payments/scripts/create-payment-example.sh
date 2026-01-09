@@ -1,40 +1,41 @@
 #!/bin/bash
 
-# Example script demonstrating the complete payment flow:
-# 1. Register seller Stripe account (if not already registered)
-# 2. Create a payment
+# Example script demonstrating the payment creation flow:
+# Creates a payment where money goes to the BuyIt platform account.
+# The platform will later handle payouts to sellers via Stripe Transfers.
 #
 # Usage:
-#   ./create-payment-example.sh <buyer_id> <seller_id> <stripe_account_id> <amount_cents> [currency]
+#   ./create-payment-example.sh <buyer_id> <seller_id> <amount_cents> [currency]
 #
 # Example:
-#   ./create-payment-example.sh buyer_123 seller_456 acct_1234567890 10000 USD
+#   ./create-payment-example.sh buyer_123 seller_456 10000 USD
 
 set -e
 
 # Configuration
 PAYMENTS_SERVICE_URL="${PAYMENTS_SERVICE_URL:-http://payments.local}"
-INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:-internal-test-token-change-in-production}"
 
 # Parse arguments
-if [ $# -lt 4 ]; then
+if [ $# -lt 3 ]; then
     echo "Error: Missing required arguments"
-    echo "Usage: $0 <buyer_id> <seller_id> <stripe_account_id> <amount_cents> [currency]"
+    echo "Usage: $0 <buyer_id> <seller_id> <amount_cents> [currency]"
     echo ""
     echo "Arguments:"
-    echo "  buyer_id          - The buyer ID (e.g., buyer_123)"
-    echo "  seller_id         - The seller ID (e.g., seller_456)"
-    echo "  stripe_account_id - The Stripe connected account ID (e.g., acct_1234567890)"
-    echo "  amount_cents      - Payment amount in cents (e.g., 10000 for $100.00)"
-    echo "  currency          - ISO 4217 currency code (default: USD)"
+    echo "  buyer_id     - The buyer ID (e.g., buyer_123)"
+    echo "  seller_id    - The seller ID (e.g., seller_456)"
+    echo "  amount_cents - Payment amount in cents (e.g., 10000 for $100.00)"
+    echo "  currency     - ISO 4217 currency code (default: USD)"
+    echo ""
+    echo "Note: Payments go to the BuyIt platform account. Seller Stripe account"
+    echo "      registration is not required for payment creation. Sellers will"
+    echo "      receive payouts later via the payout API."
     exit 1
 fi
 
 BUYER_ID="$1"
 SELLER_ID="$2"
-STRIPE_ACCOUNT_ID="$3"
-AMOUNT_CENTS="$4"
-CURRENCY="${5:-USD}"
+AMOUNT_CENTS="$3"
+CURRENCY="${4:-USD}"
 
 # Validate currency format
 if ! [[ "$CURRENCY" =~ ^[A-Z]{3}$ ]]; then
@@ -43,38 +44,15 @@ if ! [[ "$CURRENCY" =~ ^[A-Z]{3}$ ]]; then
 fi
 
 echo "=========================================="
-echo "Payment Flow Example"
+echo "Payment Creation Example"
 echo "=========================================="
+echo "Buyer ID: $BUYER_ID"
+echo "Seller ID: $SELLER_ID"
+echo "Amount: $AMOUNT_CENTS cents ($CURRENCY)"
 echo ""
 
-# Step 1: Register seller Stripe account (if not already registered)
-echo "Step 1: Registering seller Stripe account..."
-REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-    "$PAYMENTS_SERVICE_URL/internal/sellers/$SELLER_ID/stripe-accounts" \
-    -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"stripeAccountId\": \"$STRIPE_ACCOUNT_ID\",
-        \"currency\": \"$CURRENCY\"
-    }")
-
-REGISTER_HTTP_CODE=$(echo "$REGISTER_RESPONSE" | tail -n1)
-REGISTER_BODY=$(echo "$REGISTER_RESPONSE" | sed '$d')
-
-if [ "$REGISTER_HTTP_CODE" -eq 201 ]; then
-    echo "✓ Seller Stripe account registered successfully"
-elif [ "$REGISTER_HTTP_CODE" -eq 200 ]; then
-    echo "✓ Seller Stripe account already exists (updated)"
-else
-    echo "✗ Failed to register seller Stripe account"
-    echo "HTTP Status: $REGISTER_HTTP_CODE"
-    echo "$REGISTER_BODY"
-    exit 1
-fi
-echo ""
-
-# Step 2: Create payment
-echo "Step 2: Creating payment..."
+# Create payment (money goes to platform account)
+echo "Creating payment..."
 PAYMENT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     "$PAYMENTS_SERVICE_URL/payments" \
     -H "Content-Type: application/json" \
@@ -96,10 +74,30 @@ if [ "$PAYMENT_HTTP_CODE" -eq 201 ]; then
     echo "$PAYMENT_BODY" | jq '.' 2>/dev/null || echo "$PAYMENT_BODY"
     echo ""
     
-    # Extract client_secret for frontend use
+    # Extract payment details
+    PAYMENT_ID=$(echo "$PAYMENT_BODY" | jq -r '.id' 2>/dev/null || echo "")
     CLIENT_SECRET=$(echo "$PAYMENT_BODY" | jq -r '.clientSecret' 2>/dev/null || echo "")
+    STRIPE_PAYMENT_INTENT_ID=$(echo "$PAYMENT_BODY" | jq -r '.stripePaymentIntentId' 2>/dev/null || echo "")
+    
     if [ -n "$CLIENT_SECRET" ] && [ "$CLIENT_SECRET" != "null" ]; then
         echo "Client Secret (for frontend): $CLIENT_SECRET"
+    fi
+    
+    if [ -n "$STRIPE_PAYMENT_INTENT_ID" ] && [ "$STRIPE_PAYMENT_INTENT_ID" != "null" ]; then
+        echo ""
+        echo "Next steps:"
+        echo "  1. Use the client_secret in your frontend to confirm the payment"
+        echo "  2. Or use the confirm-payment.sh script:"
+        echo "     ./confirm-payment.sh $STRIPE_PAYMENT_INTENT_ID $CLIENT_SECRET"
+        echo ""
+        echo "     To test chargebacks/disputes:"
+        echo "     ./confirm-payment.sh $STRIPE_PAYMENT_INTENT_ID $CLIENT_SECRET chargeback"
+        echo ""
+        echo "     To test inquiries (retrieval requests):"
+        echo "     ./confirm-payment.sh $STRIPE_PAYMENT_INTENT_ID $CLIENT_SECRET inquiry"
+        echo ""
+        echo "Note: Money is collected to the BuyIt platform account."
+        echo "      Sellers will receive payouts via the payout API later."
     fi
 else
     echo "✗ Failed to create payment"
@@ -110,6 +108,6 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Payment flow completed successfully!"
+echo "Payment creation completed successfully!"
 echo "=========================================="
 

@@ -40,7 +40,8 @@ class StripeWebhookController(
     private val kafkaProducer: PaymentKafkaProducer,
     private val refundService: com.payments.platform.payments.service.RefundService,
     private val refundRepository: com.payments.platform.payments.persistence.RefundRepository,
-    private val payoutService: com.payments.platform.payments.service.PayoutService
+    private val payoutService: com.payments.platform.payments.service.PayoutService,
+    private val chargebackService: com.payments.platform.payments.service.ChargebackService
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -80,6 +81,9 @@ class StripeWebhookController(
                 "transfer.created" -> handleTransferCreated(event)
                 "transfer.paid" -> handleTransferPaid(event)
                 "transfer.failed" -> handleTransferFailed(event)
+                "charge.dispute.created" -> handleDisputeCreated(event)
+                "charge.dispute.updated" -> handleDisputeUpdated(event)
+                "charge.dispute.closed" -> handleDisputeClosed(event)
                 else -> {
                     logger.info("Unhandled webhook event type: ${event.type}")
                 }
@@ -595,6 +599,287 @@ class StripeWebhookController(
             logger.info("Payout ${payout.id} transitioned to FAILED (Stripe Transfer ID: $stripeTransferId, reason: $failureReason)")
         } catch (e: Exception) {
             logger.error("Failed to transition payout ${payout.id} to FAILED", e)
+        }
+    }
+    
+    /**
+     * Handles charge.dispute.created event.
+     * 
+     * This means a chargeback (dispute) was initiated by the buyer's bank.
+     * Money is immediately debited from STRIPE_CLEARING.
+     * 
+     * Flow:
+     * 1. Find payment by Stripe Charge ID (from dispute)
+     * 2. Create chargeback record
+     * 3. Publish ChargebackCreatedEvent to trigger ledger write
+     * 4. Transition chargeback to appropriate state
+     */
+    private fun handleDisputeCreated(event: Event) {
+        val stripeDispute = event.dataObjectDeserializer.deserializeUnsafe() as com.stripe.model.Dispute
+        val stripeDisputeId = stripeDispute.id
+        val stripeChargeId = stripeDispute.charge
+        
+        logger.info("Dispute created: $stripeDisputeId (Stripe Charge ID: $stripeChargeId, status: ${stripeDispute.status})")
+        
+        // Find payment by Stripe Charge ID
+        // We need to get the PaymentIntent ID from the charge
+        val paymentEntity = try {
+            // Retrieve the charge to get the payment intent ID
+            val charge = com.stripe.model.Charge.retrieve(stripeChargeId)
+            val paymentIntentId = charge.paymentIntent as? String
+                ?: run {
+                    logger.warn("Charge $stripeChargeId has no PaymentIntent ID")
+                    return
+                }
+            
+            paymentRepository.findByStripePaymentIntentId(paymentIntentId)
+        } catch (e: Exception) {
+            logger.error("Failed to find payment for dispute $stripeDisputeId (Charge ID: $stripeChargeId)", e)
+            return
+        }
+        
+        if (paymentEntity == null) {
+            logger.warn("Payment not found for Stripe Charge ID: $stripeChargeId (Dispute ID: $stripeDisputeId)")
+            return
+        }
+        
+        val payment = paymentEntity.toDomain()
+        
+        // Idempotency check: if chargeback already exists, skip
+        val existingChargeback = chargebackService.getChargebackByStripeDisputeId(stripeDisputeId)
+        if (existingChargeback != null) {
+            logger.info("Chargeback with Stripe Dispute ID $stripeDisputeId already exists, skipping webhook processing")
+            return
+        }
+        
+        // Create chargeback record
+        val chargeback = try {
+            chargebackService.createChargebackFromDispute(stripeDispute, payment.id)
+        } catch (e: Exception) {
+            logger.error("Failed to create chargeback for dispute $stripeDisputeId", e)
+            return
+        }
+        
+        // Determine state based on Stripe dispute status
+        val targetState = when (stripeDispute.status) {
+            "warning_needs_response" -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
+            "needs_response" -> com.payments.platform.payments.domain.ChargebackState.NEEDS_RESPONSE
+            "under_review" -> com.payments.platform.payments.domain.ChargebackState.UNDER_REVIEW
+            else -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
+        }
+        
+        // Transition to appropriate state if not already there
+        if (chargeback.state != targetState) {
+            try {
+                chargebackService.transitionChargeback(chargeback.id, targetState)
+            } catch (e: Exception) {
+                logger.error("Failed to transition chargeback ${chargeback.id} to $targetState", e)
+            }
+        }
+        
+        // Publish ChargebackCreatedEvent to Kafka
+        // This will trigger the ledger write (money is debited immediately)
+        val chargebackCreatedEvent = com.payments.platform.payments.kafka.ChargebackCreatedEvent(
+            chargebackId = chargeback.id,
+            paymentId = payment.id,
+            chargebackAmountCents = chargeback.chargebackAmountCents,
+            disputeFeeCents = chargeback.disputeFeeCents,
+            currency = chargeback.currency,
+            stripeDisputeId = stripeDisputeId,
+            stripeChargeId = stripeChargeId,
+            stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+            reason = chargeback.reason,
+            buyerId = payment.buyerId,
+            sellerId = payment.sellerId,
+            idempotencyKey = chargeback.idempotencyKey
+        )
+        kafkaProducer.publishChargebackCreatedEvent(chargebackCreatedEvent)
+        
+        logger.info(
+            "Published ChargebackCreatedEvent for chargeback ${chargeback.id} " +
+            "(Stripe Dispute ID: $stripeDisputeId) - money debited immediately"
+        )
+    }
+    
+    /**
+     * Handles charge.dispute.updated event.
+     * 
+     * This means the dispute status changed (e.g., needs_response → under_review).
+     * Updates chargeback state accordingly.
+     */
+    private fun handleDisputeUpdated(event: Event) {
+        val stripeDispute = event.dataObjectDeserializer.deserializeUnsafe() as com.stripe.model.Dispute
+        val stripeDisputeId = stripeDispute.id
+        val disputeStatus = stripeDispute.status
+        
+        logger.info("Dispute updated: $stripeDisputeId, status: $disputeStatus")
+        
+        // Find chargeback by Stripe Dispute ID
+        val chargeback = chargebackService.getChargebackByStripeDisputeId(stripeDisputeId)
+            ?: run {
+                logger.warn("Chargeback not found for Stripe Dispute ID: $stripeDisputeId")
+                return
+            }
+        
+        // Determine target state based on Stripe dispute status
+        val targetState = when (disputeStatus) {
+            "warning_needs_response" -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
+            "needs_response" -> com.payments.platform.payments.domain.ChargebackState.NEEDS_RESPONSE
+            "under_review" -> com.payments.platform.payments.domain.ChargebackState.UNDER_REVIEW
+            else -> {
+                logger.debug("Dispute $stripeDisputeId status is $disputeStatus, not updating state")
+                return
+            }
+        }
+        
+        // Transition if state changed
+        if (chargeback.state != targetState) {
+            try {
+                chargebackService.transitionChargeback(chargeback.id, targetState)
+                logger.info("Chargeback ${chargeback.id} transitioned to $targetState (Stripe Dispute ID: $stripeDisputeId)")
+            } catch (e: Exception) {
+                logger.error("Failed to transition chargeback ${chargeback.id} to $targetState", e)
+            }
+        }
+    }
+    
+    /**
+     * Handles charge.dispute.closed event.
+     * 
+     * This means the dispute was resolved (won, lost, or withdrawn).
+     * Updates chargeback state and publishes appropriate event for ledger update.
+     */
+    private fun handleDisputeClosed(event: Event) {
+        val stripeDispute = event.dataObjectDeserializer.deserializeUnsafe() as com.stripe.model.Dispute
+        val stripeDisputeId = stripeDispute.id
+        val disputeStatus = stripeDispute.status
+        
+        logger.info("Dispute closed: $stripeDisputeId, status: $disputeStatus")
+        
+        // Find chargeback by Stripe Dispute ID
+        val chargeback = chargebackService.getChargebackByStripeDisputeId(stripeDisputeId)
+            ?: run {
+                logger.warn("Chargeback not found for Stripe Dispute ID: $stripeDisputeId")
+                return
+            }
+        
+        // Idempotency check: if already closed, skip
+        if (chargeback.outcome != null) {
+            logger.info("Chargeback ${chargeback.id} already closed with outcome ${chargeback.outcome}, skipping webhook processing")
+            return
+        }
+        
+        // Get payment details
+        val paymentEntity = paymentRepository.findById(chargeback.paymentId).orElse(null)
+        if (paymentEntity == null) {
+            logger.error("Payment ${chargeback.paymentId} not found for chargeback ${chargeback.id}")
+            return
+        }
+        val payment = paymentEntity.toDomain()
+        
+        // Determine outcome and target state
+        val (outcome, targetState) = when (disputeStatus) {
+            "won" -> {
+                com.payments.platform.payments.domain.ChargebackOutcome.WON to
+                com.payments.platform.payments.domain.ChargebackState.WON
+            }
+            "warning_closed" -> {
+                // Dispute closed with warning but in merchant's favor - money is returned
+                com.payments.platform.payments.domain.ChargebackOutcome.WARNING_CLOSED to
+                com.payments.platform.payments.domain.ChargebackState.WARNING_CLOSED
+            }
+            "lost" -> {
+                com.payments.platform.payments.domain.ChargebackOutcome.LOST to
+                com.payments.platform.payments.domain.ChargebackState.LOST
+            }
+            "charge_refunded" -> {
+                com.payments.platform.payments.domain.ChargebackOutcome.WITHDRAWN to
+                com.payments.platform.payments.domain.ChargebackState.WITHDRAWN
+            }
+            else -> {
+                logger.warn("Unknown dispute status for closed dispute: $disputeStatus")
+                return
+            }
+        }
+        
+        // Transition chargeback to final state
+        try {
+            chargebackService.transitionChargeback(chargeback.id, targetState)
+            logger.info("Chargeback ${chargeback.id} transitioned to $targetState (outcome: $outcome)")
+            
+            // Publish appropriate event based on outcome
+            when (outcome) {
+                com.payments.platform.payments.domain.ChargebackOutcome.WON -> {
+                    // Money is returned to STRIPE_CLEARING
+                    val chargebackWonEvent = com.payments.platform.payments.kafka.ChargebackWonEvent(
+                        chargebackId = chargeback.id,
+                        paymentId = payment.id,
+                        chargebackAmountCents = chargeback.chargebackAmountCents,
+                        currency = chargeback.currency,
+                        stripeDisputeId = stripeDisputeId,
+                        stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+                        buyerId = payment.buyerId,
+                        sellerId = payment.sellerId,
+                        idempotencyKey = chargeback.idempotencyKey
+                    )
+                    kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
+                    logger.info("Published ChargebackWonEvent for chargeback ${chargeback.id} - money returned")
+                }
+                com.payments.platform.payments.domain.ChargebackOutcome.WARNING_CLOSED -> {
+                    // Dispute closed with warning but in merchant's favor
+                    // BOTH chargeback amount AND dispute fee are returned (unlike WON where only amount is returned)
+                    val chargebackWarningClosedEvent = com.payments.platform.payments.kafka.ChargebackWarningClosedEvent(
+                        chargebackId = chargeback.id,
+                        paymentId = payment.id,
+                        chargebackAmountCents = chargeback.chargebackAmountCents,
+                        disputeFeeCents = chargeback.disputeFeeCents,
+                        currency = chargeback.currency,
+                        stripeDisputeId = stripeDisputeId,
+                        stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+                        buyerId = payment.buyerId,
+                        sellerId = payment.sellerId,
+                        idempotencyKey = chargeback.idempotencyKey
+                    )
+                    kafkaProducer.publishChargebackWarningClosedEvent(chargebackWarningClosedEvent)
+                    logger.info("Published ChargebackWarningClosedEvent for chargeback ${chargeback.id} (warning_closed) - amount and fee returned")
+                }
+                com.payments.platform.payments.domain.ChargebackOutcome.LOST -> {
+                    // Money is permanently debited, reduce seller liability
+                    val chargebackLostEvent = com.payments.platform.payments.kafka.ChargebackLostEvent(
+                        chargebackId = chargeback.id,
+                        paymentId = payment.id,
+                        chargebackAmountCents = chargeback.chargebackAmountCents,
+                        platformFeeCents = payment.platformFeeCents,
+                        netSellerAmountCents = payment.netSellerAmountCents,
+                        currency = chargeback.currency,
+                        stripeDisputeId = stripeDisputeId,
+                        stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+                        buyerId = payment.buyerId,
+                        sellerId = payment.sellerId,
+                        idempotencyKey = chargeback.idempotencyKey
+                    )
+                    kafkaProducer.publishChargebackLostEvent(chargebackLostEvent)
+                    logger.info("Published ChargebackLostEvent for chargeback ${chargeback.id} - money permanently debited")
+                }
+                com.payments.platform.payments.domain.ChargebackOutcome.WITHDRAWN -> {
+                    // Buyer withdrew dispute - money is returned (similar to won)
+                    val chargebackWonEvent = com.payments.platform.payments.kafka.ChargebackWonEvent(
+                        chargebackId = chargeback.id,
+                        paymentId = payment.id,
+                        chargebackAmountCents = chargeback.chargebackAmountCents,
+                        currency = chargeback.currency,
+                        stripeDisputeId = stripeDisputeId,
+                        stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
+                        buyerId = payment.buyerId,
+                        sellerId = payment.sellerId,
+                        idempotencyKey = chargeback.idempotencyKey
+                    )
+                    kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
+                    logger.info("Published ChargebackWonEvent for chargeback ${chargeback.id} (withdrawn) - money returned")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to process dispute closed for chargeback ${chargeback.id}", e)
         }
     }
 }

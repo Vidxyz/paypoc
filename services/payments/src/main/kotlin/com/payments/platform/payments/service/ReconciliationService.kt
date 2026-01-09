@@ -1,5 +1,6 @@
 package com.payments.platform.payments.service
 
+import com.payments.platform.payments.api.DiscrepancyDto
 import com.payments.platform.payments.api.ReconciliationReport
 import com.payments.platform.payments.api.ReconciliationRequest
 import com.payments.platform.payments.api.ReconciliationSummary
@@ -156,7 +157,7 @@ class ReconciliationService(
             currency = request.currency,
             runAt = runAt,
             summary = summary,
-            discrepancies = discrepancies.map { com.payments.platform.payments.api.DiscrepancyDto.fromDomain(it) },
+            discrepancies = discrepancies.map { DiscrepancyDto.fromDomain(it) },
             matchedTransactions = matches.matchedCount,
             totalStripeTransactions = stripeTransactions.size,
             totalLedgerTransactions = ledgerTransactions.size

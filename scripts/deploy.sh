@@ -55,6 +55,7 @@ build_images() {
     kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -84,6 +85,10 @@ build_images() {
     (cd "$PROJECT_ROOT/services/frontend" && docker build --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" -t frontend:latest .) &
     FRONTEND_PID=$!
     
+    log_info "Building admin-console image..."
+    (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) &
+    ADMIN_CONSOLE_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -95,11 +100,15 @@ build_images() {
     wait $FRONTEND_PID || { log_error "Frontend image build failed"; exit 1; }
     log_info "Frontend image built successfully"
     
+    wait $ADMIN_CONSOLE_PID || { log_error "Admin-console image build failed"; exit 1; }
+    log_info "Admin-console image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
     minikube image load payments-service:latest &
     minikube image load frontend:latest &
+    minikube image load admin-console:latest &
     
     # Wait for all image loads to complete
     wait
@@ -166,6 +175,16 @@ deploy_frontend() {
     wait
 }
 
+deploy_admin_console() {
+    log_info "Deploying Admin Console..."
+    kubectl apply -f "$K8S_DIR/admin-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/admin-console/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/admin-console/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/admin-console/service.yaml" &
+    kubectl apply -f "$K8S_DIR/admin-console/ingress.yaml" &
+    wait
+}
+
 wait_for_services() {
     log_info "Waiting for all services to be ready (in parallel)..."
     
@@ -186,11 +205,16 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet" &
     FRONTEND_PID=$!
     
+    log_info "Waiting for Admin Console..."
+    kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
+    ADMIN_CONSOLE_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
     wait $PAYMENTS_PID
     wait $FRONTEND_PID
+    wait $ADMIN_CONSOLE_PID
     
     log_info "Services deployment complete"
 }
@@ -217,6 +241,15 @@ show_status() {
         echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
     fi
     
+    INGRESS_IP_ADMIN=$(kubectl get ingress admin-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    if [ -n "$INGRESS_IP_ADMIN" ]; then
+        echo "  Admin Console (Ingress): http://admin.local"
+    else
+        echo "  Admin Console (Ingress): http://admin.local"
+        echo "    Add to /etc/hosts: $MINIKUBE_IP admin.local"
+        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
+    fi
+    
     INGRESS_IP_PAYMENTS=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_PAYMENTS" ]; then
         echo "  Payments Service (Ingress): http://$INGRESS_IP_PAYMENTS"
@@ -229,6 +262,7 @@ show_status() {
     echo ""
     log_info "To port-forward services:"
     echo "  Frontend: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
+    echo "  Admin Console: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
 }
@@ -256,6 +290,7 @@ main() {
     deploy_ledger &
     deploy_payments &
     deploy_frontend &
+    deploy_admin_console &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -297,6 +332,11 @@ case "${1:-}" in
         check_prerequisites
         create_namespace
         deploy_frontend
+        ;;
+    admin-console)
+        check_prerequisites
+        create_namespace
+        deploy_admin_console
         ;;
     status)
         show_status

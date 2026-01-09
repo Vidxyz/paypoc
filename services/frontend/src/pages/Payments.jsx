@@ -32,17 +32,12 @@ import InfoIcon from '@mui/icons-material/Info'
 import PaymentsIcon from '@mui/icons-material/Payments'
 import GavelIcon from '@mui/icons-material/Gavel'
 import CloseIcon from '@mui/icons-material/Close'
-import ConfirmationModal from '../components/ConfirmationModal'
 import paymentsApi from '../api/paymentsApi'
 
 function Payments({ buyerId }) {
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [refundingPaymentId, setRefundingPaymentId] = useState(null)
-  const [refunds, setRefunds] = useState({}) // Map of paymentId -> refunds array
-  const [confirmModalOpen, setConfirmModalOpen] = useState(false)
-  const [selectedPaymentForRefund, setSelectedPaymentForRefund] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
   
   // Chargeback details modal state
@@ -87,105 +82,6 @@ function Payments({ buyerId }) {
   }
 
 
-  const handleRefundClick = async (payment) => {
-    // Sanity check: verify payment is in CAPTURED state (not already refunding or refunded)
-    if (payment.state !== 'CAPTURED') {
-      if (payment.state === 'REFUNDING') {
-        setSnackbar({
-          open: true,
-          message: 'This payment is already being refunded.',
-          severity: 'warning',
-        })
-      } else if (payment.state === 'REFUNDED') {
-        setSnackbar({
-          open: true,
-          message: 'This payment has already been refunded.',
-          severity: 'error',
-        })
-      } else {
-        setSnackbar({
-          open: true,
-          message: `This payment cannot be refunded. Current state: ${payment.state}`,
-          severity: 'error',
-        })
-      }
-      return
-    }
-
-    setSelectedPaymentForRefund(payment)
-    setConfirmModalOpen(true)
-  }
-
-  const handleRefundConfirm = async () => {
-    const payment = selectedPaymentForRefund
-    if (!payment) return
-
-    setConfirmModalOpen(false)
-    setRefundingPaymentId(payment.id)
-    setError('')
-
-    try {
-      // Double-check that payment is still in CAPTURED state (sanity check)
-      // Reload payment to get latest state
-      const latestPayment = await paymentsApi.getPayment(payment.id)
-      if (latestPayment.state !== 'CAPTURED') {
-        if (latestPayment.state === 'REFUNDING') {
-          throw new Error('This payment is already being refunded.')
-        } else if (latestPayment.state === 'REFUNDED') {
-          throw new Error('This payment has already been refunded.')
-        } else {
-          throw new Error(`This payment cannot be refunded. Current state: ${latestPayment.state}`)
-        }
-      }
-
-      const refundResponse = await paymentsApi.createRefund(payment.id)
-      
-      if (refundResponse.error) {
-        throw new Error(refundResponse.error)
-      }
-
-      // Refresh payments to get updated state
-      await loadPayments()
-      
-      // Load refunds for this payment to update UI
-      try {
-        const refundResponse2 = await paymentsApi.getRefundsForPayment(payment.id)
-        if (refundResponse2.refunds) {
-          setRefunds(prev => ({
-            ...prev,
-            [payment.id]: refundResponse2.refunds
-          }))
-        }
-      } catch (err) {
-        console.error(`Failed to load refunds after creation: ${err.message}`)
-      }
-
-      setSnackbar({
-        open: true,
-        message: 'Refund initiated successfully! The refund is being processed.',
-        severity: 'success',
-      })
-    } catch (err) {
-      let errorMessage = 'Failed to create refund'
-      
-      if (err.response?.status === 400) {
-        errorMessage = err.response?.data?.error || 'This payment cannot be refunded. It may have already been refunded.'
-      } else if (err.message) {
-        errorMessage = err.message
-      } else if (err.response?.data?.error) {
-        errorMessage = err.response.data.error
-      }
-
-      setSnackbar({
-        open: true,
-        message: errorMessage,
-        severity: 'error',
-      })
-    } finally {
-      setRefundingPaymentId(null)
-      setSelectedPaymentForRefund(null)
-    }
-  }
 
   const getStateChip = (state) => {
     const chips = {
@@ -208,18 +104,6 @@ function Payments({ buyerId }) {
     )
   }
 
-  const hasRefund = (paymentId) => {
-    return refunds[paymentId] && refunds[paymentId].length > 0
-  }
-
-  const getRefundStatus = (paymentId) => {
-    const paymentRefunds = refunds[paymentId]
-    if (!paymentRefunds || paymentRefunds.length === 0) {
-      return null
-    }
-    const latestRefund = paymentRefunds[0]
-    return latestRefund.state
-  }
 
   const handleChargebackClick = async (payment) => {
     if (!payment.hasChargeback || !payment.latestChargebackId) {
@@ -237,7 +121,7 @@ function Payments({ buyerId }) {
     } catch (err) {
       setSnackbar({
         open: true,
-        message: `Failed to load chargeback details: ${err.message || 'Unknown error'}`,
+        message: `Failed to load dispute details: ${err.message || 'Unknown error'}`,
         severity: 'error',
       })
       setChargebackModalOpen(false)
@@ -251,14 +135,15 @@ function Payments({ buyerId }) {
       return null
     }
     
+    // Buyer perspective: WON (platform won) = buyer lost, LOST (platform lost) = buyer won
     const chips = {
-      DISPUTE_CREATED: { label: 'Dispute Created', color: 'warning' },
-      NEEDS_RESPONSE: { label: 'Needs Response', color: 'error' },
+      DISPUTE_CREATED: { label: 'Dispute Filed', color: 'warning' },
+      NEEDS_RESPONSE: { label: 'Response Required', color: 'error' },
       UNDER_REVIEW: { label: 'Under Review', color: 'info' },
-      WON: { label: 'Won', color: 'success' },
-      LOST: { label: 'Lost', color: 'error' },
-      WITHDRAWN: { label: 'Withdrawn', color: 'info' },
-      WARNING_CLOSED: { label: 'Warning Closed', color: 'warning' },
+      WON: { label: 'Dispute Lost', color: 'error' }, // Platform won = buyer lost
+      LOST: { label: 'Dispute Won', color: 'success' }, // Platform lost = buyer won
+      WITHDRAWN: { label: 'Dispute Withdrawn', color: 'error' }, // Buyer lost (withdrawn)
+      WARNING_CLOSED: { label: 'Dispute Lost', color: 'error' }, // Buyer lost
     }
     
     const chip = chips[payment.chargebackState] || { label: payment.chargebackState, color: 'default' }
@@ -294,6 +179,65 @@ function Payments({ buyerId }) {
       style: 'currency',
       currency: currency,
     }).format(cents / 100)
+  }
+
+  // Buyer-friendly status labels (reversed from platform perspective)
+  const getBuyerFriendlyStatusLabel = (state) => {
+    const labels = {
+      DISPUTE_CREATED: 'Dispute Filed',
+      NEEDS_RESPONSE: 'Response Required',
+      UNDER_REVIEW: 'Under Review',
+      WON: 'Dispute Lost', // Platform won = buyer lost
+      LOST: 'Dispute Won', // Platform lost = buyer won
+      WITHDRAWN: 'Dispute Withdrawn', // Buyer won
+      WARNING_CLOSED: 'Dispute Won', // Platform lost = buyer won
+    }
+    return labels[state] || state?.replace(/_/g, ' ') || 'Unknown'
+  }
+
+  const getBuyerFriendlyStatusColor = (state) => {
+    // Buyer perspective: success = buyer won, error = buyer lost
+    switch (state) {
+      case 'WON': // Platform won = buyer lost
+      case 'WITHDRAWN': // Buyer lost (withdrawn)
+      case 'WARNING_CLOSED': // Buyer lost
+        return 'error'
+      case 'LOST': // Platform lost = buyer won
+        return 'success'
+      case 'NEEDS_RESPONSE':
+        return 'error'
+      case 'UNDER_REVIEW':
+        return 'info'
+      case 'DISPUTE_CREATED':
+        return 'warning'
+      default:
+        return 'warning'
+    }
+  }
+
+  // Buyer-friendly outcome labels (reversed from platform perspective)
+  const getBuyerFriendlyOutcomeLabel = (outcome) => {
+    const labels = {
+      WON: 'Dispute Lost', // Platform won = buyer lost
+      LOST: 'Dispute Won', // Platform lost = buyer won
+      WITHDRAWN: 'Dispute Withdrawn', // Buyer lost (withdrawn)
+      WARNING_CLOSED: 'Dispute Lost', // Buyer lost
+    }
+    return labels[outcome] || outcome || 'Unknown'
+  }
+
+  const getBuyerFriendlyOutcomeColor = (outcome) => {
+    // Buyer perspective: success = buyer won, error = buyer lost
+    switch (outcome) {
+      case 'WON': // Platform won = buyer lost
+      case 'WITHDRAWN': // Buyer lost (withdrawn)
+      case 'WARNING_CLOSED': // Buyer lost
+        return 'error'
+      case 'LOST': // Platform lost = buyer won
+        return 'success'
+      default:
+        return 'info'
+    }
   }
 
   if (loading) {
@@ -358,19 +302,14 @@ function Payments({ buyerId }) {
                     <TableCell><strong>Amount</strong></TableCell>
                     <TableCell><strong>Seller</strong></TableCell>
                     <TableCell><strong>State</strong></TableCell>
-                    <TableCell><strong>Refund</strong></TableCell>
-                    <TableCell><strong>Chargeback</strong></TableCell>
+                    <TableCell><strong>Dispute</strong></TableCell>
                     <TableCell><strong>Created</strong></TableCell>
                     <TableCell><strong>Stripe PI</strong></TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {payments.map((payment) => {
-                    const paymentRefunds = refunds[payment.id] || []
-                    const refundStatus = getRefundStatus(payment.id)
-                    // Payment is refundable if it's CAPTURED (not REFUNDING or REFUNDED)
-                    const isRefundable = payment.state === 'CAPTURED'
-                    // Use payment state as primary indicator for refund status
+                    // Show refund status if payment is REFUNDED or REFUNDING (read-only)
                     const isRefunded = payment.state === 'REFUNDED'
                     const isRefunding = payment.state === 'REFUNDING'
                     
@@ -394,46 +333,6 @@ function Payments({ buyerId }) {
                         <TableCell>{payment.sellerId}</TableCell>
                         <TableCell>
                           {getStateChip(payment.state)}
-                        </TableCell>
-                        <TableCell>
-                          {isRefundable ? (
-                            <Button
-                              onClick={() => handleRefundClick(payment)}
-                              disabled={refundingPaymentId === payment.id}
-                              variant="outlined"
-                              color="warning"
-                              size="small"
-                            >
-                              {refundingPaymentId === payment.id ? 'Processing...' : 'Refund'}
-                            </Button>
-                          ) : isRefunding ? (
-                            <Chip
-                              label="Refunding..."
-                              color="warning"
-                              size="small"
-                            />
-                          ) : isRefunded ? (
-                            <Chip
-                              label="Refunded"
-                              color="secondary"
-                              size="small"
-                            />
-                          ) : hasRefund(payment.id) && refundStatus === 'FAILED' ? (
-                            <Chip
-                              label="Refund Failed"
-                              color="error"
-                              size="small"
-                            />
-                          ) : (
-                            <Typography variant="body2" color="text.disabled">
-                              —
-                            </Typography>
-                          )}
-                          {paymentRefunds.length > 0 && (
-                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                              {formatAmount(paymentRefunds[0].refundAmountCents, paymentRefunds[0].currency)}
-                            </Typography>
-                          )}
                         </TableCell>
                         <TableCell>
                           {getChargebackChip(payment) || (
@@ -468,24 +367,6 @@ function Payments({ buyerId }) {
         </CardContent>
       </Card>
 
-      <ConfirmationModal
-        open={confirmModalOpen}
-        onClose={() => {
-          setConfirmModalOpen(false)
-          setSelectedPaymentForRefund(null)
-        }}
-        onConfirm={handleRefundConfirm}
-        title="Confirm Refund"
-        message={
-          selectedPaymentForRefund
-            ? `Are you sure you want to refund ${formatAmount(selectedPaymentForRefund.grossAmountCents, selectedPaymentForRefund.currency)}? This action cannot be undone.`
-            : 'Are you sure you want to refund this payment? This action cannot be undone.'
-        }
-        confirmText="Refund"
-        cancelText="Cancel"
-        severity="warning"
-      />
-
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}
@@ -515,7 +396,7 @@ function Payments({ buyerId }) {
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <GavelIcon color="error" />
-            <Typography variant="h6">Chargeback Details</Typography>
+            <Typography variant="h6">Dispute Details</Typography>
           </Box>
           <Button
             onClick={() => {
@@ -538,40 +419,21 @@ function Payments({ buyerId }) {
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Chargeback Status
+                    Dispute Status
                   </Typography>
                   <Chip
-                    label={chargebackDetails.state?.replace(/_/g, ' ') || 'Unknown'}
-                    color={
-                      chargebackDetails.state === 'WON' ? 'success' :
-                      chargebackDetails.state === 'LOST' ? 'error' :
-                      chargebackDetails.state === 'WARNING_CLOSED' ? 'warning' :
-                      chargebackDetails.state === 'NEEDS_RESPONSE' ? 'error' :
-                      chargebackDetails.state === 'UNDER_REVIEW' ? 'info' :
-                      'warning'
-                    }
+                    label={getBuyerFriendlyStatusLabel(chargebackDetails.state)}
+                    color={getBuyerFriendlyStatusColor(chargebackDetails.state)}
                     sx={{ mb: 2 }}
                   />
                 </Grid>
                 
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Chargeback Amount
+                    Amount in Dispute
                   </Typography>
                   <Typography variant="h6" gutterBottom>
                     {formatAmount(chargebackDetails.chargebackAmountCents, chargebackDetails.currency)}
-                  </Typography>
-                </Grid>
-                
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Dispute Fee
-                  </Typography>
-                  <Typography variant="body1" gutterBottom>
-                    {formatAmount(chargebackDetails.disputeFeeCents, chargebackDetails.currency)}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    (Not refunded even if won)
                   </Typography>
                 </Grid>
                 
@@ -604,32 +466,17 @@ function Payments({ buyerId }) {
                       Final Outcome
                     </Typography>
                     <Chip
-                      label={chargebackDetails.outcome}
-                      color={
-                        chargebackDetails.outcome === 'WON' ? 'success' :
-                        chargebackDetails.outcome === 'LOST' ? 'error' :
-                        chargebackDetails.outcome === 'WARNING_CLOSED' ? 'warning' :
-                        'info'
-                      }
+                      label={getBuyerFriendlyOutcomeLabel(chargebackDetails.outcome)}
+                      color={getBuyerFriendlyOutcomeColor(chargebackDetails.outcome)}
                       sx={{ mb: 1 }}
                     />
                     {chargebackDetails.closedAt && (
                       <Typography variant="caption" color="text.secondary" display="block">
-                        Closed: {formatDate(chargebackDetails.closedAt)}
+                        Resolved: {formatDate(chargebackDetails.closedAt)}
                       </Typography>
                     )}
                   </Grid>
                 )}
-                
-                <Grid item xs={12}>
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Stripe Dispute ID
-                  </Typography>
-                  <Typography variant="body2" component="code" sx={{ fontFamily: 'monospace' }}>
-                    {chargebackDetails.stripeDisputeId}
-                  </Typography>
-                </Grid>
                 
                 <Grid item xs={12}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -643,7 +490,7 @@ function Payments({ buyerId }) {
             </Box>
           ) : (
             <Alert severity="error">
-              Failed to load chargeback details
+              Failed to load dispute details
             </Alert>
           )}
         </DialogContent>

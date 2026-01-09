@@ -1,10 +1,24 @@
 package com.payments.platform.payments.api
 
+import com.payments.platform.payments.domain.ChargebackOutcome
+import com.payments.platform.payments.domain.ChargebackState
 import com.payments.platform.payments.domain.PaymentState
+import com.payments.platform.payments.domain.PayoutState
+import com.payments.platform.payments.domain.RefundState
 import com.payments.platform.payments.kafka.CapturePaymentCommand
+import com.payments.platform.payments.kafka.ChargebackCreatedEvent
+import com.payments.platform.payments.kafka.ChargebackLostEvent
+import com.payments.platform.payments.kafka.ChargebackWarningClosedEvent
+import com.payments.platform.payments.kafka.ChargebackWonEvent
 import com.payments.platform.payments.kafka.PaymentKafkaProducer
+import com.payments.platform.payments.kafka.PayoutCompletedEvent
+import com.payments.platform.payments.kafka.RefundCompletedEvent
 import com.payments.platform.payments.persistence.PaymentRepository
+import com.payments.platform.payments.persistence.RefundRepository
+import com.payments.platform.payments.service.ChargebackService
 import com.payments.platform.payments.service.PaymentService
+import com.payments.platform.payments.service.PayoutService
+import com.payments.platform.payments.service.RefundService
 import com.payments.platform.payments.stripe.StripeService
 import com.stripe.model.Event
 import com.stripe.model.PaymentIntent
@@ -38,10 +52,10 @@ class StripeWebhookController(
     private val paymentRepository: PaymentRepository,
     private val paymentService: PaymentService,
     private val kafkaProducer: PaymentKafkaProducer,
-    private val refundService: com.payments.platform.payments.service.RefundService,
-    private val refundRepository: com.payments.platform.payments.persistence.RefundRepository,
-    private val payoutService: com.payments.platform.payments.service.PayoutService,
-    private val chargebackService: com.payments.platform.payments.service.ChargebackService
+    private val refundService: RefundService,
+    private val refundRepository: RefundRepository,
+    private val payoutService: PayoutService,
+    private val chargebackService: ChargebackService
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -283,20 +297,20 @@ class StripeWebhookController(
         val refund = refundEntity.toDomain()
         
         // Idempotency check: if already refunded, skip
-        if (refund.state == com.payments.platform.payments.domain.RefundState.REFUNDED) {
+        if (refund.state == RefundState.REFUNDED) {
             logger.info("Refund ${refund.id} already refunded, skipping webhook processing")
             return
         }
         
         // Validate state: must be REFUNDING
-        if (refund.state != com.payments.platform.payments.domain.RefundState.REFUNDING) {
+        if (refund.state != RefundState.REFUNDING) {
             logger.warn(
                 "Refund ${refund.id} is in state ${refund.state}, " +
                 "cannot complete refund. Expected REFUNDING. Stripe Refund ID: $stripeRefundId"
             )
             // Transition to FAILED if in unexpected state
             try {
-                refundService.transitionRefund(refund.id, com.payments.platform.payments.domain.RefundState.FAILED)
+                refundService.transitionRefund(refund.id, RefundState.FAILED)
             } catch (e: Exception) {
                 logger.error("Failed to transition refund ${refund.id} to FAILED", e)
             }
@@ -305,7 +319,7 @@ class StripeWebhookController(
         
         // Transition refund to REFUNDED
         try {
-            refundService.transitionRefund(refund.id, com.payments.platform.payments.domain.RefundState.REFUNDED)
+            refundService.transitionRefund(refund.id, RefundState.REFUNDED)
             logger.info("Refund ${refund.id} transitioned to REFUNDED (Stripe Refund ID: $stripeRefundId)")
             
             // Get payment details for the event
@@ -328,7 +342,7 @@ class StripeWebhookController(
             
             // Publish RefundCompletedEvent to Kafka
             // This will trigger the ledger write
-            val refundCompletedEvent = com.payments.platform.payments.kafka.RefundCompletedEvent(
+            val refundCompletedEvent = RefundCompletedEvent(
                 refundId = refund.id,
                 paymentId = refund.paymentId,
                 refundAmountCents = refund.refundAmountCents,
@@ -402,13 +416,13 @@ class StripeWebhookController(
         
         
         // Idempotency check: if already completed, skip (ledger already written)
-        if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+        if (payout.state == PayoutState.COMPLETED) {
             logger.info("Payout ${payout.id} already completed, skipping webhook processing")
             return
         }
         
         // Validate state: must be PROCESSING
-        if (payout.state != com.payments.platform.payments.domain.PayoutState.PROCESSING) {
+        if (payout.state != PayoutState.PROCESSING) {
             logger.warn(
                 "Payout ${payout.id} is in state ${payout.state}, " +
                 "cannot process transfer.created. Expected PROCESSING. Stripe Transfer ID: $stripeTransferId"
@@ -421,7 +435,7 @@ class StripeWebhookController(
         try {
             // Publish PayoutCompletedEvent to Kafka
             // This will trigger the ledger write
-            val payoutCompletedEvent = com.payments.platform.payments.kafka.PayoutCompletedEvent(
+            val payoutCompletedEvent = PayoutCompletedEvent(
                 payoutId = payout.id,
                 paymentId = payout.id,  // Use payoutId as paymentId for Kafka key
                 idempotencyKey = payout.idempotencyKey,
@@ -446,7 +460,7 @@ class StripeWebhookController(
             val completedAt = Instant.now()
             payoutService.transitionPayout(
                 payout.id,
-                com.payments.platform.payments.domain.PayoutState.COMPLETED,
+                PayoutState.COMPLETED,
                 completedAt = completedAt
             )
             logger.info("Payout ${payout.id} transitioned to COMPLETED (Stripe Transfer ID: $stripeTransferId)")
@@ -495,7 +509,7 @@ class StripeWebhookController(
         
         // Idempotency check: if already completed, skip
         // (Ledger was already written on transfer.created)
-        if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+        if (payout.state == PayoutState.COMPLETED) {
             logger.info(
                 "Payout ${payout.id} already completed (ledger written on transfer.created), " +
                 "transfer.paid is just confirmation"
@@ -505,7 +519,7 @@ class StripeWebhookController(
         
         // If payout is still in PROCESSING, it means transfer.created webhook was missed
         // Complete it now (ledger write will happen via idempotency)
-        if (payout.state == com.payments.platform.payments.domain.PayoutState.PROCESSING) {
+        if (payout.state == PayoutState.PROCESSING) {
             logger.warn(
                 "Payout ${payout.id} still in PROCESSING when transfer.paid received. " +
                 "transfer.created webhook may have been missed. Completing payout now."
@@ -514,12 +528,12 @@ class StripeWebhookController(
                 val completedAt = Instant.now()
                 payoutService.transitionPayout(
                     payout.id,
-                    com.payments.platform.payments.domain.PayoutState.COMPLETED,
+                    PayoutState.COMPLETED,
                     completedAt = completedAt
                 )
                 
                 // Publish PayoutCompletedEvent to Kafka (idempotency will prevent duplicate ledger writes)
-                val payoutCompletedEvent = com.payments.platform.payments.kafka.PayoutCompletedEvent(
+                val payoutCompletedEvent = PayoutCompletedEvent(
                     payoutId = payout.id,
                     paymentId = payout.id,
                     idempotencyKey = payout.idempotencyKey,
@@ -583,8 +597,8 @@ class StripeWebhookController(
         }
         
         // Idempotency check: if already failed or completed, skip
-        if (payout.state == com.payments.platform.payments.domain.PayoutState.FAILED ||
-            payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
+        if (payout.state == PayoutState.FAILED ||
+            payout.state == PayoutState.COMPLETED) {
             logger.info("Payout ${payout.id} already in terminal state ${payout.state}, skipping webhook processing")
             return
         }
@@ -593,7 +607,7 @@ class StripeWebhookController(
         try {
             payoutService.transitionPayout(
                 payout.id,
-                com.payments.platform.payments.domain.PayoutState.FAILED,
+                PayoutState.FAILED,
                 failureReason = failureReason
             )
             logger.info("Payout ${payout.id} transitioned to FAILED (Stripe Transfer ID: $stripeTransferId, reason: $failureReason)")
@@ -662,10 +676,10 @@ class StripeWebhookController(
         
         // Determine state based on Stripe dispute status
         val targetState = when (stripeDispute.status) {
-            "warning_needs_response" -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
-            "needs_response" -> com.payments.platform.payments.domain.ChargebackState.NEEDS_RESPONSE
-            "under_review" -> com.payments.platform.payments.domain.ChargebackState.UNDER_REVIEW
-            else -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
+            "warning_needs_response" -> ChargebackState.DISPUTE_CREATED
+            "needs_response" -> ChargebackState.NEEDS_RESPONSE
+            "under_review" -> ChargebackState.UNDER_REVIEW
+            else -> ChargebackState.DISPUTE_CREATED
         }
         
         // Transition to appropriate state if not already there
@@ -679,7 +693,7 @@ class StripeWebhookController(
         
         // Publish ChargebackCreatedEvent to Kafka
         // This will trigger the ledger write (money is debited immediately)
-        val chargebackCreatedEvent = com.payments.platform.payments.kafka.ChargebackCreatedEvent(
+        val chargebackCreatedEvent = ChargebackCreatedEvent(
             chargebackId = chargeback.id,
             paymentId = payment.id,
             chargebackAmountCents = chargeback.chargebackAmountCents,
@@ -723,9 +737,9 @@ class StripeWebhookController(
         
         // Determine target state based on Stripe dispute status
         val targetState = when (disputeStatus) {
-            "warning_needs_response" -> com.payments.platform.payments.domain.ChargebackState.DISPUTE_CREATED
-            "needs_response" -> com.payments.platform.payments.domain.ChargebackState.NEEDS_RESPONSE
-            "under_review" -> com.payments.platform.payments.domain.ChargebackState.UNDER_REVIEW
+            "warning_needs_response" -> ChargebackState.DISPUTE_CREATED
+            "needs_response" -> ChargebackState.NEEDS_RESPONSE
+            "under_review" -> ChargebackState.UNDER_REVIEW
             else -> {
                 logger.debug("Dispute $stripeDisputeId status is $disputeStatus, not updating state")
                 return
@@ -780,21 +794,21 @@ class StripeWebhookController(
         // Determine outcome and target state
         val (outcome, targetState) = when (disputeStatus) {
             "won" -> {
-                com.payments.platform.payments.domain.ChargebackOutcome.WON to
-                com.payments.platform.payments.domain.ChargebackState.WON
+                ChargebackOutcome.WON to
+                ChargebackState.WON
             }
             "warning_closed" -> {
                 // Dispute closed with warning but in merchant's favor - money is returned
-                com.payments.platform.payments.domain.ChargebackOutcome.WARNING_CLOSED to
-                com.payments.platform.payments.domain.ChargebackState.WARNING_CLOSED
+                ChargebackOutcome.WARNING_CLOSED to
+                ChargebackState.WARNING_CLOSED
             }
             "lost" -> {
-                com.payments.platform.payments.domain.ChargebackOutcome.LOST to
-                com.payments.platform.payments.domain.ChargebackState.LOST
+                ChargebackOutcome.LOST to
+                ChargebackState.LOST
             }
             "charge_refunded" -> {
-                com.payments.platform.payments.domain.ChargebackOutcome.WITHDRAWN to
-                com.payments.platform.payments.domain.ChargebackState.WITHDRAWN
+                ChargebackOutcome.WITHDRAWN to
+                ChargebackState.WITHDRAWN
             }
             else -> {
                 logger.warn("Unknown dispute status for closed dispute: $disputeStatus")
@@ -809,9 +823,9 @@ class StripeWebhookController(
             
             // Publish appropriate event based on outcome
             when (outcome) {
-                com.payments.platform.payments.domain.ChargebackOutcome.WON -> {
+                ChargebackOutcome.WON -> {
                     // Money is returned to STRIPE_CLEARING
-                    val chargebackWonEvent = com.payments.platform.payments.kafka.ChargebackWonEvent(
+                    val chargebackWonEvent = ChargebackWonEvent(
                         chargebackId = chargeback.id,
                         paymentId = payment.id,
                         chargebackAmountCents = chargeback.chargebackAmountCents,
@@ -825,10 +839,10 @@ class StripeWebhookController(
                     kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
                     logger.info("Published ChargebackWonEvent for chargeback ${chargeback.id} - money returned")
                 }
-                com.payments.platform.payments.domain.ChargebackOutcome.WARNING_CLOSED -> {
+                ChargebackOutcome.WARNING_CLOSED -> {
                     // Dispute closed with warning but in merchant's favor
                     // BOTH chargeback amount AND dispute fee are returned (unlike WON where only amount is returned)
-                    val chargebackWarningClosedEvent = com.payments.platform.payments.kafka.ChargebackWarningClosedEvent(
+                    val chargebackWarningClosedEvent = ChargebackWarningClosedEvent(
                         chargebackId = chargeback.id,
                         paymentId = payment.id,
                         chargebackAmountCents = chargeback.chargebackAmountCents,
@@ -843,9 +857,9 @@ class StripeWebhookController(
                     kafkaProducer.publishChargebackWarningClosedEvent(chargebackWarningClosedEvent)
                     logger.info("Published ChargebackWarningClosedEvent for chargeback ${chargeback.id} (warning_closed) - amount and fee returned")
                 }
-                com.payments.platform.payments.domain.ChargebackOutcome.LOST -> {
+                ChargebackOutcome.LOST -> {
                     // Money is permanently debited, reduce seller liability
-                    val chargebackLostEvent = com.payments.platform.payments.kafka.ChargebackLostEvent(
+                    val chargebackLostEvent = ChargebackLostEvent(
                         chargebackId = chargeback.id,
                         paymentId = payment.id,
                         chargebackAmountCents = chargeback.chargebackAmountCents,
@@ -861,9 +875,9 @@ class StripeWebhookController(
                     kafkaProducer.publishChargebackLostEvent(chargebackLostEvent)
                     logger.info("Published ChargebackLostEvent for chargeback ${chargeback.id} - money permanently debited")
                 }
-                com.payments.platform.payments.domain.ChargebackOutcome.WITHDRAWN -> {
+                ChargebackOutcome.WITHDRAWN -> {
                     // Buyer withdrew dispute - money is returned (similar to won)
-                    val chargebackWonEvent = com.payments.platform.payments.kafka.ChargebackWonEvent(
+                    val chargebackWonEvent = ChargebackWonEvent(
                         chargebackId = chargeback.id,
                         paymentId = payment.id,
                         chargebackAmountCents = chargeback.chargebackAmountCents,

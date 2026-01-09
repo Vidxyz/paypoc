@@ -138,6 +138,31 @@ class LedgerClient(
             throw LedgerClientException("Failed to communicate with ledger service", e)
         }
     }
+    
+    /**
+     * Gets all seller accounts with their balances (admin-only).
+     * 
+     * Returns a list of all SELLER_PAYABLE accounts with their current balances.
+     * 
+     * @return List of seller accounts with balances
+     * @throws LedgerClientException if ledger service is unavailable
+     */
+    fun getAllSellerAccounts(): LedgerSellersResponse {
+        return try {
+            webClient.get()
+                .uri("$ledgerServiceUrl/ledger/admin/sellers")
+                .retrieve()
+                .bodyToMono(LedgerSellersResponse::class.java)
+                .block() ?: throw LedgerClientException("Ledger service returned null response")
+        } catch (e: WebClientResponseException) {
+            throw LedgerClientException(
+                "Ledger service error: ${e.statusCode} - ${e.responseBodyAsString}",
+                e
+            )
+        } catch (e: Exception) {
+            throw LedgerClientException("Failed to communicate with ledger service", e)
+        }
+    }
 }
 
 /**

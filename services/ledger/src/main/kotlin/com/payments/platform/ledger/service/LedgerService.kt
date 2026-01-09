@@ -100,4 +100,15 @@ class LedgerService(
     ): List<TransactionWithEntries> {
         return ledgerRepository.queryTransactions(startDate, endDate, currency)
     }
+    
+    /**
+     * Gets all SELLER_PAYABLE accounts with their balances.
+     * 
+     * Admin-only endpoint for viewing all sellers and their pending funds.
+     * 
+     * @return List of seller accounts with balances
+     */
+    fun getAllSellerAccountsWithBalances(): List<SellerAccountInfo> {
+        return ledgerRepository.findAllSellerAccountsWithBalances()
+    }
 }

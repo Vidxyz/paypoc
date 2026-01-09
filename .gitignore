@@ -14,3 +14,7 @@ build/*
 /services/payments/build/
 .idea/*
 .stripe_logs
+
+# Node modules
+node_modules/
+**/node_modules/

@@ -2,6 +2,8 @@ package com.payments.platform.payments.api
 
 import com.payments.platform.payments.client.LedgerClient
 import com.payments.platform.payments.client.LedgerClientException
+import com.payments.platform.payments.service.CreatePaymentRequest
+import com.payments.platform.payments.service.PaymentCreationException
 import com.payments.platform.payments.service.PaymentService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
@@ -63,7 +65,7 @@ class PaymentController(
     ): ResponseEntity<PaymentResponseDto> {
         return try {
             val createPaymentResponse = paymentService.createPayment(
-                com.payments.platform.payments.service.CreatePaymentRequest(
+                CreatePaymentRequest(
                     buyerId = request.buyerId,
                     sellerId = request.sellerId,
                     grossAmountCents = request.grossAmountCents,
@@ -75,7 +77,7 @@ class PaymentController(
             ResponseEntity.status(HttpStatus.CREATED).body(
                 PaymentResponseDto.fromDomain(createPaymentResponse.payment, createPaymentResponse.clientSecret)
             )
-        } catch (e: com.payments.platform.payments.service.PaymentCreationException) {
+        } catch (e: PaymentCreationException) {
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 PaymentResponseDto(
                     error = "Payment creation failed: ${e.message}"

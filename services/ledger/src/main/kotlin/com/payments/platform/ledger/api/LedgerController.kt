@@ -235,7 +235,83 @@ class LedgerController(
             )
         }
     }
+    
+    /**
+     * GET /ledger/admin/sellers
+     * Gets all seller accounts with their balances (admin-only).
+     * 
+     * Returns a list of all SELLER_PAYABLE accounts with their current balances.
+     */
+    @Operation(
+        summary = "Get all seller accounts with balances (admin)",
+        description = "Retrieves all SELLER_PAYABLE accounts with their current balances. Admin-only endpoint. " +
+            "Useful for viewing which sellers have pending funds available for payout."
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Seller accounts retrieved successfully",
+                content = [Content(schema = Schema(implementation = SellersResponseDto::class))]
+            )
+        ]
+    )
+    @GetMapping("/admin/sellers")
+    fun getAllSellerAccounts(): ResponseEntity<SellersResponseDto> {
+        return try {
+            val sellers = ledgerService.getAllSellerAccountsWithBalances()
+            ResponseEntity.ok(
+                SellersResponseDto(
+                    sellers = sellers.map { seller ->
+                        SellerInfoDto(
+                            sellerId = seller.sellerId,
+                            currency = seller.currency,
+                            accountId = seller.accountId,
+                            balanceCents = seller.balanceCents
+                        )
+                    },
+                    error = null
+                )
+            )
+        } catch (e: Exception) {
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                SellersResponseDto(
+                    error = "Failed to retrieve sellers: ${e.message}"
+                )
+            )
+        }
+    }
 }
+
+@Schema(description = "Sellers response")
+data class SellersResponseDto(
+    @JsonProperty("sellers")
+    @Schema(description = "List of sellers with balances")
+    val sellers: List<SellerInfoDto> = emptyList(),
+    
+    @JsonProperty("error")
+    @Schema(description = "Error message if request failed")
+    val error: String? = null
+)
+
+@Schema(description = "Seller information with balance")
+data class SellerInfoDto(
+    @JsonProperty("sellerId")
+    @Schema(description = "Seller ID", example = "seller_123")
+    val sellerId: String,
+    
+    @JsonProperty("currency")
+    @Schema(description = "Currency code", example = "USD")
+    val currency: String,
+    
+    @JsonProperty("accountId")
+    @Schema(description = "Ledger account ID")
+    val accountId: UUID,
+    
+    @JsonProperty("balanceCents")
+    @Schema(description = "Current balance in cents", example = "50000")
+    val balanceCents: Long
+)
 
 @Schema(description = "Double-entry transaction request")
 data class CreateDoubleEntryTransactionRequestDto(

@@ -1,5 +1,6 @@
 package com.payments.platform.payments.api
 
+import com.payments.platform.payments.domain.PayoutState
 import com.payments.platform.payments.service.PayoutCreationException
 import com.payments.platform.payments.service.PayoutService
 import io.swagger.v3.oas.annotations.Operation
@@ -15,15 +16,17 @@ import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
 @RestController
-@RequestMapping
-@Tag(name = "Payouts", description = "Payout operations for sellers")
+@RequestMapping("/admin")
+@Tag(name = "Admin - Payouts", description = "Admin-only payout operations for sellers. All routes require admin authentication.")
 class PayoutController(
     private val payoutService: PayoutService
 ) {
     
     /**
-     * POST /payouts
+     * POST /admin/payouts
      * Creates a manual payout for a seller.
+     * 
+     * Admin-only endpoint.
      * 
      * This endpoint orchestrates the payout workflow:
      * 1. Validates seller has Stripe account configured
@@ -34,8 +37,8 @@ class PayoutController(
      * Ledger write happens AFTER Stripe webhook confirms transfer completion.
      */
     @Operation(
-        summary = "Create a payout for a seller",
-        description = "Creates a manual payout for a seller. The payout is processed through Stripe and recorded in the ledger after Stripe confirms transfer completion via webhook. The seller's Stripe account must be configured before payouts can be processed."
+        summary = "Create a payout for a seller (Admin)",
+        description = "Creates a manual payout for a seller. Admin-only endpoint. The payout is processed through Stripe and recorded in the ledger after Stripe confirms transfer completion via webhook. The seller's Stripe account must be configured before payouts can be processed."
     )
     @ApiResponses(
         value = [
@@ -81,15 +84,17 @@ class PayoutController(
     }
     
     /**
-     * POST /sellers/{sellerId}/payout
+     * POST /admin/sellers/{sellerId}/payout
      * Creates a payout for all pending funds for a seller.
+     * 
+     * Admin-only endpoint.
      * 
      * This is a convenience endpoint that automatically calculates and pays out
      * all pending funds for a seller based on their SELLER_PAYABLE balance in the ledger.
      */
     @Operation(
-        summary = "Payout all pending funds for a seller",
-        description = "Creates a payout for all pending funds for a seller. This endpoint queries the ledger for the seller's SELLER_PAYABLE balance and creates a payout for that amount. If the seller has no pending funds, returns an error."
+        summary = "Payout all pending funds for a seller (Admin)",
+        description = "Creates a payout for all pending funds for a seller. Admin-only endpoint. This endpoint queries the ledger for the seller's SELLER_PAYABLE balance and creates a payout for that amount. If the seller has no pending funds, returns an error."
     )
     @ApiResponses(
         value = [
@@ -128,12 +133,14 @@ class PayoutController(
     }
     
     /**
-     * GET /payouts
+     * GET /admin/payouts
      * Gets payouts with optional filters.
+     * 
+     * Admin-only endpoint.
      */
     @Operation(
-        summary = "Get payouts",
-        description = "Retrieves payouts. Can be filtered by sellerId and state."
+        summary = "Get payouts (Admin)",
+        description = "Retrieves payouts. Admin-only endpoint. Can be filtered by sellerId and state."
     )
     @ApiResponses(
         value = [
@@ -157,7 +164,7 @@ class PayoutController(
             
             val filteredPayouts = if (state != null) {
                 try {
-                    val payoutState = com.payments.platform.payments.domain.PayoutState.valueOf(state.uppercase())
+                    val payoutState = PayoutState.valueOf(state.uppercase())
                     payouts.filter { it.state == payoutState }
                 } catch (e: IllegalArgumentException) {
                     emptyList()
@@ -181,12 +188,14 @@ class PayoutController(
     }
     
     /**
-     * GET /payouts/{payoutId}
+     * GET /admin/payouts/{payoutId}
      * Gets a payout by ID.
+     * 
+     * Admin-only endpoint.
      */
     @Operation(
-        summary = "Get payout by ID",
-        description = "Retrieves a payout by its unique identifier."
+        summary = "Get payout by ID (Admin)",
+        description = "Retrieves a payout by its unique identifier. Admin-only endpoint."
     )
     @ApiResponses(
         value = [
@@ -217,12 +226,14 @@ class PayoutController(
     }
     
     /**
-     * GET /sellers/{sellerId}/payouts
+     * GET /admin/sellers/{sellerId}/payouts
      * Gets all payouts for a seller.
+     * 
+     * Admin-only endpoint.
      */
     @Operation(
-        summary = "Get payouts for a seller",
-        description = "Retrieves all payouts for a specific seller."
+        summary = "Get payouts for a seller (Admin)",
+        description = "Retrieves all payouts for a specific seller. Admin-only endpoint."
     )
     @ApiResponses(
         value = [

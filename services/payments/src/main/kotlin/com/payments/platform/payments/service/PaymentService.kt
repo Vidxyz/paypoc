@@ -5,6 +5,7 @@ import com.payments.platform.payments.domain.PaymentState
 import com.payments.platform.payments.domain.PaymentStateMachine
 import com.payments.platform.payments.kafka.AuthorizePaymentCommand
 import com.payments.platform.payments.kafka.PaymentKafkaProducer
+import com.payments.platform.payments.persistence.ChargebackRepository
 import com.payments.platform.payments.persistence.PaymentEntity
 import com.payments.platform.payments.persistence.PaymentRepository
 import com.payments.platform.payments.persistence.SellerStripeAccountRepository
@@ -31,7 +32,7 @@ class PaymentService(
     private val stateMachine: PaymentStateMachine,
     private val kafkaProducer: PaymentKafkaProducer,
     private val stripeService: StripeService,
-    private val chargebackRepository: com.payments.platform.payments.persistence.ChargebackRepository
+    private val chargebackRepository: ChargebackRepository
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -333,6 +334,17 @@ class PaymentService(
         val pageResult = paymentRepository.findByBuyerId(buyerId, pageable)
         
         return pageResult.content.map { it.toDomain() }
+    }
+    
+    /**
+     * Gets all payments (admin-only).
+     * 
+     * @param pageable Pagination and sorting parameters
+     * @return Page of all payments
+     */
+    fun getAllPayments(pageable: org.springframework.data.domain.Pageable): org.springframework.data.domain.Page<Payment> {
+        val pageResult = paymentRepository.findAll(pageable)
+        return pageResult.map { it.toDomain() }
     }
     
     /**

@@ -14,15 +14,17 @@ import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
 @RestController
-@RequestMapping
-@Tag(name = "Refunds", description = "Refund operations for payments")
+@RequestMapping("/admin")
+@Tag(name = "Admin - Refunds", description = "Admin-only refund operations for payments. All routes require admin authentication.")
 class RefundController(
     private val refundService: RefundService
 ) {
     
     /**
-     * POST /payments/{paymentId}/refund
+     * POST /admin/payments/{paymentId}/refund
      * Creates a full refund for a payment.
+     * 
+     * Admin-only endpoint.
      * 
      * This endpoint orchestrates the refund workflow:
      * 1. Validates payment exists and is CAPTURED
@@ -34,8 +36,8 @@ class RefundController(
      * Ledger write happens AFTER Stripe webhook confirms refund completion.
      */
     @Operation(
-        summary = "Create a refund for a payment",
-        description = "Creates a full refund for a captured payment. The refund is processed through Stripe and recorded in the ledger after Stripe confirms refund completion via webhook. Only CAPTURED payments can be refunded, and each payment can only be refunded once (full refund only)."
+        summary = "Create a refund for a payment (Admin)",
+        description = "Creates a full refund for a captured payment. Admin-only endpoint. The refund is processed through Stripe and recorded in the ledger after Stripe confirms refund completion via webhook. Only CAPTURED payments can be refunded, and each payment can only be refunded once (full refund only)."
     )
     @ApiResponses(
         value = [
@@ -81,12 +83,14 @@ class RefundController(
     }
     
     /**
-     * GET /payments/{paymentId}/refunds
+     * GET /admin/payments/{paymentId}/refunds
      * Gets all refunds for a payment.
+     * 
+     * Admin-only endpoint.
      */
     @Operation(
-        summary = "Get refunds for a payment",
-        description = "Retrieves all refunds for a specific payment. Currently, only one refund per payment is supported (full refund)."
+        summary = "Get refunds for a payment (Admin)",
+        description = "Retrieves all refunds for a specific payment. Admin-only endpoint. Currently, only one refund per payment is supported (full refund)."
     )
     @ApiResponses(
         value = [
@@ -118,12 +122,14 @@ class RefundController(
     }
     
     /**
-     * GET /refunds/{refundId}
+     * GET /admin/refunds/{refundId}
      * Gets a refund by ID.
+     * 
+     * Admin-only endpoint.
      */
     @Operation(
-        summary = "Get refund by ID",
-        description = "Retrieves a refund by its unique identifier."
+        summary = "Get refund by ID (Admin)",
+        description = "Retrieves a refund by its unique identifier. Admin-only endpoint."
     )
     @ApiResponses(
         value = [

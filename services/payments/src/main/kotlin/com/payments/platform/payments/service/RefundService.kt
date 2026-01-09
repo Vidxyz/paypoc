@@ -1,8 +1,10 @@
 package com.payments.platform.payments.service
 
+import com.payments.platform.payments.domain.ChargebackState
 import com.payments.platform.payments.domain.PaymentState
 import com.payments.platform.payments.domain.Refund
 import com.payments.platform.payments.domain.RefundState
+import com.payments.platform.payments.persistence.ChargebackRepository
 import com.payments.platform.payments.persistence.PaymentRepository
 import com.payments.platform.payments.persistence.RefundEntity
 import com.payments.platform.payments.persistence.RefundRepository
@@ -27,7 +29,8 @@ class RefundService(
     private val refundRepository: RefundRepository,
     private val paymentRepository: PaymentRepository,
     private val stripeService: StripeService,
-    private val paymentService: PaymentService
+    private val paymentService: PaymentService,
+    private val chargebackRepository: ChargebackRepository
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -72,6 +75,28 @@ class RefundService(
                 "Payment $paymentId has already been refunded. " +
                 "Only one refund per payment is currently supported."
             )
+        }
+        
+        // Validate chargeback status
+        // Refunds are only allowed if:
+        // - Payment has no chargebacks, OR
+        // - Payment has chargeback(s) but the latest one is WON or WARNING_CLOSED (platform won)
+        val chargebacks = chargebackRepository.findByPaymentId(paymentId)
+        if (chargebacks.isNotEmpty()) {
+            // Get the latest chargeback (most recent by createdAt)
+            val latestChargeback = chargebacks.maxByOrNull { it.createdAt }
+            if (latestChargeback != null) {
+                val chargebackState = latestChargeback.state
+                // Only allow refund if chargeback was WON or WARNING_CLOSED (platform won)
+                if (chargebackState != ChargebackState.WON &&
+                    chargebackState != ChargebackState.WARNING_CLOSED) {
+                    throw RefundCreationException(
+                        "Payment $paymentId cannot be refunded due to active chargeback. " +
+                        "Current chargeback state: $chargebackState. " +
+                        "Only payments with WON or WARNING_CLOSED chargebacks can be refunded."
+                    )
+                }
+            }
         }
         
         // Validate payment has Stripe PaymentIntent ID

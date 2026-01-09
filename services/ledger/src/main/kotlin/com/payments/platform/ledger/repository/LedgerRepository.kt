@@ -334,6 +334,43 @@ class LedgerRepository(
     }
 
     /**
+     * Finds all SELLER_PAYABLE accounts with their balances.
+     * 
+     * Returns a list of seller accounts with their current balances.
+     * 
+     * @return List of seller account info with balances
+     */
+    @Transactional(readOnly = true)
+    fun findAllSellerAccountsWithBalances(): List<SellerAccountInfo> {
+        val sql = """
+            SELECT 
+                la.id AS account_id,
+                la.reference_id AS seller_id,
+                la.currency,
+                COALESCE(
+                    SUM(CASE WHEN le.direction = 'CREDIT' THEN le.amount_cents ELSE 0 END) -
+                    SUM(CASE WHEN le.direction = 'DEBIT' THEN le.amount_cents ELSE 0 END),
+                    0
+                ) AS balance_cents
+            FROM ledger_accounts la
+            LEFT JOIN ledger_entries le ON le.account_id = la.id
+            WHERE la.account_type = 'SELLER_PAYABLE'
+            GROUP BY la.id, la.reference_id, la.currency
+            ORDER BY la.reference_id, la.currency
+        """.trimIndent()
+        
+        return jdbcTemplate.query(sql) { rs, _ ->
+            com.payments.platform.ledger.domain.SellerAccountInfo(
+                accountId = UUID.fromString(rs.getString("account_id")),
+                sellerId = rs.getString("seller_id") ?: "",
+                currency = rs.getString("currency"),
+                balanceCents = rs.getLong("balance_cents")
+            )
+        }
+    }
+    
+    
+    /**
      * Gets all entries for a transaction (for auditing/reconciliation).
      */
     @Transactional(readOnly = true)

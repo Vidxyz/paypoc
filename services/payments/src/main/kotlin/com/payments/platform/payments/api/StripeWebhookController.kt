@@ -362,12 +362,40 @@ class StripeWebhookController(
         
         logger.info("Transfer created: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
         
-        // Find payout by Stripe Transfer ID
-        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
-            ?: run {
-                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
-                return
+        // Find payout - try by transfer ID first (in case it's already been updated)
+        // If not found, try by payout ID from metadata (payout is flushed before transfer creation, so it should exist)
+        var payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+        
+        if (payout == null) {
+            // Fallback: Get payout ID from Stripe Transfer metadata
+            // The payout is flushed before creating the transfer, so it should exist in the database
+            val payoutIdStr = stripeTransfer.metadata?.get("payoutId")
+            if (payoutIdStr != null) {
+                try {
+                    val payoutId = UUID.fromString(payoutIdStr)
+                    payout = try {
+                        payoutService.getPayout(payoutId)
+                    } catch (e: IllegalArgumentException) {
+                        logger.warn("Payout $payoutId from metadata not found: ${e.message}")
+                        null
+                    }
+                    if (payout != null) {
+                        logger.info("Found payout ${payout.id} by ID from metadata (transfer ID: $stripeTransferId)")
+                    }
+                } catch (e: Exception) {
+                    logger.warn("Failed to parse payout ID from metadata: $payoutIdStr", e)
+                }
             }
+        }
+        
+        if (payout == null) {
+            logger.error(
+                "Payout not found for Stripe Transfer ID: $stripeTransferId. " +
+                "Metadata: ${stripeTransfer.metadata}. Webhook will be ignored."
+            )
+            return
+        }
+        
         
         // Idempotency check: if already completed, skip (ledger already written)
         if (payout.state == com.payments.platform.payments.domain.PayoutState.COMPLETED) {
@@ -439,12 +467,27 @@ class StripeWebhookController(
         
         logger.info("Transfer paid: $stripeTransferId (amount: ${stripeTransfer.amount}, currency: ${stripeTransfer.currency})")
         
-        // Find payout by Stripe Transfer ID
-        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
-            ?: run {
-                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
-                return
+        // Find payout - try by transfer ID first, then by payout ID from metadata
+        var payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+        
+        val payoutIdStr = stripeTransfer.metadata?.get("payoutId")
+        if (payout == null && payoutIdStr != null) {
+            try {
+                val payoutId = UUID.fromString(payoutIdStr)
+                payout = try {
+                    payoutService.getPayout(payoutId)
+                } catch (e: IllegalArgumentException) {
+                    null
+                }
+            } catch (e: Exception) {
+                // Ignore
             }
+        }
+        
+        if (payout == null) {
+            logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+            return
+        }
         
         // Idempotency check: if already completed, skip
         // (Ledger was already written on transfer.created)
@@ -513,12 +556,27 @@ class StripeWebhookController(
         
         logger.warn("Transfer failed: $stripeTransferId, reason: $failureReason")
         
-        // Find payout by Stripe Transfer ID
-        val payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
-            ?: run {
-                logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
-                return
+        // Find payout - try by transfer ID first, then by payout ID from metadata
+        var payout = payoutService.getPayoutByStripeTransferId(stripeTransferId)
+        
+        val payoutIdStr = stripeTransfer.metadata?.get("payoutId")
+        if (payout == null && payoutIdStr != null) {
+            try {
+                val payoutId = UUID.fromString(payoutIdStr)
+                payout = try {
+                    payoutService.getPayout(payoutId)
+                } catch (e: IllegalArgumentException) {
+                    null
+                }
+            } catch (e: Exception) {
+                // Ignore
             }
+        }
+        
+        if (payout == null) {
+            logger.warn("Payout not found for Stripe Transfer ID: $stripeTransferId")
+            return
+        }
         
         // Idempotency check: if already failed or completed, skip
         if (payout.state == com.payments.platform.payments.domain.PayoutState.FAILED ||

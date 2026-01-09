@@ -87,32 +87,16 @@ class PayoutService(
             return existingPayout.toDomain()
         }
         
-        // Create Stripe Transfer
-        val stripeTransfer = try {
-            stripeService.createTransfer(
-                amountCents = amountCents,
-                currency = currency,
-                destinationAccountId = sellerStripeAccount.stripeAccountId,
-                metadata = mapOf(
-                    "payoutId" to payoutId.toString(),
-                    "sellerId" to sellerId,
-                    "idempotencyKey" to idempotencyKey
-                )
-            )
-        } catch (e: StripeServiceException) {
-            throw PayoutCreationException("Failed to create Stripe Transfer: ${e.message}", e)
-        }
-        
-        // Persist payout with Stripe Transfer ID
-        // Note: Ledger write happens on transfer.created webhook (when money leaves our account)
-        // The transfer.paid webhook is just confirmation that money arrived (may take days, or never fire in test mode)
+        // Create payout record FIRST (with null Stripe Transfer ID temporarily)
+        // This ensures the payout exists in the database before the webhook arrives
+        // We'll update it with the Stripe Transfer ID after creating the transfer
         val payout = Payout(
             id = payoutId,
             sellerId = sellerId,
             amountCents = amountCents,
             currency = currency,
             state = PayoutState.PROCESSING,
-            stripeTransferId = stripeTransfer.id,
+            stripeTransferId = null,  // Will be updated after Stripe Transfer is created
             ledgerTransactionId = null,  // NULL until transfer.created webhook triggers ledger write
             idempotencyKey = idempotencyKey,
             description = description,
@@ -125,12 +109,39 @@ class PayoutService(
         val entity = PayoutEntity.fromDomain(payout)
         val saved = payoutRepository.save(entity)
         
+        // Flush to ensure the payout is persisted before creating Stripe Transfer
+        // This prevents race condition where webhook arrives before payout is saved
+        payoutRepository.flush()
+        
+        // Create Stripe Transfer AFTER payout is saved
+        // The webhook will arrive, but the payout will already exist in the database
+        val stripeTransfer = try {
+            stripeService.createTransfer(
+                amountCents = amountCents,
+                currency = currency,
+                destinationAccountId = sellerStripeAccount.stripeAccountId,
+                metadata = mapOf(
+                    "payoutId" to payoutId.toString(),
+                    "sellerId" to sellerId,
+                    "idempotencyKey" to idempotencyKey
+                )
+            )
+        } catch (e: StripeServiceException) {
+            // If Stripe Transfer creation fails, delete the payout we just created
+            payoutRepository.delete(entity)
+            throw PayoutCreationException("Failed to create Stripe Transfer: ${e.message}", e)
+        }
+        
+        // Update payout with Stripe Transfer ID (stripeTransferId is a var, so we can update it directly)
+        saved.stripeTransferId = stripeTransfer.id
+        val finalSaved = payoutRepository.save(saved)
+        
         logger.info(
-            "Created payout ${payout.id} for seller $sellerId " +
+            "Created payout ${finalSaved.id} for seller $sellerId " +
             "(Stripe Transfer ID: ${stripeTransfer.id}, amount: $amountCents ${currency})"
         )
         
-        return saved.toDomain()
+        return finalSaved.toDomain()
     }
     
     /**

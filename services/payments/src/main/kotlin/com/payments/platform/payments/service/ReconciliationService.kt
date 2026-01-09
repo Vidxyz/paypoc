@@ -222,7 +222,8 @@ class ReconciliationService(
      * Matching priority:
      * 1. Idempotency key match (from Stripe metadata)
      * 2. Stripe ID match (reference_id in ledger)
-     * 3. Amount + currency + date match (fallback)
+     * 3. Grouped chargeback match (dispute + fee transactions grouped together)
+     * 4. Amount + currency + date match (fallback)
      */
     private fun matchTransactions(
         stripeTransactions: List<BalanceTransaction>,
@@ -263,6 +264,40 @@ class ReconciliationService(
             }
         }
         
+        // Group chargeback-related Stripe transactions (dispute + fee)
+        val chargebackGroups = groupChargebackTransactions(stripeTransactions)
+        
+        // Match grouped chargeback transactions against single ledger transaction
+        for ((disputeId, group) in chargebackGroups) {
+            // Skip if any transaction in the group is already matched
+            if (group.any { matches.containsKey(it.id) }) continue
+            
+            // Try to match by dispute ID (reference_id in ledger)
+            val ledgerTx = ledgerByReferenceId[disputeId]
+            if (ledgerTx != null && !matchedLedgerIds.contains(ledgerTx.transactionId)) {
+                val ledgerNetAmount = calculateNetAmount(ledgerTx.entries)
+                val ledgerCurrency = ledgerTx.entries.firstOrNull()?.currency
+                val groupTotalAmount = group.sumOf { it.amount }
+                val groupCurrency = group.firstOrNull()?.currency?.uppercase()
+                
+                // Check if grouped Stripe transactions sum to ledger amount
+                val amountMatch = kotlin.math.abs(groupTotalAmount - ledgerNetAmount) <= 100 // Allow 1 cent tolerance
+                val currencyMatch = groupCurrency == ledgerCurrency
+                
+                if (amountMatch && currencyMatch) {
+                    // Match all transactions in the group to the same ledger transaction
+                    for (stripeTx in group) {
+                        matches[stripeTx.id] = ledgerTx.transactionId
+                    }
+                    matchedLedgerIds.add(ledgerTx.transactionId)
+                    logger.debug(
+                        "Matched chargeback group (dispute: $disputeId) with ${group.size} Stripe transactions " +
+                        "(total: ${groupTotalAmount / 100.0} $groupCurrency) to ledger transaction ${ledgerTx.transactionId}"
+                    )
+                }
+            }
+        }
+        
         // Fallback: Match by amount + currency + date (within 1 hour window)
         for (stripeTx in stripeTransactions) {
             if (matches.containsKey(stripeTx.id)) continue // Already matched
@@ -298,6 +333,8 @@ class ReconciliationService(
     
     /**
      * Identifies discrepancies between Stripe and ledger transactions.
+     * 
+     * Accounts for grouped chargeback transactions (dispute + fee) that match a single ledger transaction.
      */
     private fun identifyDiscrepancies(
         stripeTransactions: List<BalanceTransaction>,
@@ -306,64 +343,153 @@ class ReconciliationService(
     ): List<Discrepancy> {
         val discrepancies = mutableListOf<Discrepancy>()
         
+        // Group chargeback transactions to check if unmatched ones are part of a group
+        val chargebackGroups = groupChargebackTransactions(stripeTransactions)
+        val matchedStripeIds = matches.stripeToLedger.keys.toSet()
+        
         // Find transactions missing in ledger
         for (stripeTx in stripeTransactions) {
-            if (!matches.stripeToLedger.containsKey(stripeTx.id)) {
-                discrepancies.add(
-                    Discrepancy(
-                        type = DiscrepancyType.MISSING_IN_LEDGER,
-                        stripeTransactionId = stripeTx.id,
-                        ledgerTransactionId = null,
-                        stripeAmount = stripeTx.amount,
-                        ledgerAmount = null,
-                        currency = stripeTx.currency?.uppercase() ?: "UNKNOWN",
-                        description = "Stripe transaction ${stripeTx.id} (${stripeTx.type}) not found in ledger. " +
-                            "Amount: ${stripeTx.amount / 100.0} ${stripeTx.currency?.uppercase()}",
-                        severity = DiscrepancySeverity.CRITICAL
-                    )
-                )
-            } else {
-                // Check for amount/currency mismatches
+            if (matchedStripeIds.contains(stripeTx.id)) {
+                // Transaction is matched - check for amount/currency mismatches
+                // For grouped transactions, we check the group total, not individual amounts
                 val ledgerTxId = matches.stripeToLedger[stripeTx.id]!!
                 val ledgerTx = ledgerTransactions.find { it.transactionId == ledgerTxId }
                 
                 if (ledgerTx != null) {
-                    val ledgerNetAmount = calculateNetAmount(ledgerTx.entries)
-                    val ledgerCurrency = ledgerTx.entries.firstOrNull()?.currency
-                    val stripeCurrency = stripeTx.currency?.uppercase()
+                    // Check if this is part of a chargeback group
+                    val disputeId = extractDisputeId(stripeTx)
+                    val group = if (disputeId != null) chargebackGroups[disputeId] else null
                     
-                    // Check amount mismatch (allow small tolerance for fees)
-                    if (kotlin.math.abs(stripeTx.amount - ledgerNetAmount) > 100) {
+                    if (group != null && group.size > 1) {
+                        // This is a grouped transaction - check group total against ledger
+                        val groupTotalAmount = group.sumOf { it.amount }
+                        val ledgerNetAmount = calculateNetAmount(ledgerTx.entries)
+                        val ledgerCurrency = ledgerTx.entries.firstOrNull()?.currency
+                        val groupCurrency = group.firstOrNull()?.currency?.uppercase()
+                        
+                        // Only check mismatch for the first transaction in the group to avoid duplicates
+                        if (group.first().id == stripeTx.id) {
+                            // Check amount mismatch (allow small tolerance)
+                            if (kotlin.math.abs(groupTotalAmount - ledgerNetAmount) > 100) {
+                                discrepancies.add(
+                                    Discrepancy(
+                                        type = DiscrepancyType.AMOUNT_MISMATCH,
+                                        stripeTransactionId = stripeTx.id,
+                                        ledgerTransactionId = ledgerTxId,
+                                        stripeAmount = groupTotalAmount,
+                                        ledgerAmount = ledgerNetAmount,
+                                        currency = groupCurrency ?: ledgerCurrency ?: "UNKNOWN",
+                                        description = "Chargeback group amount mismatch: " +
+                                            "Stripe group total=${groupTotalAmount / 100.0} ${groupCurrency}, " +
+                                            "Ledger=${ledgerNetAmount / 100.0} ${ledgerCurrency} " +
+                                            "(group includes ${group.size} transactions: ${group.joinToString { "${it.type}:${it.amount / 100.0}" }})",
+                                        severity = DiscrepancySeverity.HIGH
+                                    )
+                                )
+                            }
+                            
+                            // Check currency mismatch
+                            if (groupCurrency != null && ledgerCurrency != null && groupCurrency != ledgerCurrency) {
+                                discrepancies.add(
+                                    Discrepancy(
+                                        type = DiscrepancyType.CURRENCY_MISMATCH,
+                                        stripeTransactionId = stripeTx.id,
+                                        ledgerTransactionId = ledgerTxId,
+                                        stripeAmount = groupTotalAmount,
+                                        ledgerAmount = ledgerNetAmount,
+                                        currency = "$groupCurrency vs $ledgerCurrency",
+                                        description = "Chargeback group currency mismatch: " +
+                                            "Stripe=$groupCurrency, Ledger=$ledgerCurrency",
+                                        severity = DiscrepancySeverity.MEDIUM
+                                    )
+                                )
+                            }
+                        }
+                        // Skip individual amount checks for grouped transactions
+                    } else {
+                        // Single transaction match - check individual amount
+                        val ledgerNetAmount = calculateNetAmount(ledgerTx.entries)
+                        val ledgerCurrency = ledgerTx.entries.firstOrNull()?.currency
+                        val stripeCurrency = stripeTx.currency?.uppercase()
+                        
+                        // Check amount mismatch (allow small tolerance for fees)
+                        if (kotlin.math.abs(stripeTx.amount - ledgerNetAmount) > 100) {
+                            discrepancies.add(
+                                Discrepancy(
+                                    type = DiscrepancyType.AMOUNT_MISMATCH,
+                                    stripeTransactionId = stripeTx.id,
+                                    ledgerTransactionId = ledgerTxId,
+                                    stripeAmount = stripeTx.amount,
+                                    ledgerAmount = ledgerNetAmount,
+                                    currency = stripeCurrency ?: ledgerCurrency ?: "UNKNOWN",
+                                    description = "Amount mismatch: Stripe=${stripeTx.amount / 100.0} ${stripeCurrency}, " +
+                                        "Ledger=${ledgerNetAmount / 100.0} ${ledgerCurrency}",
+                                    severity = DiscrepancySeverity.HIGH
+                                )
+                            )
+                        }
+                        
+                        // Check currency mismatch
+                        if (stripeCurrency != null && ledgerCurrency != null && stripeCurrency != ledgerCurrency) {
+                            discrepancies.add(
+                                Discrepancy(
+                                    type = DiscrepancyType.CURRENCY_MISMATCH,
+                                    stripeTransactionId = stripeTx.id,
+                                    ledgerTransactionId = ledgerTxId,
+                                    stripeAmount = stripeTx.amount,
+                                    ledgerAmount = ledgerNetAmount,
+                                    currency = "$stripeCurrency vs $ledgerCurrency",
+                                    description = "Currency mismatch: Stripe=$stripeCurrency, Ledger=$ledgerCurrency",
+                                    severity = DiscrepancySeverity.MEDIUM
+                                )
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Transaction not matched - check if it's part of an unmatched group
+                val disputeId = extractDisputeId(stripeTx)
+                val group = if (disputeId != null) chargebackGroups[disputeId] else null
+                
+                if (group != null && group.size > 1) {
+                    // This is part of a chargeback group - only report if entire group is unmatched
+                    val allUnmatched = group.all { !matchedStripeIds.contains(it.id) }
+                    if (allUnmatched && group.first().id == stripeTx.id) {
+                        // Report the group as missing (only once, for the first transaction)
+                        val groupTotalAmount = group.sumOf { it.amount }
+                        val groupCurrency = group.firstOrNull()?.currency?.uppercase() ?: "UNKNOWN"
                         discrepancies.add(
                             Discrepancy(
-                                type = DiscrepancyType.AMOUNT_MISMATCH,
+                                type = DiscrepancyType.MISSING_IN_LEDGER,
                                 stripeTransactionId = stripeTx.id,
-                                ledgerTransactionId = ledgerTxId,
-                                stripeAmount = stripeTx.amount,
-                                ledgerAmount = ledgerNetAmount,
-                                currency = stripeCurrency ?: ledgerCurrency ?: "UNKNOWN",
-                                description = "Amount mismatch: Stripe=${stripeTx.amount / 100.0} ${stripeCurrency}, " +
-                                    "Ledger=${ledgerNetAmount / 100.0} ${ledgerCurrency}",
-                                severity = DiscrepancySeverity.HIGH
+                                ledgerTransactionId = null,
+                                stripeAmount = groupTotalAmount,
+                                ledgerAmount = null,
+                                currency = groupCurrency,
+                                description = "Chargeback group (dispute: $disputeId) not found in ledger. " +
+                                    "Group includes ${group.size} transactions: " +
+                                    "${group.joinToString { "${it.type}:${it.amount / 100.0} ${it.currency?.uppercase()}" }}. " +
+                                    "Total: ${groupTotalAmount / 100.0} $groupCurrency",
+                                severity = DiscrepancySeverity.CRITICAL
                             )
                         )
                     }
-                    
-                    // Check currency mismatch
-                    if (stripeCurrency != null && ledgerCurrency != null && stripeCurrency != ledgerCurrency) {
-                        discrepancies.add(
-                            Discrepancy(
-                                type = DiscrepancyType.CURRENCY_MISMATCH,
-                                stripeTransactionId = stripeTx.id,
-                                ledgerTransactionId = ledgerTxId,
-                                stripeAmount = stripeTx.amount,
-                                ledgerAmount = ledgerNetAmount,
-                                currency = "$stripeCurrency vs $ledgerCurrency",
-                                description = "Currency mismatch: Stripe=$stripeCurrency, Ledger=$ledgerCurrency",
-                                severity = DiscrepancySeverity.MEDIUM
-                            )
+                    // Skip individual reporting for grouped transactions
+                } else {
+                    // Single unmatched transaction
+                    discrepancies.add(
+                        Discrepancy(
+                            type = DiscrepancyType.MISSING_IN_LEDGER,
+                            stripeTransactionId = stripeTx.id,
+                            ledgerTransactionId = null,
+                            stripeAmount = stripeTx.amount,
+                            ledgerAmount = null,
+                            currency = stripeTx.currency?.uppercase() ?: "UNKNOWN",
+                            description = "Stripe transaction ${stripeTx.id} (${stripeTx.type}) not found in ledger. " +
+                                "Amount: ${stripeTx.amount / 100.0} ${stripeTx.currency?.uppercase()}",
+                            severity = DiscrepancySeverity.CRITICAL
                         )
-                    }
+                    )
                 }
             }
         }
@@ -464,6 +590,69 @@ class ReconciliationService(
             return source.metadata["idempotencyKey"]
         }
         return null
+    }
+    
+    /**
+     * Groups Stripe balance transactions that are related to the same chargeback (dispute).
+     * 
+     * Stripe creates separate balance transactions for:
+     * - The dispute amount (type: "dispute")
+     * - The dispute fee (type: "adjustment" or "application_fee")
+     * 
+     * Both transactions reference the same dispute ID, which we use to group them.
+     * 
+     * @return Map of dispute ID -> list of related Stripe transactions
+     */
+    private fun groupChargebackTransactions(
+        stripeTransactions: List<BalanceTransaction>
+    ): Map<String, List<BalanceTransaction>> {
+        val groups = mutableMapOf<String, MutableList<BalanceTransaction>>()
+        
+        for (stripeTx in stripeTransactions) {
+            val disputeId = extractDisputeId(stripeTx)
+            if (disputeId != null) {
+                groups.getOrPut(disputeId) { mutableListOf() }.add(stripeTx)
+            }
+        }
+        
+        // Only return groups with multiple transactions (dispute + fee)
+        return groups.filter { it.value.size > 1 }
+    }
+    
+    /**
+     * Extracts dispute ID from a Stripe balance transaction.
+     * 
+     * For dispute-related transactions, the dispute ID can be found:
+     * - Directly in the source field for "dispute" type transactions
+     * - In the source object for "adjustment" or "application_fee" types related to disputes
+     */
+    private fun extractDisputeId(stripeTx: BalanceTransaction): String? {
+        return when (stripeTx.type) {
+            "dispute" -> {
+                // For dispute transactions, get the dispute ID
+                val source = stripeTx.sourceObject
+                if (source is com.stripe.model.Dispute) {
+                    source.id
+                } else {
+                    stripeTx.source
+                }
+            }
+            "adjustment", "application_fee" -> {
+                // For dispute fees, check if the source is a dispute
+                val source = stripeTx.sourceObject
+                if (source is com.stripe.model.Dispute) {
+                    source.id
+                } else {
+                    // Check if source field contains a dispute ID (starts with "du_")
+                    if (stripeTx.source?.startsWith("du_") == true) {
+                        stripeTx.source
+                    } else {
+                        null
+                    }
+                }
+            }
+            else -> null
+        }
     }
     
     /**

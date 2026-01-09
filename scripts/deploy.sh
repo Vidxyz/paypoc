@@ -46,6 +46,7 @@ check_prerequisites() {
     fi
     
     log_info "Prerequisites check passed"
+    
 }
 
 build_images() {
@@ -55,20 +56,7 @@ build_images() {
     kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
 
-    log_info "Building Docker images..."
-    
-    # Build ledger service
-    log_info "Building ledger-service image..."
-    cd "$PROJECT_ROOT"
-    docker build -t ledger-service:latest -f scripts/Dockerfile.ledger .
-    
-    # Build payments service
-    log_info "Building payments-service image..."
-    docker build -t payments-service:latest -f scripts/Dockerfile.payments .
-    
-    # Build frontend
-    log_info "Building frontend image..."
-    cd "$PROJECT_ROOT/services/frontend"
+    log_info "Building Docker images in parallel..."
     
     # Use environment variable or fallback to test key
     # Test key is safe to commit, live keys should come from CI/CD secrets
@@ -83,17 +71,40 @@ build_images() {
         log_warn "Unknown Stripe key format, using as-is: ${stripe_key:0:20}..."
     fi
     
-    docker build \
-      --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
-      -t frontend:latest .
+    # Build all images in parallel using background processes
+    log_info "Building ledger-service image..."
+    (cd "$PROJECT_ROOT" && docker build -t ledger-service:latest -f scripts/Dockerfile.ledger .) &
+    LEDGER_PID=$!
     
-    # Load images into minikube
-    log_info "Loading images into minikube..."
-    minikube image load ledger-service:latest || true
-    minikube image load payments-service:latest || true
-    minikube image load frontend:latest || true
+    log_info "Building payments-service image..."
+    (cd "$PROJECT_ROOT" && docker build -t payments-service:latest -f scripts/Dockerfile.payments .) &
+    PAYMENTS_PID=$!
     
-    log_info "Images built and loaded"
+    log_info "Building frontend image..."
+    (cd "$PROJECT_ROOT/services/frontend" && docker build --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" -t frontend:latest .) &
+    FRONTEND_PID=$!
+    
+    # Wait for all builds to complete
+    log_info "Waiting for all image builds to complete..."
+    wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
+    log_info "Ledger image built successfully"
+    
+    wait $PAYMENTS_PID || { log_error "Payments image build failed"; exit 1; }
+    log_info "Payments image built successfully"
+    
+    wait $FRONTEND_PID || { log_error "Frontend image build failed"; exit 1; }
+    log_info "Frontend image built successfully"
+    
+    # Load images into minikube in parallel
+    log_info "Loading images into minikube in parallel..."
+    minikube image load ledger-service:latest &
+    minikube image load payments-service:latest &
+    minikube image load frontend:latest &
+    
+    # Wait for all image loads to complete
+    wait
+    
+    log_info "All images built and loaded"
 }
 
 create_namespace() {
@@ -110,13 +121,11 @@ deploy_postgres() {
 
 deploy_ledger() {
     log_info "Deploying Ledger Service..."
-    kubectl apply -f "$K8S_DIR/ledger/configmap.yaml"
-    kubectl apply -f "$K8S_DIR/ledger/secret.yaml"
-    kubectl apply -f "$K8S_DIR/ledger/deployment.yaml"
-    kubectl apply -f "$K8S_DIR/ledger/service.yaml"
-    
-    # log_info "Waiting for Ledger Service to be ready..."
-    # kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || true
+    kubectl apply -f "$K8S_DIR/ledger/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/ledger/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/ledger/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/ledger/service.yaml" &
+    wait
 }
 
 deploy_ingress() {
@@ -139,46 +148,49 @@ deploy_ingress() {
 
 deploy_payments() {
     log_info "Deploying Payments Service..."
-    kubectl apply -f "$K8S_DIR/payments/configmap.yaml"
-    kubectl apply -f "$K8S_DIR/payments/secret.yaml"
-    kubectl apply -f "$K8S_DIR/payments/deployment.yaml"
-    kubectl apply -f "$K8S_DIR/payments/service.yaml"
-    kubectl apply -f "$K8S_DIR/payments/ingress.yaml"
-    
-    # log_info "Waiting for Payments Service to be ready..."
-    # kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || true
+    kubectl apply -f "$K8S_DIR/payments/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/payments/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/payments/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/payments/service.yaml" &
+    kubectl apply -f "$K8S_DIR/payments/ingress.yaml" &
+    wait
 }
 
 deploy_frontend() {
     log_info "Deploying Frontend..."
-    kubectl apply -f "$K8S_DIR/frontend/namespace.yaml"
-    kubectl apply -f "$K8S_DIR/frontend/configmap.yaml"
-    kubectl apply -f "$K8S_DIR/frontend/deployment.yaml"
-    kubectl apply -f "$K8S_DIR/frontend/service.yaml"
-    kubectl apply -f "$K8S_DIR/frontend/ingress.yaml"
-    
-    # log_info "Waiting for Frontend to be ready..."
-    # kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || true
+    kubectl apply -f "$K8S_DIR/frontend/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/frontend/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/frontend/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/frontend/service.yaml" &
+    kubectl apply -f "$K8S_DIR/frontend/ingress.yaml" &
+    wait
 }
 
 wait_for_services() {
-    log_info "Waiting for all services to be ready..."
+    log_info "Waiting for all services to be ready (in parallel)..."
     
-    # Wait for PostgreSQL
+    # Wait for all services in parallel using background processes
     log_info "Waiting for PostgreSQL..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql -n "$NAMESPACE" --timeout=300s || log_warn "PostgreSQL not ready yet"
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql -n "$NAMESPACE" --timeout=300s || log_warn "PostgreSQL not ready yet" &
+    POSTGRES_PID=$!
     
-    # Wait for Ledger Service
     log_info "Waiting for Ledger Service..."
-    kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || log_warn "Ledger Service not ready yet"
+    kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || log_warn "Ledger Service not ready yet" &
+    LEDGER_PID=$!
     
-    # Wait for Payments Service
     log_info "Waiting for Payments Service..."
-    kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || log_warn "Payments Service not ready yet"
+    kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || log_warn "Payments Service not ready yet" &
+    PAYMENTS_PID=$!
     
-    # Wait for Frontend
     log_info "Waiting for Frontend..."
-    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet"
+    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet" &
+    FRONTEND_PID=$!
+    
+    # Wait for all services to be ready
+    wait $POSTGRES_PID
+    wait $LEDGER_PID
+    wait $PAYMENTS_PID
+    wait $FRONTEND_PID
     
     log_info "Services deployment complete"
 }
@@ -228,14 +240,30 @@ main() {
     check_prerequisites
     build_images
     create_namespace
-    deploy_ingress
-    deploy_postgres
-    sleep 10  # Give PostgreSQL time to initialize
-    deploy_ledger
-    sleep 10  # Give Ledger time to initialize
-    deploy_payments
-    sleep 10  # Give Payments time to initialize
-    deploy_frontend
+    
+    # Deploy ingress and check postgres in parallel (postgres check is non-blocking)
+    log_info "Setting up infrastructure..."
+    deploy_ingress &
+    INGRESS_PID=$!
+    deploy_postgres &
+    POSTGRES_CHECK_PID=$!
+    
+    # Wait for ingress to be ready before deploying services
+    wait $INGRESS_PID
+    
+    # Deploy all services in parallel (they don't depend on each other)
+    log_info "Deploying all services in parallel..."
+    deploy_ledger &
+    deploy_payments &
+    deploy_frontend &
+    
+    # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
+    wait $POSTGRES_CHECK_PID
+    
+    # Wait for all service deployments to complete
+    wait
+    
+    # Now wait for all services to be ready (in parallel)
     wait_for_services
     show_status
     

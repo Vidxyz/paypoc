@@ -65,6 +65,7 @@ class ReconciliationController(
     fun runReconciliation(
         @Valid @RequestBody request: ReconciliationRequest
     ): ResponseEntity<ReconciliationReport> {
+        // todo-vh: There are still some false positives in reconciliation with ledger entries being 0 and stripe entries not existing in ledger. Need to investigate and fix.
         return try {
             val report = reconciliationService.runReconciliation(request)
             ResponseEntity.ok(report)

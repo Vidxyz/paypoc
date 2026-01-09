@@ -30,7 +30,11 @@ class AuthenticationInterceptor : HandlerInterceptor {
     ): Boolean {
         // Skip authentication for public endpoints (e.g., health checks, webhooks)
         if (request.requestURI.startsWith("/actuator") || 
-            request.requestURI.startsWith("/webhooks")) {
+            request.requestURI.startsWith("/webhooks") ||
+            request.requestURI.startsWith("/health") ||
+            request.requestURI.startsWith("/healthz") ||
+            request.requestURI.startsWith("/api/docs") ||
+            request.requestURI.startsWith("/v3/api-docs")) {
             return true
         }
         

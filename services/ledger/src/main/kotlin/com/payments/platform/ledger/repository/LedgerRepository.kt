@@ -1,6 +1,7 @@
 package com.payments.platform.ledger.repository
 
 import com.payments.platform.ledger.domain.*
+import com.payments.platform.ledger.domain.TransactionWithEntries
 import org.springframework.dao.CannotAcquireLockException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.dao.DuplicateKeyException
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
@@ -344,6 +346,62 @@ class LedgerRepository(
         """.trimIndent()
         
         return jdbcTemplate.query(sql, entryRowMapper, transactionId)
+    }
+
+    /**
+     * Queries transactions by date range and optional currency filter.
+     * 
+     * Used for reconciliation to compare ledger transactions with Stripe balance transactions.
+     * 
+     * @param startDate Start date (inclusive) for filtering transactions
+     * @param endDate End date (inclusive) for filtering transactions
+     * @param currency Optional currency filter (ISO 4217, uppercase, e.g., "USD")
+     * @return List of transactions with their entries, filtered by date range and currency
+     */
+    @Transactional(readOnly = true)
+    fun queryTransactions(
+        startDate: Instant,
+        endDate: Instant,
+        currency: String? = null
+    ): List<TransactionWithEntries> {
+        // Build SQL query with optional currency filter
+        val currencyFilter = if (currency != null) {
+            """
+            AND EXISTS (
+                SELECT 1 FROM ledger_entries le
+                INNER JOIN ledger_accounts la ON le.account_id = la.id
+                WHERE le.transaction_id = lt.id AND la.currency = ?
+            )
+            """.trimIndent()
+        } else {
+            ""
+        }
+        
+        val sql = """
+            SELECT DISTINCT lt.id, lt.reference_id, lt.idempotency_key, lt.description, lt.created_at
+            FROM ledger_transactions lt
+            WHERE lt.created_at >= ? AND lt.created_at <= ?
+            $currencyFilter
+            ORDER BY lt.created_at
+        """.trimIndent()
+        
+        // Convert Instant to Timestamp for PostgreSQL
+        val startTimestamp = Timestamp.from(startDate)
+        val endTimestamp = Timestamp.from(endDate)
+        
+        val params = if (currency != null) {
+            listOf(startTimestamp, endTimestamp, currency)
+        } else {
+            listOf(startTimestamp, endTimestamp)
+        }
+        
+        val transactions = jdbcTemplate.query(sql, transactionRowMapper, *params.toTypedArray())
+        
+        // For each transaction, fetch its entries
+        return transactions.map { transaction ->
+            val entries = getTransactionEntries(transaction.id)
+            TransactionWithEntries(transaction, entries)
+        }
     }
 
     private fun findTransactionById(transactionId: UUID): Transaction? {

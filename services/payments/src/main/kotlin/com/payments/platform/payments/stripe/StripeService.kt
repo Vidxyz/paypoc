@@ -2,14 +2,17 @@ package com.payments.platform.payments.stripe
 
 import com.stripe.Stripe
 import com.stripe.exception.StripeException
+import com.stripe.model.BalanceTransaction
 import com.stripe.model.PaymentIntent
 import com.stripe.model.Transfer
+import com.stripe.param.BalanceTransactionListParams
 import com.stripe.param.PaymentIntentCreateParams
 import com.stripe.param.TransferCreateParams
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import java.time.Instant
 
 /**
  * Service for interacting with Stripe API.
@@ -278,6 +281,81 @@ class StripeService(
         } catch (e: Exception) {
             logger.error("Webhook signature verification failed: ${e.message}", e)
             false
+        }
+    }
+    
+    /**
+     * Lists Stripe Balance Transactions for a given date range.
+     * 
+     * This is used for reconciliation to compare Stripe's financial records with our ledger.
+     * 
+     * Best Practices:
+     * - Uses `created` parameter for date filtering (not `available_on` - that's when funds become available)
+     * - Handles pagination automatically (Stripe returns paginated results)
+     * - Respects rate limits (100 requests per second)
+     * 
+     * @param startDate Start date (inclusive) for filtering transactions
+     * @param endDate End date (inclusive) for filtering transactions
+     * @param currency Optional currency filter (ISO 4217, lowercase, e.g., "usd")
+     * @return List of Balance Transactions in the specified date range
+     * @throws StripeServiceException if Stripe API call fails
+     */
+    fun listBalanceTransactions(
+        startDate: Instant,
+        endDate: Instant,
+        currency: String? = null
+    ): List<BalanceTransaction> {
+        try {
+            val allTransactions = mutableListOf<BalanceTransaction>()
+            
+            val paramsBuilder = BalanceTransactionListParams.builder()
+                .setCreated(
+                    BalanceTransactionListParams.Created.builder()
+                        .setGte(startDate.epochSecond.toLong())
+                        .setLte(endDate.epochSecond.toLong())
+                        .build()
+                )
+                .setLimit(100L)  // Maximum per page
+            
+            if (currency != null) {
+                paramsBuilder.setCurrency(currency.lowercase())
+            }
+            
+            var hasMore = true
+            var startingAfter: String? = null
+            
+            while (hasMore) {
+                val params = if (startingAfter != null) {
+                    paramsBuilder.setStartingAfter(startingAfter).build()
+                } else {
+                    paramsBuilder.build()
+                }
+                
+                val response = BalanceTransaction.list(params)
+                allTransactions.addAll(response.data)
+                
+                hasMore = response.hasMore
+                startingAfter = if (hasMore && response.data.isNotEmpty()) {
+                    response.data.last().id
+                } else {
+                    null
+                }
+                
+                // Small delay to respect rate limits (100 req/sec = ~10ms between requests)
+                if (hasMore) {
+                    Thread.sleep(20)  // Conservative delay
+                }
+            }
+            
+            logger.info(
+                "Fetched ${allTransactions.size} Stripe balance transactions " +
+                "from ${startDate} to ${endDate}${if (currency != null) " (currency: $currency)" else ""}"
+            )
+            
+            return allTransactions
+        } catch (e: StripeException) {
+            logger.error("Failed to list Stripe balance transactions: ${e.message}", e)
+            throw StripeServiceException("Failed to list Stripe balance transactions: ${e.message}", e)
         }
     }
 }

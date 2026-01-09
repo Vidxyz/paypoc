@@ -1,14 +1,14 @@
 package com.payments.platform.payments.client
 
-import com.payments.platform.payments.client.dto.LedgerBalanceResponse
-import com.payments.platform.payments.client.dto.LedgerTransactionRequest
-import com.payments.platform.payments.client.dto.LedgerTransactionResponse
+import com.payments.platform.payments.client.dto.*
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
+import org.springframework.web.util.UriComponentsBuilder
 import reactor.core.publisher.Mono
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -80,6 +80,53 @@ class LedgerClient(
             when (e.statusCode) {
                 HttpStatus.NOT_FOUND -> throw LedgerClientException(
                     "Account not found in ledger: $accountId",
+                    e
+                )
+                else -> throw LedgerClientException(
+                    "Ledger service error: ${e.statusCode} - ${e.responseBodyAsString}",
+                    e
+                )
+            }
+        } catch (e: Exception) {
+            throw LedgerClientException("Failed to communicate with ledger service", e)
+        }
+    }
+    
+    /**
+     * Queries transactions from the ledger by date range and optional currency filter.
+     * 
+     * Used for reconciliation to compare ledger transactions with Stripe balance transactions.
+     * 
+     * @param startDate Start date (inclusive) for filtering transactions
+     * @param endDate End date (inclusive) for filtering transactions
+     * @param currency Optional currency filter (ISO 4217, uppercase, e.g., "USD")
+     * @return Transaction query response from ledger
+     * @throws LedgerClientException if ledger service is unavailable or request is invalid
+     */
+    fun queryTransactions(
+        startDate: Instant,
+        endDate: Instant,
+        currency: String? = null
+    ): LedgerTransactionQueryResponse {
+        return try {
+            val uriBuilder = UriComponentsBuilder
+                .fromUriString("$ledgerServiceUrl/ledger/transactions")
+                .queryParam("startDate", startDate.toString())
+                .queryParam("endDate", endDate.toString())
+            
+            if (currency != null) {
+                uriBuilder.queryParam("currency", currency)
+            }
+            
+            webClient.get()
+                .uri(uriBuilder.build().toUri())
+                .retrieve()
+                .bodyToMono(LedgerTransactionQueryResponse::class.java)
+                .block() ?: throw LedgerClientException("Ledger service returned null response")
+        } catch (e: WebClientResponseException) {
+            when (e.statusCode) {
+                HttpStatus.BAD_REQUEST -> throw LedgerClientException(
+                    "Invalid reconciliation request: ${e.responseBodyAsString}",
                     e
                 )
                 else -> throw LedgerClientException(

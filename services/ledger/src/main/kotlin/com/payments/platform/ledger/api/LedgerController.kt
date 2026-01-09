@@ -1,5 +1,6 @@
 package com.payments.platform.ledger.api
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.payments.platform.ledger.domain.CreateDoubleEntryTransactionRequest
 import com.payments.platform.ledger.domain.EntryDirection
 import com.payments.platform.ledger.domain.EntryRequest
@@ -12,9 +13,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
+import org.springframework.format.annotation.DateTimeFormat
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import java.time.Instant
 import java.util.UUID
 
 @RestController
@@ -146,6 +149,92 @@ class LedgerController(
             )
         }
     }
+
+    /**
+     * GET /ledger/transactions
+     * Queries transactions by date range and optional currency filter.
+     * 
+     * Used for reconciliation to compare ledger transactions with external payment provider records.
+     * 
+     * @param startDate Start date (inclusive) in ISO 8601 format (e.g., "2024-01-15T00:00:00Z")
+     * @param endDate End date (inclusive) in ISO 8601 format (e.g., "2024-01-16T00:00:00Z")
+     * @param currency Optional currency filter (ISO 4217, uppercase, e.g., "USD")
+     * @return List of transactions with their entries
+     */
+    @Operation(
+        summary = "Query transactions by date range",
+        description = "Retrieves transactions within a date range, optionally filtered by currency. Used for reconciliation purposes. Returns transactions with their entries."
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Transactions retrieved successfully",
+                content = [Content(schema = Schema(implementation = TransactionQueryResponseDto::class))]
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "Invalid request (e.g., invalid date range)",
+                content = [Content(schema = Schema(implementation = TransactionQueryResponseDto::class))]
+            )
+        ]
+    )
+    @GetMapping("/transactions")
+    fun queryTransactions(
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) startDate: Instant,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) endDate: Instant,
+        @RequestParam(required = false) currency: String?
+    ): ResponseEntity<TransactionQueryResponseDto> {
+        return try {
+            // Validate date range
+            require(startDate.isBefore(endDate) || startDate == endDate) {
+                "Start date must be before or equal to end date"
+            }
+            
+            // Validate currency format if provided
+            if (currency != null) {
+                require(currency.matches(Regex("^[A-Z]{3}$"))) {
+                    "Currency must be 3 uppercase letters (ISO 4217 format)"
+                }
+            }
+            
+            val transactions = ledgerService.queryTransactions(startDate, endDate, currency)
+            
+            ResponseEntity.ok(
+                TransactionQueryResponseDto(
+                    transactions = transactions.map { transactionWithEntries ->
+                        TransactionWithEntriesDto(
+                            transaction = TransactionDto(
+                                transactionId = transactionWithEntries.transaction.id,
+                                referenceId = transactionWithEntries.transaction.referenceId,
+                                idempotencyKey = transactionWithEntries.transaction.idempotencyKey,
+                                description = transactionWithEntries.transaction.description,
+                                createdAt = transactionWithEntries.transaction.createdAt.toString()
+                            ),
+                            entries = transactionWithEntries.entries.map { entry ->
+                                EntryDto(
+                                    entryId = entry.id,
+                                    accountId = entry.accountId,
+                                    direction = entry.direction.name,
+                                    amountCents = entry.amountCents,
+                                    currency = entry.currency,
+                                    createdAt = entry.createdAt.toString()
+                                )
+                            }
+                        )
+                    },
+                    error = null
+                )
+            )
+        } catch (e: IllegalArgumentException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                TransactionQueryResponseDto(
+                    transactions = emptyList(),
+                    error = "Invalid request: ${e.message}"
+                )
+            )
+        }
+    }
 }
 
 @Schema(description = "Double-entry transaction request")
@@ -165,6 +254,9 @@ data class CreateDoubleEntryTransactionRequestDto(
 
 @Schema(description = "Ledger entry")
 data class EntryDto(
+    @Schema(description = "Entry ID", example = "770e8400-e29b-41d4-a716-446655440000")
+    val entryId: UUID? = null,
+    
     @Schema(description = "Account ID", example = "550e8400-e29b-41d4-a716-446655440000")
     val accountId: UUID,
     
@@ -175,7 +267,10 @@ data class EntryDto(
     val amountCents: Long,
     
     @Schema(description = "ISO 4217 currency code", example = "USD")
-    val currency: String
+    val currency: String,
+    
+    @Schema(description = "Entry creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
+    val createdAt: String? = null
 )
 
 @Schema(description = "Transaction response")
@@ -197,4 +292,49 @@ data class TransactionResponseDto(
     
     @Schema(description = "Error message if the request failed")
     val error: String? = null
+)
+
+@Schema(description = "Transaction query response")
+data class TransactionQueryResponseDto(
+    @JsonProperty("transactions")
+    @Schema(description = "List of transactions with their entries")
+    val transactions: List<TransactionWithEntriesDto>,
+    
+    @JsonProperty("error")
+    @Schema(description = "Error message if the request failed")
+    val error: String? = null
+)
+
+@Schema(description = "Transaction with entries")
+data class TransactionWithEntriesDto(
+    @JsonProperty("transaction")
+    @Schema(description = "Transaction metadata")
+    val transaction: TransactionDto,
+    
+    @JsonProperty("entries")
+    @Schema(description = "List of ledger entries for this transaction")
+    val entries: List<EntryDto>
+)
+
+@Schema(description = "Transaction metadata")
+data class TransactionDto(
+    @JsonProperty("transactionId")
+    @Schema(description = "Unique transaction ID", example = "660e8400-e29b-41d4-a716-446655440000")
+    val transactionId: UUID,
+    
+    @JsonProperty("referenceId")
+    @Schema(description = "External reference ID", example = "pi_1234567890")
+    val referenceId: String,
+    
+    @JsonProperty("idempotencyKey")
+    @Schema(description = "Idempotency key", example = "payment_abc_123")
+    val idempotencyKey: String,
+    
+    @JsonProperty("description")
+    @Schema(description = "Transaction description", example = "Payment capture: $100.00")
+    val description: String,
+    
+    @JsonProperty("createdAt")
+    @Schema(description = "Transaction creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
+    val createdAt: String
 )

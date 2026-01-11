@@ -1,0 +1,14 @@
+# Scala/Play Framework
+target/
+project/target/
+project/project/
+.history
+dist/
+*.iml
+.bsp/
+.classpath
+.project
+.settings
+RUNNING_PID
+logs/
+

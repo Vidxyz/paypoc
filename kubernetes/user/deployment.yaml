@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: user
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+      - name: user-service
+        image: user-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        env:
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: DB_PASSWORD
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: AUTH0_DOMAIN
+        - name: AUTH0_MANAGEMENT_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: AUTH0_MANAGEMENT_API_TOKEN
+        - name: PLAY_HTTP_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: PLAY_HTTP_SECRET_KEY
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

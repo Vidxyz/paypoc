@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-config
+  namespace: user
+data:
+  application.conf: |
+    play {
+      server {
+        http {
+          port = 9000
+        }
+      }
+      evolutions {
+        enabled = true
+        autoApply = true
+      }
+    }
+    
+    db {
+      default {
+        driver = "org.postgresql.Driver"
+        url = "jdbc:postgresql://postgres-service.postgres.svc.cluster.local:5432/users_db"
+        username = ${DB_USERNAME}
+        password = ${DB_PASSWORD}
+      }
+    }
+    
+    kafka {
+      bootstrap.servers = ${KAFKA_BOOTSTRAP_SERVERS}
+      topics {
+        user.events = "user.events"
+      }
+    }
+    
+    auth0 {
+      domain = ${AUTH0_DOMAIN}
+      management.api.token = ${AUTH0_MANAGEMENT_API_TOKEN}
+    }

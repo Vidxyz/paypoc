@@ -1,0 +1,15 @@
+# Routes
+# This file defines all application routes
+# https://www.playframework.com/documentation/latest/ScalaRouting
+
+GET     /health                          controllers.HealthController.health
+
+POST    /users/signup                    controllers.SignupController.signup
+GET     /users/:id                       controllers.UserController.getUser(id: java.util.UUID)
+GET     /users/by-email/:email           controllers.UserController.getUserByEmail(email: String)
+GET     /users/by-auth0-id/:auth0Id     controllers.UserController.getUserByAuth0Id(auth0Id: String)
+PATCH   /users/:id/account-type          controllers.UserController.updateAccountType(id: java.util.UUID)
+GET     /users/me                        controllers.UserController.getCurrentUser
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file                    controllers.Assets.at(path="/public", file)

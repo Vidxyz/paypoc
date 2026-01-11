@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.2"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
   }
 }
 
@@ -31,7 +35,7 @@ provider "kubernetes" {
 provider "helm" {
   kubernetes {
     config_path    = var.kubeconfig_path
-    config_context  = var.kube_context
+    config_context = var.kube_context
   }
 }
 
@@ -48,8 +52,8 @@ resource "kubernetes_namespace" "kafka" {
 # Module for Strimzi Kafka Operator
 module "strimzi" {
   source = "./modules/strimzi"
-  
-  namespace = kubernetes_namespace.kafka.metadata[0].name
+
+  namespace     = kubernetes_namespace.kafka.metadata[0].name
   chart_version = var.strimzi_chart_version
 }
 
@@ -57,11 +61,11 @@ module "strimzi" {
 # Wait for Kafka to be fully ready before starting KOWL
 module "kowl" {
   source = "./modules/kowl"
-  
-  namespace = kubernetes_namespace.kafka.metadata[0].name
+
+  namespace               = kubernetes_namespace.kafka.metadata[0].name
   kafka_bootstrap_servers = module.strimzi.bootstrap_servers
-  chart_version = var.redpanda_console_chart_version
-  
+  chart_version           = var.redpanda_console_chart_version
+
   depends_on = [module.strimzi.kafka_ready]
 }
 
@@ -75,12 +79,22 @@ resource "kubernetes_namespace" "payments_platform" {
   }
 }
 
-# Module for PostgreSQL
+# Create namespace for PostgreSQL
+resource "kubernetes_namespace" "postgres" {
+  metadata {
+    name = var.postgres_namespace
+    labels = {
+      app = "postgres"
+    }
+  }
+}
+
+# Module for PostgreSQL (deployed to postgres namespace - for microservices only)
 module "postgres" {
   source = "./modules/postgres"
-  
-  namespace = kubernetes_namespace.payments_platform.metadata[0].name
-  chart_version = var.postgres_chart_version
+
+  namespace         = kubernetes_namespace.postgres.metadata[0].name
+  chart_version     = var.postgres_chart_version
   postgres_username = var.postgres_username
   postgres_password = var.postgres_password
 }

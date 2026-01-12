@@ -17,4 +17,18 @@ data:
       level:
         com.payments.platform.ledger: INFO
         org.springframework.jdbc: WARN
+    
+    # Auth0 Configuration (for JWT validation)
+    auth0:
+      domain: ${AUTH0_DOMAIN:your-tenant.auth0.com}
+      audience: ${AUTH0_AUDIENCE:}
+    
+    # Service-to-Service API Configuration (opaque token for /ledger/* routes)
+    ledger:
+      service:
+        api:
+          token: ${LEDGER_SERVICE_API_TOKEN:ledger-service-secret-token-change-in-production}
+      internal:
+        api:
+          token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
 

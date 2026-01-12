@@ -36,6 +36,8 @@ spring:
 ledger:
   service:
     url: http://localhost:8081
+    api:
+      token: ${LEDGER_SERVICE_API_TOKEN:ledger-service-secret-token-change-in-production}
 
 # Internal API Configuration
 payments:

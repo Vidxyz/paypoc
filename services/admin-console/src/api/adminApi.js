@@ -10,16 +10,88 @@ const adminApi = axios.create({
   },
 })
 
+// Store Auth0 client reference for token retrieval
+let auth0ClientRef = null
+
+/**
+ * Initialize the adminApi with Auth0 client for token management
+ * @param {Object} auth0Client - Auth0 client instance
+ */
+export const setupAdminApi = (auth0Client) => {
+  auth0ClientRef = auth0Client
+}
+
 // Add request interceptor to include bearer token
+// This interceptor is async to support token refresh
 adminApi.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('bearerToken')
+  async (config) => {
+    let token = localStorage.getItem('bearerToken')
+    
+    // If no token in localStorage and we have an Auth0 client, try to get a fresh token
+    if (!token && auth0ClientRef) {
+      try {
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
+        const tokenResponse = await auth0ClientRef.getTokenSilently({ 
+          detailedResponse: true,
+          authorizationParams: {
+            audience: audience
+          }
+        })
+        // Always use access_token for API calls - ID tokens don't have the audience claim
+        token = tokenResponse.access_token
+        if (!token) {
+          throw new Error('No access token received from Auth0')
+        }
+        localStorage.setItem('bearerToken', token)
+      } catch (error) {
+        console.error('Error getting access token from Auth0:', error)
+      }
+    }
+    
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
     return config
   },
   (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// Add response interceptor to handle 401 errors and refresh token
+adminApi.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config
+    
+    // If we get a 401 and haven't retried yet, try to refresh the token
+    if (error.response?.status === 401 && !originalRequest._retry && auth0ClientRef) {
+      originalRequest._retry = true
+      
+      try {
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
+        const tokenResponse = await auth0ClientRef.getTokenSilently({ 
+          detailedResponse: true,
+          authorizationParams: {
+            audience: audience
+          }
+        })
+        // Always use access_token for API calls - ID tokens don't have the audience claim
+        const token = tokenResponse.access_token
+        if (!token) {
+          throw new Error('No access token received from Auth0')
+        }
+        localStorage.setItem('bearerToken', token)
+        originalRequest.headers.Authorization = `Bearer ${token}`
+        return adminApi(originalRequest)
+      } catch (refreshError) {
+        console.error('Error refreshing access token:', refreshError)
+        // If refresh fails, clear the token and let the error propagate
+        localStorage.removeItem('bearerToken')
+        return Promise.reject(refreshError)
+      }
+    }
+    
     return Promise.reject(error)
   }
 )

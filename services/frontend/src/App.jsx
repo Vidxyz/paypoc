@@ -141,7 +141,7 @@ function App() {
             path="/payments"
             element={
               isAuthenticated ? (
-                <Payments buyerId={userId} />
+                <Payments buyerId={userId} userEmail={userEmail} />
               ) : (
                 <Navigate to="/" replace />
               )

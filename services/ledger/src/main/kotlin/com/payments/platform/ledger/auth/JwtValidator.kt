@@ -1,4 +1,4 @@
-package com.payments.platform.payments.auth
+package com.payments.platform.ledger.auth
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
@@ -8,22 +8,17 @@ import com.auth0.jwt.interfaces.DecodedJWT
 import com.auth0.jwt.interfaces.JWTVerifier
 import com.auth0.jwk.JwkProvider
 import com.auth0.jwk.JwkProviderBuilder
-import com.payments.platform.payments.models.User
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.net.URL
 import java.security.interfaces.RSAPublicKey
-import java.util.*
 
 /**
- * Validates Auth0 JWT tokens and extracts user information from claims.
+ * Validates Auth0 JWT tokens and extracts account type for authorization.
  * 
  * Expected custom claims (added via Auth0 Actions):
- * - https://buyit.local/user_id: UUID string
  * - https://buyit.local/account_type: BUYER, SELLER, or ADMIN
- * - https://buyit.local/firstname: String (optional)
- * - https://buyit.local/lastname: String (optional)
  */
 @Component
 class JwtValidator(
@@ -41,27 +36,48 @@ class JwtValidator(
     }
     
     /**
-     * Validates a JWT token and extracts user information from claims.
+     * Validates a JWT token and extracts the account type.
      * 
      * @param token The JWT token string
-     * @return User object extracted from token claims, or null if token is invalid or expired
+     * @return AccountType string if token is valid and contains account_type claim, null otherwise
      */
-    fun validateAndExtractUser(token: String): User? {
+    fun validateAndExtractAccountType(token: String): String? {
         return try {
             val decodedJWT = decodeToken(token)
-            val user = extractUserFromClaims(decodedJWT)
-            logger.debug("Successfully validated JWT token for user: ${user.userId}")
-            user
+            val accountType = extractAccountTypeFromClaims(decodedJWT)
+            logger.debug("Successfully validated JWT token, account_type: $accountType")
+            accountType
         } catch (e: TokenExpiredException) {
             logger.warn("JWT token expired: ${e.message}")
             null
         } catch (e: JWTVerificationException) {
             logger.warn("JWT token validation failed: ${e.message}")
-            logger.debug("Token validation error details", e)
             null
         } catch (e: Exception) {
-            logger.error("Error validating JWT token: ${e.message}", e)
+            logger.error("Error validating JWT token", e)
             null
+        }
+    }
+    
+    /**
+     * Validates a JWT token without extracting claims (just checks if it's valid and not expired).
+     * 
+     * @param token The JWT token string
+     * @return true if token is valid and not expired, false otherwise
+     */
+    fun validateToken(token: String): Boolean {
+        return try {
+            decodeToken(token)
+            true
+        } catch (e: TokenExpiredException) {
+            logger.warn("JWT token expired: ${e.message}")
+            false
+        } catch (e: JWTVerificationException) {
+            logger.warn("JWT token validation failed: ${e.message}")
+            false
+        } catch (e: Exception) {
+            logger.error("Error validating JWT token", e)
+            false
         }
     }
     
@@ -87,49 +103,24 @@ class JwtValidator(
         
         val verifier: JWTVerifier = verifierBuilder.build()
         
-        // Verify the token
+        // Verify the token (this also checks expiration)
         return verifier.verify(token)
     }
     
-    private fun extractUserFromClaims(decodedJWT: DecodedJWT): User {
+    private fun extractAccountTypeFromClaims(decodedJWT: DecodedJWT): String {
         val claims = decodedJWT.claims
-        
-        // Extract Auth0 user ID (sub claim)
-        val auth0UserId = decodedJWT.subject
-            ?: throw IllegalArgumentException("Token missing 'sub' claim")
-        
-        // Extract custom claims (namespace: https://buyit.local/...)
         val customNamespace = "https://buyit.local/"
-        
-        val userIdClaim = claims[customNamespace + "user_id"]?.asString()
-            ?: throw IllegalArgumentException("Token missing custom claim: ${customNamespace}user_id")
-        val userId = try {
-            UUID.fromString(userIdClaim)
-        } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("Invalid user_id format in token: $userIdClaim", e)
-        }
         
         val accountTypeClaim = claims[customNamespace + "account_type"]?.asString()
             ?: throw IllegalArgumentException("Token missing custom claim: ${customNamespace}account_type")
-        val accountType = User.AccountType.fromString(accountTypeClaim)
-            ?: throw IllegalArgumentException("Invalid account_type in token: $accountTypeClaim")
         
-        // Try to get email from namespaced claim first, then fall back to direct email claim
-        val email = claims[customNamespace + "email"]?.asString()
-            ?: claims["email"]?.asString()
-            ?: throw IllegalArgumentException("Token missing 'email' claim (checked both ${customNamespace}email and email)")
+        // Validate account type
+        val validAccountTypes = listOf("BUYER", "SELLER", "ADMIN")
+        if (!validAccountTypes.contains(accountTypeClaim.uppercase())) {
+            throw IllegalArgumentException("Invalid account_type in token: $accountTypeClaim")
+        }
         
-        val firstname = claims[customNamespace + "firstname"]?.asString()
-        val lastname = claims[customNamespace + "lastname"]?.asString()
-        
-        return User(
-            userId = userId,
-            email = email,
-            auth0UserId = auth0UserId,
-            accountType = accountType,
-            firstname = firstname,
-            lastname = lastname,
-        )
+        return accountTypeClaim.uppercase()
     }
 }
 

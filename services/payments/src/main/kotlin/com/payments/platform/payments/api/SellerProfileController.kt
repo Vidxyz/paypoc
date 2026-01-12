@@ -94,6 +94,8 @@ class SellerProfileController(
         return ResponseEntity.ok(responses)
     }
     
+    // todo-vh: Can add endpoint to register more stripe accounts for the same seller for multiple currencies. 
+    //          Doing so should create a new ledger account for the seller with new currency. Payouts would have to be handled carefully here 
     /**
      * PUT /seller/profile/stripe-accounts/{currency}
      * Updates the authenticated seller's Stripe account ID for a specific currency.

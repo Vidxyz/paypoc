@@ -21,8 +21,8 @@ class SellerStripeAccountEntity(
     @Column(name = "currency", nullable = false)
     val currency: String,
     
-    @Column(name = "stripe_account_id", nullable = false)
-    val stripeAccountId: String,
+    @Column(name = "stripe_account_id", nullable = true)
+    val stripeAccountId: String?,
     
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
@@ -34,7 +34,7 @@ class SellerStripeAccountEntity(
     constructor() : this(
         sellerId = "",
         currency = "",
-        stripeAccountId = "",
+        stripeAccountId = null,
         createdAt = Instant.now(),
         updatedAt = Instant.now()
     )

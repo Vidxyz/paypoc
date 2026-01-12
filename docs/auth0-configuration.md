@@ -9,13 +9,13 @@ The architecture uses:
 - **Shared Auth0 Tenant**: All applications share the same Auth0 domain and user database
 - **Frontend**: Direct integration with Auth0 using `@auth0/auth0-spa-js` SDK (for BUYER accounts)
 - **Admin Console**: Separate Auth0 application (for ADMIN accounts only)
-- **Seller Console**: Separate Auth0 application (for SELLER accounts only) - Future
+- **Seller Console**: Separate Auth0 application (for SELLER accounts only)
 - **Microservices**: Validate Auth0 JWT tokens using Auth0's JWKS endpoint
 - **Custom Claims**: User information (user_id, account_type, etc.) added to tokens via Auth0 Actions
 
 ## Step 1: Create Separate Auth0 Applications
 
-You need to create **three separate Auth0 applications** (or two if seller-console isn't ready yet):
+You need to create **three separate Auth0 applications**:
 
 ### 1.1: Frontend Application (for BUYER accounts)
 
@@ -73,7 +73,7 @@ You need to create **three separate Auth0 applications** (or two if seller-conso
 3. **Note down**:
    - **Client ID**: e.g., `AdminConsoleClientId123` → This is your `AUTH0_ADMIN_CLIENT_ID`
 
-### 1.3: Seller Console Application (for SELLER accounts only) - Future
+### 1.3: Seller Console Application (for SELLER accounts only)
 
 1. **Navigate to Applications** → **Create Application**
 2. **Configure Application Settings**:
@@ -90,7 +90,7 @@ You need to create **three separate Auth0 applications** (or two if seller-conso
    - **OAuth Settings**: (same as frontend application)
 
 3. **Note down**:
-   - **Client ID**: e.g., `SellerConsoleClientId123` → This is your `AUTH0_SELLER_CLIENT_ID` (for future use)
+   - **Client ID**: e.g., `SellerConsoleClientId123` → This is your `AUTH0_SELLER_CLIENT_ID`
 
 ### 1.4: Shared Auth0 Domain
 
@@ -160,6 +160,13 @@ Custom claims are needed so microservices can extract user information (user_id,
 exports.onExecutePostLogin = async (event, api) => {
   const namespace = 'https://buyit.local/';
   
+  // Get client ID from the login request
+  const clientId = event.client?.client_id || event.request?.query?.client_id;
+  
+  // Get client IDs from secrets (configure these in Auth0 Action Settings → Secrets)
+  const ADMIN_CONSOLE_CLIENT_ID = event.secrets?.ADMIN_CONSOLE_CLIENT_ID;
+  const SELLER_CONSOLE_CLIENT_ID = event.secrets?.SELLER_CONSOLE_CLIENT_ID;
+  
   // Read from app_metadata (stored in Auth0 when user was created via user service)
   // This avoids external API calls since Auth0 Actions can't access internal services
   const appMetadata = event.user.app_metadata || {};
@@ -173,6 +180,7 @@ exports.onExecutePostLogin = async (event, api) => {
   const lastname = appMetadata.lastname || event.user.family_name;
   
   console.log(`[Add Custom Claims] Reading from app_metadata for user: ${event.user.email}`);
+  console.log(`[Add Custom Claims] Client ID: ${clientId}`);
   console.log(`[Add Custom Claims] Metadata:`, {
     userId,
     auth0UserId,
@@ -183,6 +191,23 @@ exports.onExecutePostLogin = async (event, api) => {
     hasMetadata: !!appMetadata.app_user_id,
     fullMetadata: JSON.stringify(appMetadata)
   });
+  
+  // Enforce account type restrictions for admin and seller consoles
+  if (ADMIN_CONSOLE_CLIENT_ID && clientId === ADMIN_CONSOLE_CLIENT_ID) {
+    if (accountType !== 'ADMIN') {
+      console.warn(`[Add Custom Claims] Non-ADMIN user (account_type: ${accountType}) attempted to log in to admin console`);
+      api.access.denied('Only ADMIN users can access the admin console');
+      return;
+    }
+  }
+  
+  if (SELLER_CONSOLE_CLIENT_ID && clientId === SELLER_CONSOLE_CLIENT_ID) {
+    if (accountType !== 'SELLER') {
+      console.warn(`[Add Custom Claims] Non-SELLER user (account_type: ${accountType}) attempted to log in to seller console`);
+      api.access.denied('Only SELLER users can access the seller console');
+      return;
+    }
+  }
   
   if (!userId || !accountType) {
     console.warn(`[Add Custom Claims] Missing required metadata: userId=${userId}, accountType=${accountType}`);
@@ -223,9 +248,11 @@ exports.onExecutePostLogin = async (event, api) => {
 };
 ```
 
-6. **Configure Secrets** (if needed):
+6. **Configure Secrets** (required for account type enforcement):
    - Click on the Action → **Settings** → **Secrets**
-   - Add `USER_SERVICE_URL` if your user service URL is different from default
+   - Add `ADMIN_CONSOLE_CLIENT_ID` with the Client ID of your Admin Console Auth0 application
+   - Add `SELLER_CONSOLE_CLIENT_ID` with the Client ID of your Seller Console Auth0 application
+   - These secrets are used to enforce account type restrictions (only ADMINs can log into admin console, only SELLERs can log into seller console)
 
 7. **Deploy the Action**: 
    - Click **"Deploy"** button (top right) - **CRITICAL**: Action must be deployed to run
@@ -338,10 +365,15 @@ The platform now uses a centralized `.env` file for all environment variables. T
    AUTH0_DOMAIN=dev-bm52noc2kc3fce8w.us.auth0.com
    AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id
    AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id
+   AUTH0_SELLER_CLIENT_ID=your-seller-console-client-id
    AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local
    AUTH0_ADMIN_REDIRECT_URI=https://admin.local
+   AUTH0_SELLER_REDIRECT_URI=https://seller.local
    AUTH0_FRONTEND_AUDIENCE=https://buyit.local/api
    AUTH0_ADMIN_AUDIENCE=https://buyit.local/api
+   AUTH0_SELLER_AUDIENCE=https://buyit.local/api
+   AUTH0_M2M_CLIENT_ID=your-m2m-client-id
+   AUTH0_M2M_CLIENT_SECRET=your-m2m-client-secret
    ```
 
 3. **The `deploy.sh` script automatically loads variables from `.env`**:
@@ -357,8 +389,10 @@ If you prefer to set environment variables manually instead of using `.env`, you
 export AUTH0_DOMAIN=dev-bm52noc2kc3fce8w.us.auth0.com
 export AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id
 export AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id
+export AUTH0_SELLER_CLIENT_ID=your-seller-console-client-id
 export AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local
 export AUTH0_ADMIN_REDIRECT_URI=https://admin.local
+export AUTH0_SELLER_REDIRECT_URI=https://seller.local
 ```
 
 ## Step 7: Configure Payments Service

@@ -86,6 +86,33 @@ class JwtValidator @Inject()(config: Configuration) {
     }
   }
   
+  /**
+   * Validates a JWT token and extracts the user ID.
+   * 
+   * @param token The JWT token string
+   * @return UUID if token is valid and contains user_id claim, None otherwise
+   *         Returns None if token is expired, invalid, or missing required claims
+   */
+  def validateAndExtractUserId(token: String): Option[java.util.UUID] = {
+    Try {
+      val decodedJWT = decodeToken(token)
+      val userId = extractUserIdFromClaims(decodedJWT)
+      logger.debug(s"Successfully extracted user_id from JWT token: $userId")
+      userId
+    } match {
+      case Success(userId) => Some(userId)
+      case Failure(e: TokenExpiredException) =>
+        logger.warn(s"JWT token expired: ${e.getMessage}")
+        None
+      case Failure(e: JWTVerificationException) =>
+        logger.warn(s"JWT token validation failed: ${e.getMessage}")
+        None
+      case Failure(e: Exception) =>
+        logger.error("Error extracting user_id from JWT token", e)
+        None
+    }
+  }
+  
   private def decodeToken(token: String): DecodedJWT = {
     // Decode without verification first to get the key ID
     val unverifiedJWT = JWT.decode(token)
@@ -124,6 +151,22 @@ class JwtValidator @Inject()(config: Configuration) {
     
     AccountType.fromString(accountTypeClaim)
       .getOrElse(throw new IllegalArgumentException(s"Invalid account_type in token: $accountTypeClaim"))
+  }
+  
+  private def extractUserIdFromClaims(decodedJWT: DecodedJWT): java.util.UUID = {
+    val claims = decodedJWT.getClaims
+    val customNamespace = "https://buyit.local/"
+    
+    val userIdClaim = Option(claims.get(customNamespace + "user_id"))
+      .map(_.asString())
+      .getOrElse(throw new IllegalArgumentException(s"Token missing custom claim: ${customNamespace}user_id"))
+    
+    try {
+      java.util.UUID.fromString(userIdClaim)
+    } catch {
+      case e: IllegalArgumentException =>
+        throw new IllegalArgumentException(s"Invalid user_id format in token: $userIdClaim", e)
+    }
   }
 }
 

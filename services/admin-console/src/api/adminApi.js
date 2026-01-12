@@ -1,7 +1,8 @@
 import axios from 'axios'
 
-// Use /api prefix which nginx will proxy to payments service
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+// Call payments service directly (CORS is enabled on payments service)
+// This avoids nginx proxy redirect issues
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://payments.local'
 
 const adminApi = axios.create({
   baseURL: API_BASE_URL,

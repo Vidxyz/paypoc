@@ -76,6 +76,13 @@ class PayoutService(
                 "Please configure the seller's Stripe account before processing payouts."
             )
         
+        // Validate that Stripe account ID is set (cannot be null for payouts)
+        val stripeAccountId = sellerStripeAccount.stripeAccountId
+            ?: throw PayoutCreationException(
+                "Seller $sellerId has a Stripe account entry for currency $currency, but Stripe account ID is not configured. " +
+                "Please configure the seller's Stripe account ID before processing payouts."
+            )
+        
         // Generate payout ID and idempotency key
         val payoutId = UUID.randomUUID()
         val idempotencyKey = "payout_${payoutId}_${System.currentTimeMillis()}"
@@ -119,7 +126,7 @@ class PayoutService(
             stripeService.createTransfer(
                 amountCents = amountCents,
                 currency = currency,
-                destinationAccountId = sellerStripeAccount.stripeAccountId,
+                destinationAccountId = stripeAccountId,
                 metadata = mapOf(
                     "payoutId" to payoutId.toString(),
                     "sellerId" to sellerId,

@@ -83,6 +83,11 @@ check_auth0_env_vars() {
         missing_vars+=("AUTH0_ADMIN_CLIENT_ID")
     fi
     
+    # Check seller console Auth0 client ID
+    if [[ -z "${AUTH0_SELLER_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_SELLER_CLIENT_ID")
+    fi
+    
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         log_error "Missing required Auth0 environment variables:"
         for var in "${missing_vars[@]}"; do
@@ -93,14 +98,17 @@ check_auth0_env_vars() {
         log_error "  AUTH0_DOMAIN=your-tenant.auth0.com"
         log_error "  AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id"
         log_error "  AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id"
+        log_error "  AUTH0_SELLER_CLIENT_ID=your-seller-console-client-id"
         log_error ""
         log_error "Optional variables (with defaults):"
         log_error "  AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local  # Defaults to window.location.origin"
         log_error "  AUTH0_ADMIN_REDIRECT_URI=https://admin.local      # Defaults to window.location.origin"
+        log_error "  AUTH0_SELLER_REDIRECT_URI=https://seller.local     # Defaults to window.location.origin"
         log_error "  AUTH0_FRONTEND_AUDIENCE=your-api-audience         # Optional, for API access"
         log_error "  AUTH0_ADMIN_AUDIENCE=your-api-audience            # Optional, for API access"
+        log_error "  AUTH0_SELLER_AUDIENCE=your-api-audience           # Optional, for API access"
         log_error ""
-        log_warn "Building frontend/admin-console without Auth0 variables will result in a 401 error during login!"
+        log_warn "Building frontend/admin-console/seller-console without Auth0 variables will result in a 401 error during login!"
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -112,6 +120,7 @@ check_auth0_env_vars() {
         log_info "  AUTH0_DOMAIN: ${AUTH0_DOMAIN:0:30}..."
         log_info "  AUTH0_FRONTEND_CLIENT_ID: ${AUTH0_FRONTEND_CLIENT_ID:0:20}..."
         log_info "  AUTH0_ADMIN_CLIENT_ID: ${AUTH0_ADMIN_CLIENT_ID:0:20}..."
+        log_info "  AUTH0_SELLER_CLIENT_ID: ${AUTH0_SELLER_CLIENT_ID:0:20}..."
         if [[ -n "${AUTH0_FRONTEND_REDIRECT_URI:-}" ]]; then
             log_info "  AUTH0_FRONTEND_REDIRECT_URI: $AUTH0_FRONTEND_REDIRECT_URI"
         else
@@ -122,6 +131,11 @@ check_auth0_env_vars() {
         else
             log_info "  AUTH0_ADMIN_REDIRECT_URI: (not set, will use window.location.origin)"
         fi
+        if [[ -n "${AUTH0_SELLER_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_SELLER_REDIRECT_URI: $AUTH0_SELLER_REDIRECT_URI"
+        else
+            log_info "  AUTH0_SELLER_REDIRECT_URI: (not set, will use window.location.origin)"
+        fi
         if [[ -n "${AUTH0_FRONTEND_AUDIENCE:-}" ]]; then
             log_info "  AUTH0_FRONTEND_AUDIENCE: $AUTH0_FRONTEND_AUDIENCE"
         else
@@ -131,6 +145,11 @@ check_auth0_env_vars() {
             log_info "  AUTH0_ADMIN_AUDIENCE: $AUTH0_ADMIN_AUDIENCE"
         else
             log_info "  AUTH0_ADMIN_AUDIENCE: (not set, optional)"
+        fi
+        if [[ -n "${AUTH0_SELLER_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_SELLER_AUDIENCE: $AUTH0_SELLER_AUDIENCE"
+        else
+            log_info "  AUTH0_SELLER_AUDIENCE: (not set, optional)"
         fi
     fi
 }
@@ -211,6 +230,20 @@ build_images() {
         -t admin-console:latest .) &
     ADMIN_CONSOLE_PID=$!
     
+    log_info "Building seller-console image..."
+    # Use separate Auth0 client ID for seller console
+    local auth0_domain_seller="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+    local auth0_seller_client_id="${AUTH0_SELLER_CLIENT_ID:-}"
+    local auth0_seller_redirect_uri="${AUTH0_SELLER_REDIRECT_URI:-}"
+    local auth0_seller_audience="${AUTH0_SELLER_AUDIENCE:-}"
+    (cd "$PROJECT_ROOT/services/seller-console" && docker build \
+        --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_seller" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_seller_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_seller_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_seller_audience" \
+        -t seller-console:latest .) &
+    SELLER_CONSOLE_PID=$!
+    
     log_info "Building user-service image..."
     (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) &
     USER_PID=$!
@@ -229,6 +262,9 @@ build_images() {
     wait $ADMIN_CONSOLE_PID || { log_error "Admin-console image build failed"; exit 1; }
     log_info "Admin-console image built successfully"
     
+    wait $SELLER_CONSOLE_PID || { log_error "Seller-console image build failed"; exit 1; }
+    log_info "Seller-console image built successfully"
+    
     wait $USER_PID || { log_error "User image build failed"; exit 1; }
     log_info "User image built successfully"
     
@@ -238,6 +274,7 @@ build_images() {
     minikube image load payments-service:latest &
     minikube image load frontend:latest &
     minikube image load admin-console:latest &
+    minikube image load seller-console:latest &
     minikube image load user-service:latest &
     
     # Wait for all image loads to complete
@@ -295,6 +332,22 @@ build_single_image() {
             minikube image load admin-console:latest
             log_info "Admin-console image built and loaded successfully"
             ;;
+        seller-console)
+            # Use separate Auth0 client ID for seller console
+            local auth0_domain_seller="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+            local auth0_seller_client_id="${AUTH0_SELLER_CLIENT_ID:-}"
+            local auth0_seller_redirect_uri="${AUTH0_SELLER_REDIRECT_URI:-}"
+            local auth0_seller_audience="${AUTH0_SELLER_AUDIENCE:-}"
+            log_info "Building seller-console image..."
+            (cd "$PROJECT_ROOT/services/seller-console" && docker build \
+                --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_seller" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_seller_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_seller_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_seller_audience" \
+                -t seller-console:latest .) || { log_error "Seller-console image build failed"; exit 1; }
+            minikube image load seller-console:latest
+            log_info "Seller-console image built and loaded successfully"
+            ;;
         user)
             log_info "Building user-service image..."
             (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) || { log_error "User image build failed"; exit 1; }
@@ -303,7 +356,7 @@ build_single_image() {
             ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, auth, user"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, auth, user"
             exit 1
             ;;
     esac
@@ -378,6 +431,16 @@ deploy_admin_console() {
     wait
 }
 
+deploy_seller_console() {
+    log_info "Deploying Seller Console..."
+    kubectl apply -f "$K8S_DIR/seller-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/seller-console/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/seller-console/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/seller-console/service.yaml" &
+    kubectl apply -f "$K8S_DIR/seller-console/ingress.yaml" &
+    wait
+}
+
 deploy_auth() {
     log_info "Deploying Auth Service..."
     kubectl apply -f "$K8S_DIR/auth/namespace.yaml" &
@@ -430,6 +493,10 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
     ADMIN_CONSOLE_PID=$!
     
+    log_info "Waiting for Seller Console..."
+    kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet" &
+    SELLER_CONSOLE_PID=$!
+    
     log_info "Waiting for User Service..."
     kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet" &
     USER_PID=$!
@@ -440,6 +507,7 @@ wait_for_services() {
     wait $PAYMENTS_PID
     wait $FRONTEND_PID
     wait $ADMIN_CONSOLE_PID
+    wait $SELLER_CONSOLE_PID
     wait $USER_PID
     
     log_info "Services deployment complete"
@@ -464,6 +532,10 @@ wait_for_single_service() {
         admin-console)
             log_info "Waiting for Admin Console..."
             kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet"
+            ;;
+        seller-console)
+            log_info "Waiting for Seller Console..."
+            kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet"
             ;;
         user)
             log_info "Waiting for User Service..."
@@ -503,6 +575,15 @@ show_status() {
         echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
     fi
     
+    INGRESS_IP_SELLER=$(kubectl get ingress seller-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    if [ -n "$INGRESS_IP_SELLER" ]; then
+        echo "  Seller Console (Ingress): http://seller.local"
+    else
+        echo "  Seller Console (Ingress): http://seller.local"
+        echo "    Add to /etc/hosts: $MINIKUBE_IP seller.local"
+        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
+    fi
+    
     INGRESS_IP_PAYMENTS=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_PAYMENTS" ]; then
         echo "  Payments Service (Ingress): http://$INGRESS_IP_PAYMENTS"
@@ -516,6 +597,7 @@ show_status() {
     log_info "To port-forward services:"
     echo "  Frontend: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
     echo "  Admin Console: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
+    echo "  Seller Console: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
 }
@@ -544,6 +626,7 @@ main() {
     deploy_payments &
     deploy_frontend &
     deploy_admin_console &
+    deploy_seller_console &
     deploy_auth &
     deploy_user &
     
@@ -575,7 +658,7 @@ case "$SERVICE_NAME" in
     postgres)
         log_warn "PostgreSQL is now deployed via Terraform. Use 'terraform apply' in infra/minikube/"
         ;;
-    ledger|payments|frontend|admin-console|auth|user)
+    ledger|payments|frontend|admin-console|seller-console|auth|user)
         log_info "Deploying $SERVICE_NAME service (fresh deploy)..."
         check_prerequisites
         
@@ -593,6 +676,9 @@ case "$SERVICE_NAME" in
                 ;;
             admin-console)
                 kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
+                ;;
+            seller-console)
+                kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
                 ;;
             auth)
                 kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
@@ -620,6 +706,10 @@ case "$SERVICE_NAME" in
             admin-console)
                 deploy_admin_console
                 wait_for_single_service "admin-console"
+                ;;
+            seller-console)
+                deploy_seller_console
+                wait_for_single_service "seller-console"
                 ;;
             auth)
                 deploy_auth

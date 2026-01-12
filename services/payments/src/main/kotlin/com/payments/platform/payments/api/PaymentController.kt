@@ -147,7 +147,10 @@ class PaymentController(
     
     /**
      * GET /payments
-     * Gets payments for the authenticated user (buyerId from bearer token).
+     * Gets payments for the authenticated user.
+     * 
+     * For BUYER accounts: Returns payments where the user is the buyer
+     * For SELLER accounts: Returns payments where the user is the seller (using email as sellerId)
      * 
      * Supports filtering and sorting:
      * - page: Page number (0-indexed, default: 0)
@@ -155,11 +158,11 @@ class PaymentController(
      * - sortBy: Field to sort by (default: "createdAt")
      * - sortDirection: Sort direction - ASC or DESC (default: DESC)
      * 
-     * Requires Bearer token authentication. The buyerId is extracted from the token.
+     * Requires Bearer token authentication. User role determines which payments are returned.
      */
     @Operation(
         summary = "Get payments for authenticated user",
-        description = "Retrieves payments for the authenticated user (buyerId extracted from bearer token). Supports pagination and sorting. Requires Bearer token authentication."
+        description = "Retrieves payments for the authenticated user. For BUYER accounts, returns payments where user is the buyer. For SELLER accounts, returns payments where user is the seller (using email as sellerId). Supports pagination and sorting. Requires Bearer token authentication."
     )
     @ApiResponses(
         value = [
@@ -190,9 +193,6 @@ class PaymentController(
                 )
             )
         
-        // Use user.userId (UUID) converted to string for buyerId
-        val buyerId = user.userId.toString()
-        
         // Validate pagination parameters
         val validPage = if (page < 0) 0 else page
         val validSize = when {
@@ -217,13 +217,36 @@ class PaymentController(
             else -> "DESC"  // Default
         }
         
-        val payments = paymentService.getPaymentsByBuyerId(
-            buyerId = buyerId,
-            page = validPage,
-            size = validSize,
-            sortBy = validSortBy,
-            sortDirection = validSortDirection
-        )
+        // Get payments based on account type
+        val payments = when (user.accountType) {
+            User.AccountType.BUYER -> {
+                // For buyers, get payments where they are the buyer
+                val buyerId = user.userId.toString()
+                paymentService.getPaymentsByBuyerId(
+                    buyerId = buyerId,
+                    page = validPage,
+                    size = validSize,
+                    sortBy = validSortBy,
+                    sortDirection = validSortDirection
+                )
+            }
+            User.AccountType.SELLER -> {
+                // For sellers, get payments where they are the seller (using email as sellerId)
+                val sellerId = user.email
+                paymentService.getPaymentsBySellerId(
+                    sellerId = sellerId,
+                    page = validPage,
+                    size = validSize,
+                    sortBy = validSortBy,
+                    sortDirection = validSortDirection
+                )
+            }
+            else -> {
+                // ADMIN accounts can see all payments, but for now return empty
+                // In the future, we might want to add admin-specific logic here
+                emptyList()
+            }
+        }
         
         // Get chargeback info for all payments in a single optimized query
         val paymentIds = payments.map { it.id }
@@ -243,21 +266,34 @@ class PaymentController(
     }
     
     /**
-     * GET /balance?accountId={accountId}
-     * Gets balance for an account.
+     * GET /payments/balance
+     * Gets balance for the authenticated user's account.
      * 
+     * Uses the user's UUID from the auth token as the account ID.
      * This is a read-only delegation to the ledger.
      * Payments never computes balances - it always asks the ledger.
+     * 
+     * For SELLER accounts: Returns balance for their SELLER_PAYABLE account
+     * For BUYER accounts: May not have a ledger account (buyers pay the platform, we payout to sellers)
      */
     @Operation(
-        summary = "Get account balance",
-        description = "Retrieves the balance for an account. This is a read-only delegation to the Ledger Service. Payments never computes balances - it always asks the ledger."
+        summary = "Get account balance for authenticated user",
+        description = "Retrieves the balance for the authenticated user's account. The account ID is extracted from the user's UUID in the bearer token. This is a read-only delegation to the Ledger Service. For SELLER accounts, returns their SELLER_PAYABLE balance. Requires Bearer token authentication."
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
                 description = "Balance retrieved successfully",
+                content = [Content(schema = Schema(implementation = BalanceResponseDto::class))]
+            ),
+            ApiResponse(
+                responseCode = "401",
+                description = "Unauthorized - missing or invalid bearer token"
+            ),
+            ApiResponse(
+                responseCode = "404",
+                description = "Account not found in ledger",
                 content = [Content(schema = Schema(implementation = BalanceResponseDto::class))]
             ),
             ApiResponse(
@@ -268,7 +304,45 @@ class PaymentController(
         ]
     )
     @GetMapping("/balance")
-    fun getBalance(@RequestParam accountId: UUID): ResponseEntity<BalanceResponseDto> {
+    fun getBalance(
+        request: jakarta.servlet.http.HttpServletRequest
+    ): ResponseEntity<BalanceResponseDto> {
+        // Get user from request attribute (set by AuthenticationInterceptor)
+        val user = request.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
+            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                BalanceResponseDto(
+                    error = "Unauthorized: user not found in request"
+                )
+            )
+        
+        // For SELLER accounts, use deterministic UUID based on email and currency
+        // This matches the account ID used in payment processing and account creation
+        // For BUYER accounts, they don't have ledger accounts, so return appropriate response
+        val accountId = when (user.accountType) {
+            User.AccountType.SELLER -> {
+                // Use deterministic UUID to match account creation and payment processing
+                // Default to USD for now (can be extended to support multiple currencies)
+                val currency = "USD"
+                UUID.nameUUIDFromBytes("SELLER_PAYABLE_${user.email}_$currency".toByteArray())
+            }
+            User.AccountType.BUYER -> {
+                // BUYER accounts don't have ledger accounts
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    BalanceResponseDto(
+                        error = "BUYER accounts do not have ledger accounts"
+                    )
+                )
+            }
+            User.AccountType.ADMIN -> {
+                // ADMIN accounts don't have ledger accounts
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    BalanceResponseDto(
+                        error = "ADMIN accounts do not have ledger accounts"
+                    )
+                )
+            }
+        }
+        
         return try {
             val balance = ledgerClient.getBalance(accountId)
             ResponseEntity.ok(
@@ -279,11 +353,23 @@ class PaymentController(
                 )
             )
         } catch (e: LedgerClientException) {
-            ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
-                BalanceResponseDto(
-                    error = "Failed to get balance from ledger: ${e.message}"
+            // Check if it's a "not found" error (404) vs service unavailable (503)
+            if (e.message?.contains("not found", ignoreCase = true) == true) {
+                ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    BalanceResponseDto(
+                        accountId = accountId,
+                        currency = "USD",
+                        balanceCents = 0,
+                        error = "Account not found: ${e.message}"
+                    )
                 )
-            )
+            } else {
+                ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+                    BalanceResponseDto(
+                        error = "Failed to get balance from ledger: ${e.message}"
+                    )
+                )
+            }
         }
     }
 }

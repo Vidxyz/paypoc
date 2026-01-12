@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { createAuth0Client } from '@auth0/auth0-spa-js'
+import { setupAdminApi } from '../api/adminApi'
 
 const Auth0Context = createContext(null)
 
@@ -133,6 +134,9 @@ export const Auth0Provider = ({ children }) => {
 
         setAuth0Client(client)
         auth0ClientRef.current = client
+        
+        // Setup adminApi with Auth0 client for token management
+        setupAdminApi(client)
 
         // Check if we're handling a callback
         const urlParams = new URLSearchParams(window.location.search)
@@ -204,11 +208,20 @@ export const Auth0Provider = ({ children }) => {
             if (authenticated) {
               let token = null
               try {
-                const tokenResponse = await client.getTokenSilently({ detailedResponse: true })
-                token = tokenResponse.access_token || tokenResponse.id_token
-                console.log('Token retrieved after callback')
+                const tokenResponse = await client.getTokenSilently({ 
+                  detailedResponse: true,
+                  authorizationParams: {
+                    audience: audience
+                  }
+                })
+                // Always use access_token for API calls - ID tokens don't have the audience claim
+                token = tokenResponse.access_token
+                if (!token) {
+                  throw new Error('No access token received from Auth0')
+                }
+                console.log('Access token retrieved after callback')
               } catch (error) {
-                console.error('Error getting token after callback:', error)
+                console.error('Error getting access token after callback:', error)
               }
 
               let userProfile = null
@@ -325,10 +338,19 @@ export const Auth0Provider = ({ children }) => {
         if (authenticated) {
           let token = null
           try {
-            const tokenResponse = await client.getTokenSilently({ detailedResponse: true })
-            token = tokenResponse.access_token || tokenResponse.id_token
+            const tokenResponse = await client.getTokenSilently({ 
+              detailedResponse: true,
+              authorizationParams: {
+                audience: audience
+              }
+            })
+            // Always use access_token for API calls - ID tokens don't have the audience claim
+            token = tokenResponse.access_token
+            if (!token) {
+              throw new Error('No access token received from Auth0')
+            }
           } catch (error) {
-            console.error('Error getting token on init:', error)
+            console.error('Error getting access token on init:', error)
           }
 
           let userProfile = null
@@ -473,8 +495,18 @@ export const Auth0Provider = ({ children }) => {
   const getAccessToken = async () => {
     if (!auth0Client) return null
     try {
-      const tokenResponse = await auth0Client.getTokenSilently({ detailedResponse: true })
-      const token = tokenResponse.access_token || tokenResponse.id_token
+      const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
+      const tokenResponse = await auth0Client.getTokenSilently({ 
+        detailedResponse: true,
+        authorizationParams: {
+          audience: audience
+        }
+      })
+      // Always use access_token for API calls - ID tokens don't have the audience claim
+      const token = tokenResponse.access_token
+      if (!token) {
+        throw new Error('No access token received from Auth0')
+      }
       setAccessToken(token)
       localStorage.setItem('bearerToken', token)
       return token

@@ -20,7 +20,8 @@ import java.util.UUID
 @Component
 class LedgerClient(
     private val webClient: WebClient,
-    @Value("\${ledger.service.url}") private val ledgerServiceUrl: String
+    @Value("\${ledger.service.url}") private val ledgerServiceUrl: String,
+    @Value("\${ledger.service.api.token}") private val serviceApiToken: String
 ) {
     
     /**
@@ -36,6 +37,7 @@ class LedgerClient(
         return try {
             webClient.post()
                 .uri("$ledgerServiceUrl/ledger/transactions")
+                .header("Authorization", "Bearer $serviceApiToken")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(LedgerTransactionResponse::class.java)
@@ -73,6 +75,7 @@ class LedgerClient(
         return try {
             webClient.get()
                 .uri("$ledgerServiceUrl/ledger/accounts/$accountId/balance")
+                .header("Authorization", "Bearer $serviceApiToken")
                 .retrieve()
                 .bodyToMono(LedgerBalanceResponse::class.java)
                 .block() ?: throw LedgerClientException("Ledger service returned null response")
@@ -120,6 +123,7 @@ class LedgerClient(
             
             webClient.get()
                 .uri(uriBuilder.build().toUri())
+                .header("Authorization", "Bearer $serviceApiToken")
                 .retrieve()
                 .bodyToMono(LedgerTransactionQueryResponse::class.java)
                 .block() ?: throw LedgerClientException("Ledger service returned null response")
@@ -151,6 +155,7 @@ class LedgerClient(
         return try {
             webClient.get()
                 .uri("$ledgerServiceUrl/ledger/admin/sellers")
+                .header("Authorization", "Bearer $serviceApiToken")
                 .retrieve()
                 .bodyToMono(LedgerSellersResponse::class.java)
                 .block() ?: throw LedgerClientException("Ledger service returned null response")

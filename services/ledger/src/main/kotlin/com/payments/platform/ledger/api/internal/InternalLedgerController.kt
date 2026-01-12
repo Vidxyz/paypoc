@@ -1,10 +1,11 @@
 package com.payments.platform.ledger.api.internal
 
+import com.payments.platform.ledger.auth.JwtValidator
 import com.payments.platform.ledger.domain.Account
 import com.payments.platform.ledger.domain.AccountType
 import com.payments.platform.ledger.service.LedgerService
 import jakarta.servlet.http.HttpServletRequest
-import org.springframework.beans.factory.annotation.Value
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -13,42 +14,69 @@ import java.util.UUID
 /**
  * Internal API for account management.
  * 
- * This API is intended for use by other services (e.g., Payments Service)
- * and requires authentication via an opaque token.
+ * This API requires Bearer token (JWT) authentication.
+ * Only ADMIN users can access these endpoints.
  * 
  * Endpoints:
- * - POST /internal/accounts - Create account
- * - DELETE /internal/accounts/{accountId} - Delete account
+ * - POST /internal/accounts - Create account (ADMIN only)
+ * - DELETE /internal/accounts/{accountId} - Delete account (ADMIN only)
  */
 @RestController
 @RequestMapping("/internal")
 class InternalLedgerController(
     private val ledgerService: LedgerService,
-    @Value("\${ledger.internal.api.token}") private val apiToken: String
+    private val jwtValidator: JwtValidator
 ) {
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /**
-     * Validates the internal API token from the Authorization header.
+     * Validates the bearer token and checks if user is ADMIN.
+     * 
+     * @return Pair<Boolean, String?> where first is isValid, second is error message if invalid
      */
-    private fun validateToken(request: HttpServletRequest): Boolean {
+    private fun validateBearerToken(request: HttpServletRequest): Pair<Boolean, String?> {
         val authHeader = request.getHeader("Authorization")
-        return authHeader != null && authHeader == "Bearer $apiToken"
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return Pair(false, "Missing or invalid Authorization header. Bearer token required.")
+        }
+        
+        val token = authHeader.substring(7) // Remove "Bearer " prefix
+        
+        // Validate token and extract account type
+        val accountType = jwtValidator.validateAndExtractAccountType(token)
+        if (accountType == null) {
+            return Pair(false, "Invalid or expired bearer token")
+        }
+        
+        // Check if user is ADMIN
+        if (accountType != "ADMIN") {
+            logger.warn("Non-ADMIN user (account_type: $accountType) attempted to access internal endpoint: ${request.requestURI}")
+            return Pair(false, "Only ADMIN users can access this endpoint")
+        }
+        
+        return Pair(true, null)
     }
 
     /**
      * POST /internal/accounts
      * Creates a new account in the ledger.
      * 
-     * Requires: Authorization: Bearer {token}
+     * Requires: Authorization: Bearer {JWT token with ADMIN account_type}
      */
     @PostMapping("/accounts")
     fun createAccount(
         @RequestBody request: CreateAccountRequest,
         httpRequest: HttpServletRequest
     ): ResponseEntity<AccountResponse> {
-        if (!validateToken(httpRequest)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(AccountResponse(error = "Unauthorized: Invalid or missing token"))
+        val (isValid, errorMessage) = validateBearerToken(httpRequest)
+        if (!isValid) {
+            val status = if (errorMessage?.contains("Only ADMIN") == true) {
+                HttpStatus.FORBIDDEN
+            } else {
+                HttpStatus.UNAUTHORIZED
+            }
+            return ResponseEntity.status(status)
+                .body(AccountResponse(error = errorMessage ?: "Unauthorized"))
         }
 
         return try {
@@ -90,16 +118,22 @@ class InternalLedgerController(
      * 
      * Note: This will fail if there are associated ledger entries (foreign key constraint).
      * 
-     * Requires: Authorization: Bearer {token}
+     * Requires: Authorization: Bearer {JWT token with ADMIN account_type}
      */
     @DeleteMapping("/accounts/{accountId}")
     fun deleteAccount(
         @PathVariable accountId: UUID,
         httpRequest: HttpServletRequest
     ): ResponseEntity<AccountResponse> {
-        if (!validateToken(httpRequest)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(AccountResponse(error = "Unauthorized: Invalid or missing token"))
+        val (isValid, errorMessage) = validateBearerToken(httpRequest)
+        if (!isValid) {
+            val status = if (errorMessage?.contains("Only ADMIN") == true) {
+                HttpStatus.FORBIDDEN
+            } else {
+                HttpStatus.UNAUTHORIZED
+            }
+            return ResponseEntity.status(status)
+                .body(AccountResponse(error = errorMessage ?: "Unauthorized"))
         }
 
         return try {

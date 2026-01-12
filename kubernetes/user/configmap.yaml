@@ -51,6 +51,7 @@ data:
         client.secret = ""
         client.secret = ${?AUTH0_M2M_CLIENT_SECRET}
       }
+      audience = ${?AUTH0_AUDIENCE}
     }
     
     akka {

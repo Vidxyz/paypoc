@@ -88,9 +88,12 @@ POST    /users/signup                    controllers.SignupController.signup
 POST    /users/admin/signup              controllers.AdminSignupController.adminSignup
 
 ###
-#  summary: Get user by ID
+#  summary: Get user by ID (Admin Only)
 #  tags:
 #    - Users
+#  description: Retrieves a user by their UUID. Requires Bearer token authentication. Only ADMIN users can access this endpoint.
+#  security:
+#    - bearerAuth: []
 #  parameters:
 #    - name: id
 #      in: path
@@ -99,6 +102,12 @@ POST    /users/admin/signup              controllers.AdminSignupController.admin
 #        type: string
 #        format: uuid
 #      description: User UUID
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with ADMIN account_type claim
 #  responses:
 #    200:
 #      description: User found
@@ -106,15 +115,22 @@ POST    /users/admin/signup              controllers.AdminSignupController.admin
 #        application/json:
 #          schema:
 #            $ref: '#/components/schemas/models.UserResponse'
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not an ADMIN
 #    404:
 #      description: User not found
 ###
 GET     /users/:id                       controllers.UserController.getUser(id: java.util.UUID)
 
 ###
-#  summary: Get user by email
+#  summary: Get user by email (Admin Only)
 #  tags:
 #    - Users
+#  description: Retrieves a user by their email address. Requires Bearer token authentication. Only ADMIN users can access this endpoint.
+#  security:
+#    - bearerAuth: []
 #  parameters:
 #    - name: email
 #      in: path
@@ -123,6 +139,12 @@ GET     /users/:id                       controllers.UserController.getUser(id: 
 #        type: string
 #        format: email
 #      description: User email address
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with ADMIN account_type claim
 #  responses:
 #    200:
 #      description: User found
@@ -130,39 +152,23 @@ GET     /users/:id                       controllers.UserController.getUser(id: 
 #        application/json:
 #          schema:
 #            $ref: '#/components/schemas/models.UserResponse'
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not an ADMIN
 #    404:
 #      description: User not found
 ###
 GET     /users/by-email/:email           controllers.UserController.getUserByEmail(email: String)
 
-###
-#  summary: Get user by Auth0 ID
-#  tags:
-#    - Users
-#  parameters:
-#    - name: auth0Id
-#      in: path
-#      required: true
-#      schema:
-#        type: string
-#      description: Auth0 user ID
-#  responses:
-#    200:
-#      description: User found
-#      content:
-#        application/json:
-#          schema:
-#            $ref: '#/components/schemas/models.UserResponse'
-#    404:
-#      description: User not found
-###
-GET     /users/by-auth0-id/:auth0Id     controllers.UserController.getUserByAuth0Id(auth0Id: String)
 
 ###
-#  summary: Update user account type
+#  summary: Update user account type (Admin Only)
 #  tags:
 #    - Users
-#  description: "Updates the account type for a user. Valid values: BUYER, SELLER, ADMIN"
+#  description: "Updates the account type for a user. Valid values: BUYER, SELLER, ADMIN. Requires Bearer token authentication. Only ADMIN users can access this endpoint."
+#  security:
+#    - bearerAuth: []
 #  parameters:
 #    - name: id
 #      in: path
@@ -171,6 +177,12 @@ GET     /users/by-auth0-id/:auth0Id     controllers.UserController.getUserByAuth
 #        type: string
 #        format: uuid
 #      description: User UUID
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with ADMIN account_type claim
 #  requestBody:
 #    required: true
 #    content:
@@ -193,6 +205,10 @@ GET     /users/by-auth0-id/:auth0Id     controllers.UserController.getUserByAuth
 #            $ref: '#/components/schemas/models.UserResponse'
 #    400:
 #      description: Invalid account_type
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not an ADMIN
 #    404:
 #      description: User not found
 ###
@@ -202,10 +218,27 @@ PATCH   /users/:id/account-type          controllers.UserController.updateAccoun
 #  summary: Get current user
 #  tags:
 #    - Users
-#  description: Returns the current authenticated user (not implemented yet)
+#  description: Returns the current authenticated user. Requires Bearer token authentication. Any account type can access this endpoint.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT)
 #  responses:
+#    200:
+#      description: Current user retrieved successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
 #    401:
-#      description: Not implemented - JWT validation required
+#      description: Unauthorized - missing, invalid, or expired bearer token
+#    501:
+#      description: Not fully implemented - user lookup from token required
 ###
 GET     /users/me                        controllers.UserController.getCurrentUser
 

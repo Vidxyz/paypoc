@@ -51,7 +51,8 @@ case class SignupRequest(
 )
 
 object SignupRequest {
-  implicit val format: play.api.libs.json.Format[SignupRequest] = play.api.libs.json.Json.format[SignupRequest]
+  // Format is defined in package.scala with custom Reads/Writes that handle account_type (snake_case)
+  // This allows account_type to be optional in JSON requests
 }
 
 case class UserResponse(

@@ -88,6 +88,31 @@ POST    /users/signup                    controllers.SignupController.signup
 POST    /users/admin/signup              controllers.AdminSignupController.adminSignup
 
 ###
+#  summary: Create a new seller user account (Public)
+#  tags:
+#    - Users
+#  description: Creates a new SELLER user in Auth0 and local database. This endpoint is currently public (no authentication required). Triggers ledger account creation via Kafka.
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.SignupRequest'
+#  responses:
+#    201:
+#      description: Seller user created successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid request or missing required fields
+#    500:
+#      description: Failed to create seller account
+###
+POST    /users/seller/signup              controllers.SellerSignupController.sellerSignup
+
+###
 #  summary: Get user by ID (Admin Only)
 #  tags:
 #    - Users

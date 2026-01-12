@@ -29,6 +29,13 @@ lazy val root = (project in file("."))
       "org.scalatestplus.play" %% "scalatestplus-play" % "7.0.1" % Test,
       "org.mockito" % "mockito-core" % "5.10.0" % Test
     ),
+    // Force jackson-databind to 2.14.2 to be compatible with jackson-module-scala 2.14.3
+    // Auth0 libraries (java-jwt, jwks-rsa) pull in jackson-databind 2.15.0 which is incompatible
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.14.2",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.14.2",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.14.2"
+    ),
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature",

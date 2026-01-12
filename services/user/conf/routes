@@ -30,7 +30,7 @@ GET     /health                          controllers.HealthController.health
 #  summary: Create a new user account
 #  tags:
 #    - Users
-#  description: Creates a new user in Auth0 and local database. For SELLER accounts, triggers ledger account creation via Kafka.
+#  description: Creates a new user in Auth0 and local database. Creates BUYER accounts. For SELLER accounts, triggers ledger account creation via Kafka.
 #  requestBody:
 #    required: true
 #    content:
@@ -50,6 +50,42 @@ GET     /health                          controllers.HealthController.health
 #      description: Failed to create user
 ###
 POST    /users/signup                    controllers.SignupController.signup
+
+###
+#  summary: Create a new admin user account (Protected - Admin Only)
+#  tags:
+#    - Users
+#  description: Creates a new ADMIN user in Auth0 and local database. Requires Bearer token authentication. Only authenticated ADMIN users can create new admin accounts.
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with ADMIN account_type claim
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.SignupRequest'
+#  responses:
+#    201:
+#      description: Admin user created successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid request or missing required fields
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not an ADMIN
+#    500:
+#      description: Failed to create admin user
+###
+POST    /users/admin/signup              controllers.AdminSignupController.adminSignup
 
 ###
 #  summary: Get user by ID

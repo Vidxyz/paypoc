@@ -24,6 +24,8 @@ lazy val root = (project in file("."))
       ws,
       "org.apache.kafka" % "kafka-clients" % "3.6.0",
       "org.webjars" % "swagger-ui" % "5.9.0",
+      "com.auth0" % "java-jwt" % "4.4.0",
+      "com.auth0" % "jwks-rsa" % "0.22.1",
       "org.scalatestplus.play" %% "scalatestplus-play" % "7.0.1" % Test,
       "org.mockito" % "mockito-core" % "5.10.0" % Test
     ),

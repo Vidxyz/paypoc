@@ -13,12 +13,16 @@ class SignupController @Inject()(
   userService: UserService
 )(implicit ec: ExecutionContext) extends AbstractController(cc) {
 
+  // todo-vh: This should be secured with one-time passcode for real user creationuus
   def signup: Action[AnyContent] = Action.async { implicit request: Request[AnyContent] =>
     request.body.asJson match {
       case Some(json) =>
         json.validate[SignupRequest] match {
           case JsSuccess(signupRequest, _) =>
-            userService.signup(signupRequest).map { user =>
+            // Force account type to BUYER for regular signup (ignore any value in request)
+            val buyerSignupRequest = signupRequest.copy(accountType = models.AccountType.BUYER)
+            
+            userService.signup(buyerSignupRequest).map { user =>
               Created(Json.toJson(UserResponse.fromUser(user)))
             }.recover { case e: Exception =>
               InternalServerError(Json.obj("error" -> s"Failed to create user: ${e.getMessage}"))

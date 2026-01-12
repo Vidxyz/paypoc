@@ -163,7 +163,17 @@ build_images() {
     FRONTEND_PID=$!
     
     log_info "Building admin-console image..."
-    (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) &
+    # Use same Auth0 env vars as frontend
+    local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+    local auth0_client_id_admin="${AUTH0_CLIENT_ID:-}"
+    local auth0_redirect_uri_admin="${AUTH0_REDIRECT_URI:-}"
+    local auth0_audience_admin="${AUTH0_AUDIENCE:-}"
+    (cd "$PROJECT_ROOT/services/admin-console" && docker build \
+        --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id_admin" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri_admin" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience_admin" \
+        -t admin-console:latest .) &
     ADMIN_CONSOLE_PID=$!
     
     log_info "Building user-service image..."
@@ -235,8 +245,18 @@ build_single_image() {
             log_info "Frontend image built and loaded successfully"
             ;;
         admin-console)
+            # Use same Auth0 env vars as frontend
+            local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+            local auth0_client_id_admin="${AUTH0_CLIENT_ID:-}"
+            local auth0_redirect_uri_admin="${AUTH0_REDIRECT_URI:-}"
+            local auth0_audience_admin="${AUTH0_AUDIENCE:-}"
             log_info "Building admin-console image..."
-            (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) || { log_error "Admin-console image build failed"; exit 1; }
+            (cd "$PROJECT_ROOT/services/admin-console" && docker build \
+                --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id_admin" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri_admin" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience_admin" \
+                -t admin-console:latest .) || { log_error "Admin-console image build failed"; exit 1; }
             minikube image load admin-console:latest
             log_info "Admin-console image built and loaded successfully"
             ;;

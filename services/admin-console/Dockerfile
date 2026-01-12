@@ -12,6 +12,18 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Set build-time environment variables (with defaults)
+# Auth0 configuration - these MUST be set at build time
+ARG VITE_AUTH0_DOMAIN=your-tenant.auth0.com
+ARG VITE_AUTH0_CLIENT_ID=
+ARG VITE_AUTH0_REDIRECT_URI=
+ARG VITE_AUTH0_AUDIENCE=
+
+ENV VITE_AUTH0_DOMAIN=$VITE_AUTH0_DOMAIN
+ENV VITE_AUTH0_CLIENT_ID=$VITE_AUTH0_CLIENT_ID
+ENV VITE_AUTH0_REDIRECT_URI=$VITE_AUTH0_REDIRECT_URI
+ENV VITE_AUTH0_AUDIENCE=$VITE_AUTH0_AUDIENCE
+
 # Build the app
 RUN npm run build
 

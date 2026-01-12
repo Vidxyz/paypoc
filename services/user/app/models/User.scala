@@ -47,8 +47,12 @@ case class SignupRequest(
   password: String,
   firstname: String,
   lastname: String,
-  accountType: AccountType
+  accountType: AccountType = AccountType.BUYER // Default to BUYER (will be overridden by controllers)
 )
+
+object SignupRequest {
+  implicit val format: play.api.libs.json.Format[SignupRequest] = play.api.libs.json.Json.format[SignupRequest]
+}
 
 case class UserResponse(
   id: UUID,

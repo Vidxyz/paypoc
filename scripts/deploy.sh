@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 K8S_DIR="$PROJECT_ROOT/kubernetes"
 
-# Functions
+# Functions (define before using)
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -26,6 +26,20 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
+
+# Load environment variables from .env file if it exists
+ENV_FILE="$SCRIPT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    log_info "Loading environment variables from $ENV_FILE"
+    # Source the .env file, but don't fail if it doesn't exist
+    set -a  # Automatically export all variables
+    source "$ENV_FILE" 2>/dev/null || true
+    set +a  # Disable automatic export
+else
+    log_warn ".env file not found at $ENV_FILE"
+    log_warn "Create $ENV_FILE from $ENV_FILE.example and set your environment variables"
+    log_warn "Continuing with environment variables from current shell..."
+fi
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -49,15 +63,100 @@ check_prerequisites() {
     
 }
 
+check_auth0_env_vars() {
+    log_info "Checking Auth0 environment variables..."
+    
+    local missing_vars=()
+    
+    # Check shared Auth0 domain
+    if [[ -z "${AUTH0_DOMAIN:-}" ]]; then
+        missing_vars+=("AUTH0_DOMAIN")
+    fi
+    
+    # Check frontend Auth0 client ID
+    if [[ -z "${AUTH0_FRONTEND_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_FRONTEND_CLIENT_ID")
+    fi
+    
+    # Check admin console Auth0 client ID
+    if [[ -z "${AUTH0_ADMIN_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_ADMIN_CLIENT_ID")
+    fi
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        log_error "Missing required Auth0 environment variables:"
+        for var in "${missing_vars[@]}"; do
+            log_error "  - $var"
+        done
+        log_error ""
+        log_error "Please set these environment variables in $ENV_FILE or export them:"
+        log_error "  AUTH0_DOMAIN=your-tenant.auth0.com"
+        log_error "  AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id"
+        log_error "  AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id"
+        log_error ""
+        log_error "Optional variables (with defaults):"
+        log_error "  AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local  # Defaults to window.location.origin"
+        log_error "  AUTH0_ADMIN_REDIRECT_URI=https://admin.local      # Defaults to window.location.origin"
+        log_error "  AUTH0_FRONTEND_AUDIENCE=your-api-audience         # Optional, for API access"
+        log_error "  AUTH0_ADMIN_AUDIENCE=your-api-audience            # Optional, for API access"
+        log_error ""
+        log_warn "Building frontend/admin-console without Auth0 variables will result in a 401 error during login!"
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_error "Build cancelled. Please set the required environment variables and try again."
+            exit 1
+        fi
+    else
+        log_info "Auth0 environment variables check passed:"
+        log_info "  AUTH0_DOMAIN: ${AUTH0_DOMAIN:0:30}..."
+        log_info "  AUTH0_FRONTEND_CLIENT_ID: ${AUTH0_FRONTEND_CLIENT_ID:0:20}..."
+        log_info "  AUTH0_ADMIN_CLIENT_ID: ${AUTH0_ADMIN_CLIENT_ID:0:20}..."
+        if [[ -n "${AUTH0_FRONTEND_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_FRONTEND_REDIRECT_URI: $AUTH0_FRONTEND_REDIRECT_URI"
+        else
+            log_info "  AUTH0_FRONTEND_REDIRECT_URI: (not set, will use window.location.origin)"
+        fi
+        if [[ -n "${AUTH0_ADMIN_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_ADMIN_REDIRECT_URI: $AUTH0_ADMIN_REDIRECT_URI"
+        else
+            log_info "  AUTH0_ADMIN_REDIRECT_URI: (not set, will use window.location.origin)"
+        fi
+        if [[ -n "${AUTH0_FRONTEND_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_FRONTEND_AUDIENCE: $AUTH0_FRONTEND_AUDIENCE"
+        else
+            log_info "  AUTH0_FRONTEND_AUDIENCE: (not set, optional)"
+        fi
+        if [[ -n "${AUTH0_ADMIN_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_ADMIN_AUDIENCE: $AUTH0_ADMIN_AUDIENCE"
+        else
+            log_info "  AUTH0_ADMIN_AUDIENCE: (not set, optional)"
+        fi
+    fi
+}
+
 build_images() {
+    local service_name="${1:-all}"
+    
+    if [[ "$service_name" != "all" ]]; then
+        log_info "Building Docker image for $service_name service..."
+        build_single_image "$service_name"
+        return
+    fi
+    
     log_info "Deleting deployments..."
     
     kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
+    
+    # Check Auth0 environment variables before building frontend
+    check_auth0_env_vars
     
     # Use environment variable or fallback to test key
     # Test key is safe to commit, live keys should come from CI/CD secrets
@@ -81,13 +180,40 @@ build_images() {
     (cd "$PROJECT_ROOT" && docker build -t payments-service:latest -f scripts/Dockerfile.payments .) &
     PAYMENTS_PID=$!
     
+    # Set environment variables for frontend build
+    local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
+    local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+    local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
+    local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
+    local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+    
     log_info "Building frontend image..."
-    (cd "$PROJECT_ROOT/services/frontend" && docker build --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" -t frontend:latest .) &
+    (cd "$PROJECT_ROOT/services/frontend" && docker build \
+        --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
+        --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+        -t frontend:latest .) &
     FRONTEND_PID=$!
     
     log_info "Building admin-console image..."
-    (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) &
+    # Use separate Auth0 client ID for admin console
+    local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+    local auth0_admin_client_id="${AUTH0_ADMIN_CLIENT_ID:-}"
+    local auth0_admin_redirect_uri="${AUTH0_ADMIN_REDIRECT_URI:-}"
+    local auth0_admin_audience="${AUTH0_ADMIN_AUDIENCE:-}"
+    (cd "$PROJECT_ROOT/services/admin-console" && docker build \
+        --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_admin_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_admin_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_admin_audience" \
+        -t admin-console:latest .) &
     ADMIN_CONSOLE_PID=$!
+    
+    log_info "Building user-service image..."
+    (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) &
+    USER_PID=$!
     
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
@@ -103,17 +229,84 @@ build_images() {
     wait $ADMIN_CONSOLE_PID || { log_error "Admin-console image build failed"; exit 1; }
     log_info "Admin-console image built successfully"
     
+    wait $USER_PID || { log_error "User image build failed"; exit 1; }
+    log_info "User image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
     minikube image load payments-service:latest &
     minikube image load frontend:latest &
     minikube image load admin-console:latest &
+    minikube image load user-service:latest &
     
     # Wait for all image loads to complete
     wait
     
     log_info "All images built and loaded"
+}
+
+build_single_image() {
+    local service_name="$1"
+    
+    case "$service_name" in
+        ledger)
+            log_info "Building ledger-service image..."
+            (cd "$PROJECT_ROOT" && docker build -t ledger-service:latest -f scripts/Dockerfile.ledger .) || { log_error "Ledger image build failed"; exit 1; }
+            minikube image load ledger-service:latest
+            log_info "Ledger image built and loaded successfully"
+            ;;
+        payments)
+            log_info "Building payments-service image..."
+            (cd "$PROJECT_ROOT" && docker build -t payments-service:latest -f scripts/Dockerfile.payments .) || { log_error "Payments image build failed"; exit 1; }
+            minikube image load payments-service:latest
+            log_info "Payments image built and loaded successfully"
+            ;;
+        frontend)
+            local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
+            local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+            local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
+            local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
+            local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+            log_info "Building frontend image..."
+            (cd "$PROJECT_ROOT/services/frontend" && docker build \
+                --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
+                --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+                -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
+            minikube image load frontend:latest
+            log_info "Frontend image built and loaded successfully"
+            ;;
+        admin-console)
+            # Use separate Auth0 client ID for admin console
+            local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+            local auth0_admin_client_id="${AUTH0_ADMIN_CLIENT_ID:-}"
+            local auth0_admin_redirect_uri="${AUTH0_ADMIN_REDIRECT_URI:-}"
+            local auth0_admin_audience="${AUTH0_ADMIN_AUDIENCE:-}"
+            log_info "Building admin-console image..."
+            (cd "$PROJECT_ROOT/services/admin-console" && docker build \
+                --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_admin_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_admin_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_admin_audience" \
+                -t admin-console:latest .) || { log_error "Admin-console image build failed"; exit 1; }
+            minikube image load admin-console:latest
+            log_info "Admin-console image built and loaded successfully"
+            ;;
+        user)
+            log_info "Building user-service image..."
+            (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) || { log_error "User image build failed"; exit 1; }
+            minikube image load user-service:latest
+            log_info "User image built and loaded successfully"
+            ;;
+        *)
+            log_error "Unknown service: $service_name"
+            log_info "Available services: ledger, payments, frontend, admin-console, auth, user"
+            exit 1
+            ;;
+    esac
 }
 
 create_namespace() {
@@ -185,7 +378,35 @@ deploy_admin_console() {
     wait
 }
 
+deploy_auth() {
+    log_info "Deploying Auth Service..."
+    kubectl apply -f "$K8S_DIR/auth/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/auth/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/auth/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/auth/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/auth/service.yaml" &
+    kubectl apply -f "$K8S_DIR/auth/ingress.yaml" &
+    wait
+}
+
+deploy_user() {
+    log_info "Deploying User Service..."
+    kubectl apply -f "$K8S_DIR/user/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/user/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/user/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/user/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/user/service.yaml" &
+    wait
+}
+
 wait_for_services() {
+    local service_name="${1:-all}"
+    
+    if [[ "$service_name" != "all" ]]; then
+        wait_for_single_service "$service_name"
+        return
+    fi
+    
     log_info "Waiting for all services to be ready (in parallel)..."
     
     # Wait for all services in parallel using background processes
@@ -209,14 +430,46 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
     ADMIN_CONSOLE_PID=$!
     
+    log_info "Waiting for User Service..."
+    kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet" &
+    USER_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
     wait $PAYMENTS_PID
     wait $FRONTEND_PID
     wait $ADMIN_CONSOLE_PID
+    wait $USER_PID
     
     log_info "Services deployment complete"
+}
+
+wait_for_single_service() {
+    local service_name="$1"
+    
+    case "$service_name" in
+        ledger)
+            log_info "Waiting for Ledger Service..."
+            kubectl wait --for=condition=available deployment/ledger-service -n "$NAMESPACE" --timeout=300s || log_warn "Ledger Service not ready yet"
+            ;;
+        payments)
+            log_info "Waiting for Payments Service..."
+            kubectl wait --for=condition=available deployment/payments-service -n "$NAMESPACE" --timeout=300s || log_warn "Payments Service not ready yet"
+            ;;
+        frontend)
+            log_info "Waiting for Frontend..."
+            kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet"
+            ;;
+        admin-console)
+            log_info "Waiting for Admin Console..."
+            kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet"
+            ;;
+        user)
+            log_info "Waiting for User Service..."
+            kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet"
+            ;;
+    esac
 }
 
 show_status() {
@@ -291,6 +544,8 @@ main() {
     deploy_payments &
     deploy_frontend &
     deploy_admin_console &
+    deploy_auth &
+    deploy_user &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -306,10 +561,12 @@ main() {
 }
 
 # Parse arguments
-case "${1:-}" in
+SERVICE_NAME="${1:-}"
+
+case "$SERVICE_NAME" in
     build)
         check_prerequisites
-        build_images
+        build_images "all"
         ;;
     ingress)
         check_prerequisites
@@ -318,31 +575,85 @@ case "${1:-}" in
     postgres)
         log_warn "PostgreSQL is now deployed via Terraform. Use 'terraform apply' in infra/minikube/"
         ;;
-    ledger)
+    ledger|payments|frontend|admin-console|auth|user)
+        log_info "Deploying $SERVICE_NAME service (fresh deploy)..."
         check_prerequisites
+        
+        # Delete existing deployment first (fresh deploy)
+        log_info "Deleting existing $SERVICE_NAME deployment..."
+        case "$SERVICE_NAME" in
+            ledger)
+                kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
+                ;;
+            payments)
+                kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
+                ;;
+            frontend)
+                kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
+                ;;
+            admin-console)
+                kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
+                ;;
+            auth)
+                kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
+                ;;
+            user)
+                kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
+                ;;
+        esac
+        
+        build_images "$SERVICE_NAME"
         create_namespace
-        deploy_ledger
-        ;;
-    payments)
-        check_prerequisites
-        create_namespace
-        deploy_payments
-        ;;
-    frontend)
-        check_prerequisites
-        create_namespace
-        deploy_frontend
-        ;;
-    admin-console)
-        check_prerequisites
-        create_namespace
-        deploy_admin_console
+        case "$SERVICE_NAME" in
+            ledger)
+                deploy_ledger
+                wait_for_single_service "ledger"
+                ;;
+            payments)
+                deploy_payments
+                wait_for_single_service "payments"
+                ;;
+            frontend)
+                deploy_frontend
+                wait_for_single_service "frontend"
+                ;;
+            admin-console)
+                deploy_admin_console
+                wait_for_single_service "admin-console"
+                ;;
+            auth)
+                deploy_auth
+                wait_for_single_service "auth"
+                ;;
+            user)
+                deploy_user
+                wait_for_single_service "user"
+                ;;
+        esac
+        log_info "$SERVICE_NAME service deployed successfully!"
         ;;
     status)
         show_status
         ;;
-    *)
+    "")
+        # No argument - deploy all services
         main
+        ;;
+    *)
+        log_error "Unknown service or command: $SERVICE_NAME"
+        echo ""
+        echo "Usage:"
+        echo "  ./deploy.sh                    - Deploy all services from scratch"
+        echo "  ./deploy.sh <service>           - Deploy a single service (fresh deploy)"
+        echo ""
+        echo "Available services:"
+        echo "  ledger, payments, frontend, admin-console, auth, user"
+        echo ""
+        echo "Other commands:"
+        echo "  ./deploy.sh build               - Build all Docker images"
+        echo "  ./deploy.sh ingress             - Deploy ingress controller"
+        echo "  ./deploy.sh status              - Show deployment status"
+        exit 1
         ;;
 esac
 

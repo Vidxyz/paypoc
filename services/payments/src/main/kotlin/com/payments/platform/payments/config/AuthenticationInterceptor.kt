@@ -32,18 +32,13 @@ class AuthenticationInterceptor(
             return true
         }
         
-        // Extract bearer token from Authorization header
+        // All other endpoints require authentication
         val authHeader = request.getHeader("Authorization")
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            // For endpoints that require authentication, return 401
-            if (requiresAuthentication(request.requestURI, request.method)) {
-                response.status = HttpServletResponse.SC_UNAUTHORIZED
-                response.contentType = "application/json"
-                response.writer.write("""{"error":"Missing or invalid Authorization header"}""")
-                return false
-            }
-            // For other endpoints, allow (they may have their own auth requirements)
-            return true
+            response.status = HttpServletResponse.SC_UNAUTHORIZED
+            response.contentType = "application/json"
+            response.writer.write("""{"error":"Missing or invalid Authorization header. Bearer token required."}""")
+            return false
         }
         
         val token = authHeader.substring(7) // Remove "Bearer " prefix
@@ -54,13 +49,24 @@ class AuthenticationInterceptor(
             logger.warn("JWT token validation failed for request: ${request.requestURI}")
             response.status = HttpServletResponse.SC_UNAUTHORIZED
             response.contentType = "application/json"
-            response.writer.write("""{"error":"Invalid or expired token"}""")
+            response.writer.write("""{"error":"Invalid or expired bearer token"}""")
             return false
+        }
+        
+        // Check if this is an admin-only route
+        if (isAdminRoute(request.requestURI)) {
+            if (user.accountType != User.AccountType.ADMIN) {
+                logger.warn("Non-ADMIN user (${user.userId}, account_type: ${user.accountType}) attempted to access admin route: ${request.requestURI}")
+                response.status = HttpServletResponse.SC_FORBIDDEN
+                response.contentType = "application/json"
+                response.writer.write("""{"error":"Only ADMIN users can access this endpoint"}""")
+                return false
+            }
         }
         
         // Set user in request attributes for use in controllers
         request.setAttribute(USER_ATTRIBUTE, user)
-        logger.debug("Authenticated request for user: ${user.userId} (${user.email})")
+        logger.debug("Authenticated request for user: ${user.userId} (${user.email}, account_type: ${user.accountType})")
         
         return true
     }
@@ -75,19 +81,18 @@ class AuthenticationInterceptor(
                uri.startsWith("/v3/api-docs")
     }
     
-    private fun requiresAuthentication(uri: String, method: String): Boolean {
-        // GET /payments requires authentication (list of user's payments)
-        if ((uri == "/payments" || uri.startsWith("/payments?")) && method == "GET") {
-            return true
-        }
-        // POST /payments requires authentication (create payment)
-        if (uri == "/payments" && method == "POST") {
-            return true
-        }
-        // All /payments/{id} endpoints require authentication
-        if (uri.startsWith("/payments/") && uri.count { it == '/' } >= 2) {
-            return true
-        }
-        return false
+    /**
+     * Checks if a route is admin-only (contains "admin" in the path).
+     * Examples:
+     * - /admin/payments -> true
+     * - /admin/payouts -> true
+     * - /admin/refunds -> true
+     * - /payments -> false
+     * - /reconciliation -> false
+     */
+    private fun isAdminRoute(uri: String): Boolean {
+        // Check if URI contains "/admin" as a path segment
+        val pathSegments = uri.split("/").filter { it.isNotBlank() }
+        return pathSegments.contains("admin")
     }
 }

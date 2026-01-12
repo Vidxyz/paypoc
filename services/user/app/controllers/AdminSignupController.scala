@@ -54,7 +54,7 @@ class AdminSignupController @Inject()(
         
         accountTypeOpt match {
           case None =>
-            logger.warn(s"Admin signup attempted with invalid JWT token from ${request.remoteAddress}")
+            logger.warn(s"Admin signup attempted with invalid or expired JWT token from ${request.remoteAddress}")
             Future.successful(
               Unauthorized(Json.obj("error" -> "Invalid or expired bearer token"))
             )

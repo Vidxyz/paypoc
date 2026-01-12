@@ -34,7 +34,7 @@ import GavelIcon from '@mui/icons-material/Gavel'
 import CloseIcon from '@mui/icons-material/Close'
 import paymentsApi from '../api/paymentsApi'
 
-function Payments({ buyerId }) {
+function Payments({ buyerId, userEmail }) {
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -265,7 +265,7 @@ function Payments({ buyerId }) {
                 Payment History
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                All payments for <strong>{buyerId}</strong>
+                All payments for <strong>{userEmail || buyerId}</strong>
               </Typography>
             </Box>
             <Button

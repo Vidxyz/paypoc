@@ -1,9 +1,9 @@
-package com.payments.platform.ledger.kafka
+package com.payments.platform.payments.kafka
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.payments.platform.ledger.domain.AccountType
-import com.payments.platform.ledger.service.LedgerService
+import com.payments.platform.payments.persistence.SellerStripeAccountEntity
+import com.payments.platform.payments.persistence.SellerStripeAccountRepository
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.kafka.support.Acknowledgment
@@ -12,28 +12,29 @@ import org.springframework.messaging.handler.annotation.Header
 import org.springframework.messaging.handler.annotation.Payload
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 import java.util.UUID
 
 /**
  * Consumer for user.created events.
  * 
- * When a SELLER account is created, this consumer creates a SELLER_PAYABLE account in the ledger.
- * This account tracks money owed to sellers (money received from buyers that hasn't been paid out yet).
+ * When a SELLER account is created, this consumer creates an entry in seller_stripe_accounts
+ * with stripe_account_id initially NULL. The seller can later provide their Stripe account ID
+ * via the seller console.
  * 
- * BUYER accounts do NOT get ledger accounts - buyers pay the platform, and we payout to sellers.
- * Only sellers need SELLER_PAYABLE accounts to track their earnings.
+ * BUYER accounts are ignored - only sellers need Stripe account entries.
  */
 @Component
 class UserCreatedEventConsumer(
-    private val ledgerService: LedgerService,
+    private val sellerStripeAccountRepository: SellerStripeAccountRepository,
     private val objectMapper: ObjectMapper
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
     @KafkaListener(
         topics = ["user.events"],
-        groupId = "ledger-service",
-        containerFactory = "kafkaListenerContainerFactory"
+        groupId = "payments-service",
+        containerFactory = "byteArrayKafkaListenerContainerFactory"
     )
     @Transactional
     fun handleUserCreatedEvent(
@@ -46,7 +47,6 @@ class UserCreatedEventConsumer(
 
         try {
             // Manually deserialize the byte array to Map<String, Any>
-            // The KafkaConfig uses ByteArrayDeserializer, so we need to deserialize here
             val messageString = String(payload)
             logger.debug("Message content: $messageString")
             
@@ -71,56 +71,42 @@ class UserCreatedEventConsumer(
             // Extract event fields (using camelCase as per JSON standard)
             val userId = UUID.fromString(message["userId"] as? String ?: throw IllegalArgumentException("Missing userId in message"))
             val email = message["email"] as? String ?: throw IllegalArgumentException("Missing email in message")
-            val auth0UserId = message["auth0UserId"] as? String ?: throw IllegalArgumentException("Missing auth0UserId in message")
             val accountType = message["accountType"] as? String ?: "BUYER"
             val currency = "USD" // Default currency, can be configurable in the future
 
-            logger.info("Received user.created event for user $userId (email: $email, auth0UserId: $auth0UserId, account_type: $accountType)")
+            logger.info("Received user.created event for user $userId (email: $email, account_type: $accountType)")
 
-            // Only create ledger account for SELLER accounts
-            // BUYER accounts don't need ledger accounts (they pay the platform, we payout to sellers)
+            // Only create seller_stripe_accounts entry for SELLER accounts
             if (accountType != "SELLER") {
-                logger.info("User $userId has account_type=$accountType. Only SELLER accounts get ledger accounts. Skipping.")
+                logger.info("User $userId has account_type=$accountType. Only SELLER accounts get seller_stripe_accounts entries. Skipping.")
                 acknowledgment.acknowledge()
                 return
             }
 
-            // Create SELLER_PAYABLE account for seller
-            // accountId = deterministic UUID based on account type + reference + currency
-            // This ensures consistency with payment processing which uses the same pattern
-            // accountType = SELLER_PAYABLE
-            // referenceId = email (for lookup)
-            // currency = USD (default)
-            
-            // Check if account already exists (idempotency)
-            val existingAccount = try {
-                ledgerService.findAccountByTypeAndReference(
-                    accountType = AccountType.SELLER_PAYABLE,
-                    referenceId = email,
-                    currency = currency
-                )
-            } catch (e: Exception) {
-                null
-            }
+            // Use email as seller_id (as per requirement: seller_id = email)
+            val sellerId = email
+
+            // Check if entry already exists (idempotency)
+            val existingAccount = sellerStripeAccountRepository.findBySellerIdAndCurrency(sellerId, currency)
 
             if (existingAccount != null) {
-                logger.info("SELLER_PAYABLE account already exists for seller $userId (email: $email). Skipping creation.")
+                logger.info("seller_stripe_accounts entry already exists for seller $sellerId (currency: $currency). Skipping creation.")
                 acknowledgment.acknowledge()
                 return
             }
 
-            // Use deterministic UUID to match payment processing logic
-            // This ensures the account ID is consistent across all operations
-            val accountId = UUID.nameUUIDFromBytes("SELLER_PAYABLE_${email}_$currency".toByteArray())
-
-            ledgerService.createAccount(
-                accountId = accountId,
-                accountType = AccountType.SELLER_PAYABLE,
-                referenceId = email,
-                currency = currency
+            // Create seller_stripe_accounts entry with NULL stripe_account_id
+            val entity = SellerStripeAccountEntity(
+                sellerId = sellerId,
+                currency = currency,
+                stripeAccountId = null, // NULL initially, seller will provide later
+                createdAt = Instant.now(),
+                updatedAt = Instant.now()
             )
+            
+            sellerStripeAccountRepository.save(entity)
 
-            logger.info("Successfully created SELLER_PAYABLE account for seller $userId (email: $email)")
+            logger.info("Successfully created seller_stripe_accounts entry for seller $sellerId (email: $email, currency: $currency) with NULL stripe_account_id")
 
             acknowledgment.acknowledge()
 
@@ -131,3 +117,4 @@ class UserCreatedEventConsumer(
         }
     }
 }
+

@@ -113,6 +113,34 @@ POST    /users/admin/signup              controllers.AdminSignupController.admin
 POST    /users/seller/signup              controllers.SellerSignupController.sellerSignup
 
 ###
+#  summary: Get current user
+#  tags:
+#    - Users
+#  description: Returns the current authenticated user. Requires Bearer token authentication. Any account type can access this endpoint.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT)
+#  responses:
+#    200:
+#      description: Current user retrieved successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    401:
+#      description: Unauthorized - missing, invalid, or expired bearer token
+#    501:
+#      description: Not fully implemented - user lookup from token required
+###
+GET     /users/me                        controllers.UserController.getCurrentUser
+
+###
 #  summary: Get user by ID (Admin Only)
 #  tags:
 #    - Users
@@ -238,34 +266,6 @@ GET     /users/by-email/:email           controllers.UserController.getUserByEma
 #      description: User not found
 ###
 PATCH   /users/:id/account-type          controllers.UserController.updateAccountType(id: java.util.UUID)
-
-###
-#  summary: Get current user
-#  tags:
-#    - Users
-#  description: Returns the current authenticated user. Requires Bearer token authentication. Any account type can access this endpoint.
-#  security:
-#    - bearerAuth: []
-#  parameters:
-#    - name: Authorization
-#      in: header
-#      required: true
-#      schema:
-#        type: string
-#      description: Bearer token (JWT)
-#  responses:
-#    200:
-#      description: Current user retrieved successfully
-#      content:
-#        application/json:
-#          schema:
-#            $ref: '#/components/schemas/models.UserResponse'
-#    401:
-#      description: Unauthorized - missing, invalid, or expired bearer token
-#    501:
-#      description: Not fully implemented - user lookup from token required
-###
-GET     /users/me                        controllers.UserController.getCurrentUser
 
 # Swagger/OpenAPI Documentation  
 GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson

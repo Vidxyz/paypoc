@@ -35,11 +35,66 @@ function CheckoutForm({ buyerId }) {
   const [selectedTestCard, setSelectedTestCard] = useState(null)
   const [copySuccess, setCopySuccess] = useState({})
   
+  // Sanitization and validation utilities (defined before useState to use in initial state)
+  const sanitizeString = (str, maxLength = 1000) => {
+    if (typeof str !== 'string') return ''
+    // Trim whitespace
+    let sanitized = str.trim()
+    // Remove null bytes and control characters (except newlines and tabs for description)
+    sanitized = sanitized.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
+    // Limit length
+    if (sanitized.length > maxLength) {
+      sanitized = sanitized.substring(0, maxLength)
+    }
+    return sanitized
+  }
+
+  const sanitizeSellerId = (sellerId) => {
+    // Seller ID is expected to be an email address
+    let sanitized = sanitizeString(sellerId, 255) // Email max length is 255
+    // Remove null bytes and control characters, but keep email-valid characters
+    // Allow: letters, numbers, @, ., -, _, + (for email addresses)
+    sanitized = sanitized.replace(/[^\w@.+_-]/g, '')
+    return sanitized
+  }
+
+  const validateEmail = (email) => {
+    // Basic email validation regex
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    return emailRegex.test(email)
+  }
+
+  const sanitizeDescription = (description) => {
+    // Description can have more characters, allow letters, numbers, spaces, basic punctuation
+    let sanitized = sanitizeString(description, 500)
+    // Remove potentially dangerous characters but keep basic punctuation
+    sanitized = sanitized.replace(/[<>{}[\]\\]/g, '')
+    return sanitized
+  }
+
+  const validateAmount = (amount) => {
+    // Must be a positive integer
+    const num = parseInt(amount)
+    if (isNaN(num) || num < 1) {
+      return { valid: false, value: 0 }
+    }
+    // Cap at reasonable maximum (1 million dollars = 100,000,000 cents)
+    const maxCents = 100000000
+    const validAmount = Math.min(num, maxCents)
+    return { valid: true, value: validAmount }
+  }
+
+  const validateCurrency = (currency) => {
+    // Only allow USD for now (as per recent changes)
+    const allowedCurrencies = ['USD']
+    return allowedCurrencies.includes(currency) ? currency : 'USD'
+  }
+
   const [formData, setFormData] = useState({
-    sellerId: 'seller_buyittestseller',
+    sellerId: sanitizeSellerId('seller@example.com'),
     grossAmountCents: 10000,
-    currency: 'USD',
-    description: 'Test payment from BuyIt frontend'
+    currency: validateCurrency('USD'),
+    description: sanitizeDescription('Test payment from BuyIt frontend')
   })
 
   const testCardPresets = [
@@ -65,9 +120,27 @@ function CheckoutForm({ buyerId }) {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
+    let sanitizedValue = value
+
+    if (name === 'sellerId') {
+      sanitizedValue = sanitizeSellerId(value)
+    } else if (name === 'grossAmountCents') {
+      const validation = validateAmount(value)
+      sanitizedValue = validation.value
+      if (!validation.valid && value !== '') {
+        // Show error for invalid amount
+        setError('Amount must be a positive number')
+        return
+      }
+    } else if (name === 'currency') {
+      sanitizedValue = validateCurrency(value)
+    } else if (name === 'description') {
+      sanitizedValue = sanitizeDescription(value)
+    }
+
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'grossAmountCents' ? parseInt(value) || 0 : value
+      [name]: name === 'grossAmountCents' ? sanitizedValue : sanitizedValue
     }))
   }
 
@@ -83,12 +156,44 @@ function CheckoutForm({ buyerId }) {
     }
 
     try {
+      // Sanitize and validate all fields before submission
+      const sanitizedSellerId = sanitizeSellerId(formData.sellerId)
+      const amountValidation = validateAmount(formData.grossAmountCents)
+      const sanitizedCurrency = validateCurrency(formData.currency)
+      const sanitizedDescription = sanitizeDescription(formData.description || '')
+
+      // Validate required fields
+      if (!sanitizedSellerId || sanitizedSellerId.length === 0) {
+        setError('Seller email is required')
+        setLoading(false)
+        return
+      }
+
+      // Validate email format
+      if (!validateEmail(sanitizedSellerId)) {
+        setError('Seller email must be a valid email address')
+        setLoading(false)
+        return
+      }
+
+      if (!amountValidation.valid || amountValidation.value < 1) {
+        setError('Amount must be a positive number')
+        setLoading(false)
+        return
+      }
+
+      if (!sanitizedCurrency) {
+        setError('Currency is required')
+        setLoading(false)
+        return
+      }
+
       // buyerId is now extracted from the authenticated user's JWT token on the backend
       const paymentResponse = await paymentsApi.createPayment({
-        sellerId: formData.sellerId,
-        grossAmountCents: formData.grossAmountCents,
-        currency: formData.currency,
-        description: formData.description
+        sellerId: sanitizedSellerId,
+        grossAmountCents: amountValidation.value,
+        currency: sanitizedCurrency,
+        description: sanitizedDescription
       })
 
       if (paymentResponse.error) {
@@ -185,12 +290,17 @@ function CheckoutForm({ buyerId }) {
         <form onSubmit={handleSubmit}>
           <TextField
             fullWidth
-            label="Seller ID"
+            label="Seller Email"
             name="sellerId"
+            type="email"
             value={formData.sellerId}
             onChange={handleInputChange}
             required
             margin="normal"
+            inputProps={{
+              maxLength: 255,
+            }}
+            helperText="Enter the seller's email address"
           />
 
           <TextField
@@ -201,9 +311,13 @@ function CheckoutForm({ buyerId }) {
             value={formData.grossAmountCents}
             onChange={handleInputChange}
             min="1"
+            max="100000000"
             required
             margin="normal"
-            helperText={`$${(formData.grossAmountCents / 100).toFixed(2)} ${formData.currency}`}
+            inputProps={{
+              step: 1,
+            }}
+            helperText={`$${(formData.grossAmountCents / 100).toFixed(2)} ${formData.currency} (Max: $1,000,000.00)`}
           />
 
           <FormControl fullWidth margin="normal">
@@ -214,9 +328,10 @@ function CheckoutForm({ buyerId }) {
               onChange={handleInputChange}
               label="Currency"
             >
-              <MenuItem value="CAD">CAD</MenuItem>
               <MenuItem value="USD">USD</MenuItem>
-              <MenuItem value="EUR">EUR</MenuItem>
+              <MenuItem value="EUR" disabled>EUR (Coming soon)</MenuItem>
+              <MenuItem value="GBP" disabled>GBP (Coming soon)</MenuItem>
+              <MenuItem value="CAD" disabled>CAD (Coming soon)</MenuItem>
             </Select>
           </FormControl>
 
@@ -229,6 +344,10 @@ function CheckoutForm({ buyerId }) {
             multiline
             rows={3}
             margin="normal"
+            inputProps={{
+              maxLength: 500,
+            }}
+            helperText={`${formData.description?.length || 0}/500 characters`}
           />
 
           <Box sx={{ mt: 3, mb: 2 }}>

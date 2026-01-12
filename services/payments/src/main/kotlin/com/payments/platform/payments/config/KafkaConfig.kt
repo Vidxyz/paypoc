@@ -11,6 +11,7 @@ import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.admin.NewTopic
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.producer.ProducerConfig
+import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kafka.common.serialization.StringSerializer
 import org.slf4j.LoggerFactory
@@ -125,6 +126,37 @@ class KafkaConfig(
         val factory = ConcurrentKafkaListenerContainerFactory<String, PaymentMessage>()
         factory.consumerFactory = consumerFactory
         factory.setConcurrency(3) // Process 3 messages concurrently
+        factory.containerProperties.ackMode = org.springframework.kafka.listener.ContainerProperties.AckMode.MANUAL_IMMEDIATE
+        return factory
+    }
+
+    /**
+     * Consumer factory for ByteArray messages (for user.events topic).
+     * Used by UserCreatedEventConsumer to consume user.created events.
+     */
+    @Bean
+    fun byteArrayConsumerFactory(): ConsumerFactory<String, ByteArray> {
+        val configs = mapOf(
+            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG to bootstrapServers,
+            ConsumerConfig.GROUP_ID_CONFIG to "payments-service",
+            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG to StringDeserializer::class.java,
+            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG to ByteArrayDeserializer::class.java,
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG to "earliest",
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG to false
+        )
+        return DefaultKafkaConsumerFactory<String, ByteArray>(configs)
+    }
+
+    /**
+     * Kafka listener container factory for ByteArray messages.
+     */
+    @Bean
+    fun byteArrayKafkaListenerContainerFactory(
+        byteArrayConsumerFactory: ConsumerFactory<String, ByteArray>
+    ): ConcurrentKafkaListenerContainerFactory<String, ByteArray> {
+        val factory = ConcurrentKafkaListenerContainerFactory<String, ByteArray>()
+        factory.consumerFactory = byteArrayConsumerFactory
+        factory.setConcurrency(1) // Process 1 message at a time for user events
         factory.containerProperties.ackMode = org.springframework.kafka.listener.ContainerProperties.AckMode.MANUAL_IMMEDIATE
         return factory
     }

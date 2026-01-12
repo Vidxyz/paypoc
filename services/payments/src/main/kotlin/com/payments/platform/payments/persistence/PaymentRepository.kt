@@ -12,5 +12,6 @@ interface PaymentRepository : JpaRepository<PaymentEntity, UUID> {
     fun findByIdempotencyKey(idempotencyKey: String): PaymentEntity?
     fun findByStripePaymentIntentId(stripePaymentIntentId: String): PaymentEntity?
     fun findByBuyerId(buyerId: String, pageable: Pageable): Page<PaymentEntity>
+    fun findBySellerId(sellerId: String, pageable: Pageable): Page<PaymentEntity>
 }
 

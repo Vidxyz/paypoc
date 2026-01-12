@@ -36,7 +36,8 @@ import java.util.UUID
 @Component
 class PaymentCapturedEventConsumer(
     private val ledgerService: LedgerService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val ledgerKafkaProducer: LedgerKafkaProducer
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
@@ -128,6 +129,14 @@ class PaymentCapturedEventConsumer(
                 "CR SELLER_PAYABLE: ${event.netSellerAmountCents}, " +
                 "CR BUYIT_REVENUE: ${event.platformFeeCents}"
             )
+            
+            // Publish event to notify payments service
+            val ledgerTransactionCreatedEvent = LedgerTransactionCreatedEvent(
+                paymentId = event.paymentId,
+                ledgerTransactionId = transaction.id,
+                idempotencyKey = event.idempotencyKey
+            )
+            ledgerKafkaProducer.publishLedgerTransactionCreated(ledgerTransactionCreatedEvent)
             
             // Commit offset only after successful processing
             acknowledgment.acknowledge()

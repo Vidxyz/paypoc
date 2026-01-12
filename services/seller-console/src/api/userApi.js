@@ -10,7 +10,33 @@ const userApi = axios.create({
   },
 })
 
-// Add request interceptor for error handling
+// Add request interceptor to include bearer token
+let requestInterceptor = null
+
+export const setupUserApi = (getAccessToken) => {
+  // Remove existing interceptor if any
+  if (requestInterceptor !== null) {
+    userApi.interceptors.request.eject(requestInterceptor)
+  }
+  
+  // Add request interceptor to include bearer token
+  requestInterceptor = userApi.interceptors.request.use(
+    async (config) => {
+      try {
+        const token = await getAccessToken()
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`
+        }
+      } catch (error) {
+        console.error('Failed to get access token:', error)
+      }
+      return config
+    },
+    (error) => Promise.reject(error)
+  )
+}
+
+// Add response interceptor for error handling
 userApi.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -43,6 +69,16 @@ export const userApiClient = {
       lastname: signupData.lastname,
       account_type: 'SELLER',
     })
+    return response.data
+  },
+  
+  /**
+   * Get current user information
+   * Requires bearer token authentication
+   * @returns {Promise<Object>} User response with id, email, firstname, lastname, account_type
+   */
+  getCurrentUser: async () => {
+    const response = await userApi.get('/users/me')
     return response.data
   },
 }

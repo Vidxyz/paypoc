@@ -27,6 +27,11 @@ class AuthenticationInterceptor(
         response: HttpServletResponse,
         handler: Any
     ): Boolean {
+        // Allow OPTIONS requests (CORS preflight) to pass through
+        if (request.method == "OPTIONS") {
+            return true
+        }
+        
         // Skip authentication for public endpoints
         if (isPublicEndpoint(request.requestURI)) {
             return true
@@ -77,8 +82,13 @@ class AuthenticationInterceptor(
                uri.startsWith("/health") ||
                uri.startsWith("/healthz") ||
                uri.startsWith("/api/docs") ||
+               uri.startsWith("/api/swagger-ui") ||
                uri.startsWith("/swagger-ui") ||
-               uri.startsWith("/v3/api-docs")
+               uri.startsWith("/swagger-resources") ||
+               uri.startsWith("/v3/api-docs") ||
+               uri.startsWith("/api/v3/api-docs") ||
+               uri.startsWith("/configuration") ||
+               uri.startsWith("/webjars")
     }
     
     /**

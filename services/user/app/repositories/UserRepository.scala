@@ -42,10 +42,11 @@ class UserRepository @Inject()(db: Database)(implicit ec: ExecutionContext) {
 
   def findById(id: UUID): Future[Option[User]] = Future {
     db.withConnection { implicit conn =>
+      val idParam = id.toString
       SQL"""
         SELECT id, email, auth0_user_id, firstname, lastname, account_type, created_at, updated_at
         FROM users
-        WHERE id = $id
+        WHERE id = CAST($idParam AS uuid)
       """.as(userParser.singleOpt)
     }
   }

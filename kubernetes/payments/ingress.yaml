@@ -3,22 +3,18 @@ kind: Ingress
 metadata:
   name: payments-ingress
   namespace: payments-platform
-#  annotations:
-#    nginx.ingress.kubernetes.io/rewrite-target: /
+  annotations:
+    cert-manager.io/cluster-issuer: "ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - payments.local
+    secretName: payments-local-tls
   rules:
   - host: payments.local
     http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: payments-service
-            port:
-              number: 8080
-  - http:
       paths:
       - path: /
         pathType: Prefix

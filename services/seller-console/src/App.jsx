@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { Box, Typography } from '@mui/material'
 import { useAuth0 } from './auth/Auth0Provider'
 import SellerLanding from './pages/SellerLanding'
+import SellerProfile from './pages/SellerProfile'
 import SellerNavbar from './components/SellerNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -128,6 +129,26 @@ function App() {
             element={
               isSellerAuthenticated ? (
                 <SellerLanding />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              isSellerAuthenticated ? (
+                <SellerLanding />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              isSellerAuthenticated ? (
+                <SellerProfile />
               ) : (
                 <Navigate to="/" replace />
               )

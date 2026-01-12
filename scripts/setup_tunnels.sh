@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-STRIPE_TARGET="payments.local/webhooks/stripe"
+STRIPE_TARGET="https://payments.local/webhooks/stripe"
 
 echo "🚀 Starting Stripe Listen and Minikube Tunnel..."
 

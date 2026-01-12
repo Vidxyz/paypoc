@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://payments.local'
+// Call payments service directly (CORS is enabled on payments service)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://payments.local'
 
 const adminApi = axios.create({
   baseURL: API_BASE_URL,
@@ -8,6 +9,20 @@ const adminApi = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Add request interceptor to include bearer token
+adminApi.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('bearerToken')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
 
 // Admin endpoints
 export const getAdminPayments = async (page = 0, size = 50, sortBy = 'createdAt', sortDirection = 'DESC') => {

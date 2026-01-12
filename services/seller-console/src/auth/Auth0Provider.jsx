@@ -134,7 +134,17 @@ export const Auth0Provider = ({ children }) => {
         setAuth0Client(client)
         auth0ClientRef.current = client
         
-        // Seller console API setup can be added here if needed
+        // Setup user API with authentication
+        const { setupUserApi } = await import('../api/userApi')
+        setupUserApi(async () => {
+          const tokenResponse = await client.getTokenSilently({
+            detailedResponse: true,
+            authorizationParams: {
+              audience: audience,
+            },
+          })
+          return tokenResponse.access_token
+        })
 
         // Check if we're handling a callback
         const urlParams = new URLSearchParams(window.location.search)

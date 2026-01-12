@@ -192,25 +192,21 @@ class UserController @Inject()(
           Unauthorized(Json.obj("error" -> "Missing or invalid Authorization header. Bearer token required."))
         )
       case Some(jwtToken) =>
-        // Validate token (any account type is allowed)
-        if (!jwtValidator.validateToken(jwtToken)) {
-          logger.warn(s"Get current user attempted with invalid or expired JWT token from ${request.remoteAddress}")
-          Future.successful(
-            Unauthorized(Json.obj("error" -> "Invalid or expired bearer token"))
-          )
-        } else {
-          // Extract account type to get user ID from token
-          val accountTypeOpt = jwtValidator.validateAndExtractAccountType(jwtToken)
-          accountTypeOpt match {
-            case None =>
-              Future.successful(
-                Unauthorized(Json.obj("error" -> "Invalid or expired bearer token"))
-              )
-            case Some(_) =>
-              // TODO: Extract user_id from token and fetch user from database
-              // For now, return not implemented
-              Future.successful(NotImplemented(Json.obj("error" -> "Not fully implemented: user lookup from token required")))
-          }
+        // Validate token and extract user ID
+        val userIdOpt = jwtValidator.validateAndExtractUserId(jwtToken)
+        
+        userIdOpt match {
+          case None =>
+            logger.warn(s"Get current user attempted with invalid or expired JWT token from ${request.remoteAddress}")
+            Future.successful(
+              Unauthorized(Json.obj("error" -> "Invalid or expired bearer token"))
+            )
+          case Some(userId) =>
+            // Fetch user from database using user_id from token
+            userService.getUser(userId).map {
+              case Some(user) => Ok(Json.toJson(UserResponse.fromUser(user)))
+              case None => NotFound(Json.obj("error" -> s"User not found: $userId"))
+            }
         }
     }
   }

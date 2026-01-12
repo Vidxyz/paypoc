@@ -1,8 +1,8 @@
 import axios from 'axios'
 
-// Use /api which nginx will proxy to the payments service
-// For browser access, this will work whether frontend is at buyit.local or payments.local
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+// Call payments service directly (CORS is enabled on payments service)
+// This avoids nginx proxy redirect issues
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://payments.local'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -48,6 +48,8 @@ export const paymentsApi = {
 
   /**
    * Get payments for the authenticated user
+   * For BUYER accounts: Returns payments where user is the buyer
+   * For SELLER accounts: Returns payments where user is the seller
    * @param {Object} options - Query options
    * @param {number} options.page - Page number (0-indexed, default: 0)
    * @param {number} options.size - Page size (default: 50)
@@ -65,6 +67,16 @@ export const paymentsApi = {
         sortDirection,
       },
     })
+    return response.data
+  },
+
+  /**
+   * Get account balance for the authenticated user
+   * The account ID is extracted from the user's UUID in the bearer token
+   * @returns {Promise<Object>} Balance information with accountId, currency, balanceCents
+   */
+  getBalance: async () => {
+    const response = await api.get('/payments/balance')
     return response.data
   },
 

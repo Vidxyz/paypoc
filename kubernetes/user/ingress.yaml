@@ -1,27 +1,26 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: frontend-ingress
-  namespace: payments-platform
+  name: user-ingress
+  namespace: user
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
     cert-manager.io/cluster-issuer: "ca-issuer"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - buyit.local
-    secretName: buyit-local-tls
+    - user.local
+    secretName: user-local-tls
   rules:
-  - host: buyit.local
+  - host: user.local
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: frontend
+            name: user-service
             port:
-              number: 80
+              number: 9000
 

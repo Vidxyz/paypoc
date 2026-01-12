@@ -11,7 +11,7 @@ import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import PersonIcon from '@mui/icons-material/Person'
 import LogoutIcon from '@mui/icons-material/Logout'
 
-function Navbar({ onLogout, buyerId }) {
+function Navbar({ onLogout, buyerId, userEmail }) {
   const location = useLocation()
 
   return (
@@ -66,7 +66,7 @@ function Navbar({ onLogout, buyerId }) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Chip
             icon={<PersonIcon />}
-            label={buyerId}
+            label={userEmail || 'User'}
             variant="outlined"
             sx={{ borderColor: 'rgba(255, 255, 255, 0.5)', color: 'inherit' }}
           />

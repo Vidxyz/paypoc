@@ -1,76 +1,123 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-import { Box } from '@mui/material'
+import { Box, Typography } from '@mui/material'
+import { useAuth0 } from './auth/Auth0Provider'
 import Home from './pages/Home'
 import Checkout from './pages/Checkout'
 import Payments from './pages/Payments'
 import LoginModal from './components/LoginModal'
+import SignupModal from './components/SignupModal'
+import SuccessModal from './components/SuccessModal'
+import ErrorModal from './components/ErrorModal'
 import Navbar from './components/Navbar'
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const { isLoading, isAuthenticated, user, login, logout, initError, error, clearError } = useAuth0()
   const [showLoginModal, setShowLoginModal] = useState(false)
-  const [buyerId, setBuyerId] = useState(null)
+  const [showSignupModal, setShowSignupModal] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+
+  // Extract user_id from JWT claims (custom claim added by Auth0 Action)
+  // The user_id will be available in user object if added as a custom claim
+  const userId = user?.['https://buyit.local/user_id'] || user?.user_id || user?.sub
+  
+  // Extract email for display in navbar
+  const userEmail = user?.email || ''
 
   useEffect(() => {
-    // Check if user is already logged in
-    const storedAuth = localStorage.getItem('isAuthenticated')
-    const storedBuyerId = localStorage.getItem('buyerId')
-    const storedToken = localStorage.getItem('bearerToken')
-    if (storedAuth === 'true' && storedBuyerId) {
-      setIsAuthenticated(true)
-      setBuyerId(storedBuyerId)
-      // If bearerToken is missing but user is authenticated, restore it
-      // This handles cases where localStorage was partially cleared
-      if (!storedToken && storedBuyerId === 'buyer123') {
-        localStorage.setItem('bearerToken', 'buyer123_token')
-      }
+    // Show login modal if not authenticated and not loading
+    if (!isLoading && !isAuthenticated && !showLoginModal && !showSignupModal) {
+      setShowLoginModal(true)
     }
-  }, [])
+  }, [isLoading, isAuthenticated, showLoginModal, showSignupModal])
 
-  const handleLogin = (username, password) => {
-    // Static credentials check
-    if (username === 'buyer123' && password === 'buyer123') {
-      setIsAuthenticated(true)
-      setBuyerId('buyer123')
-      // Store authentication state
-      localStorage.setItem('isAuthenticated', 'true')
-      localStorage.setItem('buyerId', 'buyer123')
-      // Store bearer token (static for now - in production this would come from login API)
-      localStorage.setItem('bearerToken', 'buyer123_token')
-      setShowLoginModal(false)
-      return true
+  const handleLogin = async () => {
+    try {
+      await login()
+    } catch (error) {
+      console.error('Login error:', error)
     }
-    return false
+  }
+
+  const handleSignupSuccess = (user) => {
+    // Close signup modal
+    setShowSignupModal(false)
+    // Show success modal
+    setSuccessMessage('Account created successfully! Please log in with your credentials.')
+    setShowSuccessModal(true)
+  }
+
+  const handleSuccessModalClose = () => {
+    setShowSuccessModal(false)
+    // Redirect to login after closing the modal
+    handleLogin()
   }
 
   const handleLogout = () => {
-    setIsAuthenticated(false)
-    setBuyerId(null)
-    localStorage.removeItem('isAuthenticated')
-    localStorage.removeItem('buyerId')
-    localStorage.removeItem('bearerToken')
-    setShowLoginModal(true)
+    logout()
   }
 
-  // Show login modal if not authenticated
+  // Listen for signup modal trigger
   useEffect(() => {
-    if (!isAuthenticated && !showLoginModal) {
-      setShowLoginModal(true)
+    const handleShowSignup = () => {
+      setShowLoginModal(false)
+      setShowSignupModal(true)
     }
-  }, [isAuthenticated, showLoginModal])
+    window.addEventListener('showSignup', handleShowSignup)
+    return () => window.removeEventListener('showSignup', handleShowSignup)
+  }, [])
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 2 }}>
+        <Box>Loading...</Box>
+        {initError && (
+          <Box sx={{ p: 2, bgcolor: 'error.light', color: 'error.contrastText', borderRadius: 1, maxWidth: 600 }}>
+            <Typography variant="body2">Auth0 Error: {initError}</Typography>
+          </Box>
+        )}
+      </Box>
+    )
+  }
 
   return (
     <BrowserRouter>
       <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
         {isAuthenticated && (
-          <Navbar onLogout={handleLogout} buyerId={buyerId} />
+          <Navbar onLogout={handleLogout} buyerId={userId} userEmail={userEmail} />
         )}
         
         <LoginModal
-          isOpen={showLoginModal && !isAuthenticated}
-          onClose={() => {}}
+          isOpen={showLoginModal && !isAuthenticated && !showSignupModal}
+          onClose={() => setShowLoginModal(false)}
           onLogin={handleLogin}
+        />
+        
+        <SignupModal
+          isOpen={showSignupModal && !isAuthenticated}
+          onClose={() => {
+            setShowSignupModal(false)
+            setShowLoginModal(true)
+          }}
+          onSignupSuccess={handleSignupSuccess}
+        />
+
+        <SuccessModal
+          open={showSuccessModal}
+          onClose={handleSuccessModalClose}
+          title="Account Created"
+          message={successMessage}
+          buttonText="Continue to Login"
+        />
+
+        <ErrorModal
+          open={!!error}
+          onClose={clearError}
+          title="Authentication Error"
+          message={error || ''}
+          buttonText="OK"
         />
 
         <Routes>
@@ -84,7 +131,7 @@ function App() {
             path="/checkout"
             element={
               isAuthenticated ? (
-                <Checkout buyerId={buyerId} />
+                <Checkout buyerId={userId} />
               ) : (
                 <Navigate to="/" replace />
               )
@@ -94,7 +141,7 @@ function App() {
             path="/payments"
             element={
               isAuthenticated ? (
-                <Payments buyerId={buyerId} />
+                <Payments buyerId={userId} />
               ) : (
                 <Navigate to="/" replace />
               )
@@ -107,4 +154,3 @@ function App() {
 }
 
 export default App
-

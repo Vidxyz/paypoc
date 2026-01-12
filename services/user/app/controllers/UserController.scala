@@ -28,6 +28,7 @@ class UserController @Inject()(
     }
   }
 
+  // todo-vh: Should this be secured?
   def getUserByAuth0Id(auth0Id: String): Action[AnyContent] = Action.async { implicit request: Request[AnyContent] =>
     userService.getUserByAuth0Id(auth0Id).map {
       case Some(user) => Ok(Json.toJson(UserResponse.fromUser(user)))

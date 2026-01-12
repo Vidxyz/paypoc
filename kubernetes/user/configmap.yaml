@@ -6,6 +6,10 @@ metadata:
 data:
   application.conf: |
     play {
+      http {
+        secret.key = "change-me-in-production"
+        secret.key = ${?PLAY_HTTP_SECRET_KEY}
+      }
       server {
         http {
           port = 9000
@@ -14,6 +18,9 @@ data:
       evolutions {
         enabled = true
         autoApply = true
+      }
+      filters {
+        enabled += "play.filters.cors.CORSFilter"
       }
     }
     
@@ -27,13 +34,46 @@ data:
     }
     
     kafka {
-      bootstrap.servers = ${KAFKA_BOOTSTRAP_SERVERS}
+      bootstrap.servers = "localhost:9092"
+      bootstrap.servers = ${?KAFKA_BOOTSTRAP_SERVERS}
       topics {
         user.events = "user.events"
+        user.events = ${?KAFKA_USER_EVENTS_TOPIC}
       }
     }
     
     auth0 {
-      domain = ${AUTH0_DOMAIN}
-      management.api.token = ${AUTH0_MANAGEMENT_API_TOKEN}
+      domain = "your-tenant.auth0.com"
+      domain = ${?AUTH0_DOMAIN}
+      m2m {
+        client.id = ""
+        client.id = ${?AUTH0_M2M_CLIENT_ID}
+        client.secret = ""
+        client.secret = ${?AUTH0_M2M_CLIENT_SECRET}
+      }
     }
+    
+    akka {
+      loglevel = "INFO"
+    }
+    
+    play.filters.cors {
+      allowedOrigins = ["https://buyit.local", "http://localhost:3000", "http://localhost:5173"]
+      allowedHttpMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+      allowedHttpHeaders = ["Accept", "Content-Type", "Authorization", "Origin", "X-Requested-With"]
+      exposedHeaders = []
+      supportsCredentials = true
+      preflightMaxAge = 3 days
+    }
+    
+    # WS (HTTP Client) Configuration for Auth0 Management API HTTPS
+    # Temporary workaround: Accept any certificate for development/testing
+    # TODO: Fix proper truststore configuration for production
+    play.ws.ssl {
+      enabledProtocols = [ "TLSv1.2", "TLSv1.3" ]
+      loose {
+        acceptAnyCertificate = true
+      }
+    }
+
+

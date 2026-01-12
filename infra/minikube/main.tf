@@ -49,6 +49,14 @@ resource "kubernetes_namespace" "kafka" {
   }
 }
 
+# Deploy cert-manager
+module "cert_manager" {
+  source = "./modules/cert-manager"
+  
+  kubeconfig_path = var.kubeconfig_path
+  kube_context    = var.kube_context
+}
+
 # Module for Strimzi Kafka Operator
 module "strimzi" {
   source = "./modules/strimzi"

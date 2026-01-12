@@ -37,6 +37,18 @@ class UserService @Inject()(
         updatedAt = now
       )
       savedUser <- userRepository.create(user)
+      // Update Auth0 app_metadata so Auth0 Actions can add custom claims to tokens
+      _ <- auth0UserService.updateUserMetadata(
+        auth0UserId = savedUser.auth0UserId,
+        userId = savedUser.id,
+        email = savedUser.email,
+        accountType = savedUser.accountType.value,
+        firstname = savedUser.firstname,
+        lastname = savedUser.lastname
+      ).recover { case e: Exception =>
+        logger.error(s"Failed to update Auth0 user metadata for user ${savedUser.id}. Custom claims may not work until metadata is updated.", e)
+        // Don't fail signup if metadata update fails - user is created, just claims won't work
+      }
       _ <- eventProducer.publishUserCreatedEvent(
         UserCreatedEvent.create(
           userId = savedUser.id,

@@ -49,6 +49,57 @@ check_prerequisites() {
     
 }
 
+check_auth0_env_vars() {
+    log_info "Checking Auth0 environment variables..."
+    
+    local missing_vars=()
+    
+    if [[ -z "${AUTH0_DOMAIN:-}" ]]; then
+        missing_vars+=("AUTH0_DOMAIN")
+    fi
+    
+    if [[ -z "${AUTH0_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_CLIENT_ID")
+    fi
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        log_error "Missing required Auth0 environment variables:"
+        for var in "${missing_vars[@]}"; do
+            log_error "  - $var"
+        done
+        log_error ""
+        log_error "Please set these environment variables before building the frontend:"
+        log_error "  export AUTH0_DOMAIN=your-tenant.auth0.com"
+        log_error "  export AUTH0_CLIENT_ID=your-client-id"
+        log_error ""
+        log_error "Optional variables (with defaults):"
+        log_error "  export AUTH0_REDIRECT_URI=https://buyit.local  # Defaults to window.location.origin"
+        log_error "  export AUTH0_AUDIENCE=your-api-audience       # Optional, for API access"
+        log_error ""
+        log_warn "Building frontend without Auth0 variables will result in a 401 error during login!"
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_error "Build cancelled. Please set the required environment variables and try again."
+            exit 1
+        fi
+    else
+        log_info "Auth0 environment variables check passed:"
+        log_info "  AUTH0_DOMAIN: ${AUTH0_DOMAIN:0:30}..."
+        log_info "  AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:0:20}..."
+        if [[ -n "${AUTH0_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_REDIRECT_URI: $AUTH0_REDIRECT_URI"
+        else
+            log_info "  AUTH0_REDIRECT_URI: (not set, will use window.location.origin)"
+        fi
+        if [[ -n "${AUTH0_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_AUDIENCE: $AUTH0_AUDIENCE"
+        else
+            log_info "  AUTH0_AUDIENCE: (not set, optional)"
+        fi
+    fi
+}
+
 build_images() {
     local service_name="${1:-all}"
     
@@ -68,6 +119,9 @@ build_images() {
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
+    
+    # Check Auth0 environment variables before building frontend
+    check_auth0_env_vars
     
     # Use environment variable or fallback to test key
     # Test key is safe to commit, live keys should come from CI/CD secrets
@@ -91,17 +145,26 @@ build_images() {
     (cd "$PROJECT_ROOT" && docker build -t payments-service:latest -f scripts/Dockerfile.payments .) &
     PAYMENTS_PID=$!
     
+    # Set environment variables for frontend build
+    local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
+    local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+    local auth0_client_id="${AUTH0_CLIENT_ID:-}"
+    local auth0_redirect_uri="${AUTH0_REDIRECT_URI:-}"
+    local auth0_audience="${AUTH0_AUDIENCE:-}"
+    
     log_info "Building frontend image..."
-    (cd "$PROJECT_ROOT/services/frontend" && docker build --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" -t frontend:latest .) &
+    (cd "$PROJECT_ROOT/services/frontend" && docker build \
+        --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
+        --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience" \
+        -t frontend:latest .) &
     FRONTEND_PID=$!
     
     log_info "Building admin-console image..."
     (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) &
     ADMIN_CONSOLE_PID=$!
-    
-    log_info "Building auth-service image..."
-    (cd "$PROJECT_ROOT/services/auth" && docker build -t auth-service:latest .) &
-    AUTH_PID=$!
     
     log_info "Building user-service image..."
     (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) &
@@ -121,9 +184,6 @@ build_images() {
     wait $ADMIN_CONSOLE_PID || { log_error "Admin-console image build failed"; exit 1; }
     log_info "Admin-console image built successfully"
     
-    wait $AUTH_PID || { log_error "Auth image build failed"; exit 1; }
-    log_info "Auth image built successfully"
-    
     wait $USER_PID || { log_error "User image build failed"; exit 1; }
     log_info "User image built successfully"
     
@@ -133,7 +193,6 @@ build_images() {
     minikube image load payments-service:latest &
     minikube image load frontend:latest &
     minikube image load admin-console:latest &
-    minikube image load auth-service:latest &
     minikube image load user-service:latest &
     
     # Wait for all image loads to complete
@@ -160,8 +219,18 @@ build_single_image() {
             ;;
         frontend)
             local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
+            local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
+            local auth0_client_id="${AUTH0_CLIENT_ID:-}"
+            local auth0_redirect_uri="${AUTH0_REDIRECT_URI:-}"
+            local auth0_audience="${AUTH0_AUDIENCE:-}"
             log_info "Building frontend image..."
-            (cd "$PROJECT_ROOT/services/frontend" && docker build --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
+            (cd "$PROJECT_ROOT/services/frontend" && docker build \
+                --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
+                --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience" \
+                -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
             minikube image load frontend:latest
             log_info "Frontend image built and loaded successfully"
             ;;
@@ -170,12 +239,6 @@ build_single_image() {
             (cd "$PROJECT_ROOT/services/admin-console" && docker build -t admin-console:latest .) || { log_error "Admin-console image build failed"; exit 1; }
             minikube image load admin-console:latest
             log_info "Admin-console image built and loaded successfully"
-            ;;
-        auth)
-            log_info "Building auth-service image..."
-            (cd "$PROJECT_ROOT/services/auth" && docker build -t auth-service:latest .) || { log_error "Auth image build failed"; exit 1; }
-            minikube image load auth-service:latest
-            log_info "Auth image built and loaded successfully"
             ;;
         user)
             log_info "Building user-service image..."
@@ -312,10 +375,6 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
     ADMIN_CONSOLE_PID=$!
     
-    log_info "Waiting for Auth Service..."
-    kubectl wait --for=condition=available deployment/auth-service -n auth --timeout=300s || log_warn "Auth Service not ready yet" &
-    AUTH_PID=$!
-    
     log_info "Waiting for User Service..."
     kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet" &
     USER_PID=$!
@@ -326,7 +385,6 @@ wait_for_services() {
     wait $PAYMENTS_PID
     wait $FRONTEND_PID
     wait $ADMIN_CONSOLE_PID
-    wait $AUTH_PID
     wait $USER_PID
     
     log_info "Services deployment complete"
@@ -351,10 +409,6 @@ wait_for_single_service() {
         admin-console)
             log_info "Waiting for Admin Console..."
             kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet"
-            ;;
-        auth)
-            log_info "Waiting for Auth Service..."
-            kubectl wait --for=condition=available deployment/auth-service -n auth --timeout=300s || log_warn "Auth Service not ready yet"
             ;;
         user)
             log_info "Waiting for User Service..."

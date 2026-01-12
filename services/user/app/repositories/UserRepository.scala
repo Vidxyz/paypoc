@@ -31,10 +31,11 @@ class UserRepository @Inject()(db: Database)(implicit ec: ExecutionContext) {
 
   def create(user: User): Future[User] = Future {
     db.withConnection { implicit conn =>
+      val idParam = user.id.toString
       SQL"""
         INSERT INTO users (id, email, auth0_user_id, firstname, lastname, account_type, created_at, updated_at)
-        VALUES (${user.id}, ${user.email}, ${user.auth0UserId}, ${user.firstname}, ${user.lastname}, ${user.accountType.value}, ${user.createdAt}, ${user.updatedAt})
-      """.executeInsert()
+        VALUES (CAST($idParam AS uuid), ${user.email}, ${user.auth0UserId}, ${user.firstname}, ${user.lastname}, ${user.accountType.value}, ${user.createdAt}, ${user.updatedAt})
+      """.execute()
       user
     }
   }
@@ -51,10 +52,11 @@ class UserRepository @Inject()(db: Database)(implicit ec: ExecutionContext) {
 
   def findByEmail(email: String): Future[Option[User]] = Future {
     db.withConnection { implicit conn =>
+      // Use LOWER() for case-insensitive email comparison and TRIM() to remove any whitespace
       SQL"""
         SELECT id, email, auth0_user_id, firstname, lastname, account_type, created_at, updated_at
         FROM users
-        WHERE email = $email
+        WHERE LOWER(TRIM(email)) = LOWER(TRIM($email))
       """.as(userParser.singleOpt)
     }
   }

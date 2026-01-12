@@ -11,14 +11,10 @@ import java.util.UUID
 
 /**
  * Request DTO for creating a payment.
+ * Note: buyerId is extracted from the authenticated user's JWT token, not from this request.
  */
-@Schema(description = "Request to create a new payment")
+@Schema(description = "Request to create a new payment. The buyerId is automatically extracted from the authenticated user's JWT token.")
 data class CreatePaymentRequestDto(
-    @field:NotBlank(message = "buyerId is required")
-    @JsonProperty("buyerId")
-    @Schema(description = "The buyer ID", example = "buyer_123", required = true)
-    val buyerId: String,
-    
     @field:NotBlank(message = "sellerId is required")
     @JsonProperty("sellerId")
     @Schema(description = "The seller ID", example = "seller_456", required = true)

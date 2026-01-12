@@ -83,8 +83,8 @@ function CheckoutForm({ buyerId }) {
     }
 
     try {
+      // buyerId is now extracted from the authenticated user's JWT token on the backend
       const paymentResponse = await paymentsApi.createPayment({
-        buyerId: buyerId,
         sellerId: formData.sellerId,
         grossAmountCents: formData.grossAmountCents,
         currency: formData.currency,

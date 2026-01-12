@@ -2,6 +2,8 @@ package com.payments.platform.payments.api
 
 import com.payments.platform.payments.client.LedgerClient
 import com.payments.platform.payments.client.LedgerClientException
+import com.payments.platform.payments.config.AuthenticationInterceptor
+import com.payments.platform.payments.models.User
 import com.payments.platform.payments.service.CreatePaymentRequest
 import com.payments.platform.payments.service.PaymentCreationException
 import com.payments.platform.payments.service.PaymentService
@@ -43,7 +45,7 @@ class PaymentController(
      */
     @Operation(
         summary = "Create a payment",
-        description = "Creates a new payment and Stripe PaymentIntent. The seller's Stripe account is automatically looked up from the database based on sellerId and currency. NO ledger write at this stage - money hasn't moved yet. Returns client_secret for frontend payment confirmation. Ledger write happens after Stripe webhook confirms capture."
+        description = "Creates a new payment and Stripe PaymentIntent. Requires authentication - buyerId is extracted from the authenticated user's JWT token. The seller's Stripe account is automatically looked up from the database based on sellerId and currency. NO ledger write at this stage - money hasn't moved yet. Returns client_secret for frontend payment confirmation. Ledger write happens after Stripe webhook confirms capture."
     )
     @ApiResponses(
         value = [
@@ -61,12 +63,24 @@ class PaymentController(
     )
     @PostMapping
     fun createPayment(
-        @Valid @RequestBody request: CreatePaymentRequestDto
+        @Valid @RequestBody request: CreatePaymentRequestDto,
+        httpRequest: jakarta.servlet.http.HttpServletRequest
     ): ResponseEntity<PaymentResponseDto> {
+        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
+        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
+            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                PaymentResponseDto(
+                    error = "Unauthorized: user not authenticated"
+                )
+            )
+        
+        // Extract buyerId from authenticated user (UUID converted to string)
+        val buyerId = user.userId.toString()
+        
         return try {
             val createPaymentResponse = paymentService.createPayment(
                 CreatePaymentRequest(
-                    buyerId = request.buyerId,
+                    buyerId = buyerId,
                     sellerId = request.sellerId,
                     grossAmountCents = request.grossAmountCents,
                     currency = request.currency,
@@ -168,13 +182,16 @@ class PaymentController(
         @RequestParam(defaultValue = "DESC") sortDirection: String,
         request: jakarta.servlet.http.HttpServletRequest
     ): ResponseEntity<ListPaymentsResponseDto> {
-        // Get buyerId from request attribute (set by AuthenticationInterceptor)
-        val buyerId = request.getAttribute("buyerId") as? String
+        // Get user from request attribute (set by AuthenticationInterceptor)
+        val user = request.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
             ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 ListPaymentsResponseDto(
-                    error = "Unauthorized: buyerId not found in request"
+                    error = "Unauthorized: user not found in request"
                 )
             )
+        
+        // Use user.userId (UUID) converted to string for buyerId
+        val buyerId = user.userId.toString()
         
         // Validate pagination parameters
         val validPage = if (page < 0) 0 else page

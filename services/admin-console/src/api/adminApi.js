@@ -10,6 +10,20 @@ const adminApi = axios.create({
   },
 })
 
+// Add request interceptor to include bearer token
+adminApi.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('bearerToken')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
 // Admin endpoints
 export const getAdminPayments = async (page = 0, size = 50, sortBy = 'createdAt', sortDirection = 'DESC') => {
   const response = await adminApi.get('/admin/payments', {

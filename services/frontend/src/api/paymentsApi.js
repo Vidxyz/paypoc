@@ -14,18 +14,7 @@ const api = axios.create({
 // Add request interceptor to include bearer token
 api.interceptors.request.use(
   (config) => {
-    let token = localStorage.getItem('bearerToken')
-    
-    // If token is missing but user is authenticated, restore it
-    // This handles cases where localStorage was partially cleared
-    if (!token) {
-      const buyerId = localStorage.getItem('buyerId')
-      if (buyerId === 'buyer123') {
-        token = 'buyer123_token'
-        localStorage.setItem('bearerToken', token)
-      }
-    }
-    
+    const token = localStorage.getItem('bearerToken')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

@@ -53,3 +53,10 @@ variable "postgres_password" {
   sensitive   = true
 }
 
+variable "postgres_namespace" {
+  description = "Kubernetes namespace for PostgreSQL"
+  type        = string
+  default     = "postgres"
+}
+
+

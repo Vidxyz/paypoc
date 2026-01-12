@@ -1,0 +1,42 @@
+openapi: 3.0.0
+info:
+  title: User Service API
+  version: 1.0.0
+  description: |
+    The User Service manages user accounts and profiles for the payments platform.
+    
+    **Key Features:**
+    - User signup with account type (BUYER, SELLER, ADMIN)
+    - User profile management
+    - Integration with Auth0 for user creation
+    - Automatic ledger account creation for SELLER accounts via Kafka events
+    
+    **Account Types:**
+    - **BUYER**: Users who purchase items. No ledger account created.
+    - **SELLER**: Users who sell items. A ledger account is automatically created upon signup via Kafka event.
+    - **ADMIN**: Platform administrators. No ledger account created.
+    
+    **Signup Flow:**
+    1. Client sends signup request with user details and account_type
+    2. Service creates user in Auth0 via Management API
+    3. Service stores user in local database
+    4. If account_type is SELLER, publishes `user.created` event to Kafka
+    5. Ledger service consumes event and creates seller_payable account
+    
+    **User Data:**
+    - User ID (UUID)
+    - Email (unique)
+    - Auth0 User ID (for OIDC integration)
+    - First name and last name
+    - Account type (enforced via database constraint)
+    - Created/updated timestamps
+  contact:
+    name: Payments Platform Team
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:9000
+    description: Local development
+  - url: http://user.local
+    description: Minikube
+

@@ -33,3 +33,9 @@ output "postgres_databases_initialized" {
   value       = module.postgres.databases_initialized
 }
 
+output "postgres_namespace" {
+  description = "Kubernetes namespace where PostgreSQL is deployed"
+  value       = kubernetes_namespace.postgres.metadata[0].name
+}
+
+

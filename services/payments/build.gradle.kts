@@ -45,6 +45,10 @@ dependencies {
     // Stripe
     implementation("com.stripe:stripe-java:24.16.0")
     
+    // JWT Validation (Auth0)
+    implementation("com.auth0:java-jwt:4.4.0")
+    implementation("com.auth0:jwks-rsa:0.22.1")
+    
     // OpenAPI/Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0")
     

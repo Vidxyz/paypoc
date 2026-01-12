@@ -5,9 +5,14 @@ metadata:
   namespace: payments-platform
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    cert-manager.io/cluster-issuer: "ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - admin.local
+    secretName: admin-local-tls
   rules:
   - host: admin.local
     http:

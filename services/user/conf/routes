@@ -1,0 +1,220 @@
+# Routes
+# This file defines all application routes
+# https://www.playframework.com/documentation/latest/ScalaRouting
+
+# Root route - redirect to API docs
+GET     /                               controllers.ApiDocsController.swaggerUI
+
+###
+#  summary: Health check endpoint
+#  tags:
+#    - Health
+#  responses:
+#    200:
+#      description: Service is healthy
+#      content:
+#        application/json:
+#          schema:
+#            type: object
+#            properties:
+#              status:
+#                type: string
+#                example: healthy
+#              service:
+#                type: string
+#                example: user-service
+###
+GET     /health                          controllers.HealthController.health
+
+###
+#  summary: Create a new user account
+#  tags:
+#    - Users
+#  description: Creates a new user in Auth0 and local database. Creates BUYER accounts. For SELLER accounts, triggers ledger account creation via Kafka.
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.SignupRequest'
+#  responses:
+#    201:
+#      description: User created successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid request or missing required fields
+#    500:
+#      description: Failed to create user
+###
+POST    /users/signup                    controllers.SignupController.signup
+
+###
+#  summary: Create a new admin user account (Protected - Admin Only)
+#  tags:
+#    - Users
+#  description: Creates a new ADMIN user in Auth0 and local database. Requires Bearer token authentication. Only authenticated ADMIN users can create new admin accounts.
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with ADMIN account_type claim
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.SignupRequest'
+#  responses:
+#    201:
+#      description: Admin user created successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid request or missing required fields
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not an ADMIN
+#    500:
+#      description: Failed to create admin user
+###
+POST    /users/admin/signup              controllers.AdminSignupController.adminSignup
+
+###
+#  summary: Get user by ID
+#  tags:
+#    - Users
+#  parameters:
+#    - name: id
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: User UUID
+#  responses:
+#    200:
+#      description: User found
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    404:
+#      description: User not found
+###
+GET     /users/:id                       controllers.UserController.getUser(id: java.util.UUID)
+
+###
+#  summary: Get user by email
+#  tags:
+#    - Users
+#  parameters:
+#    - name: email
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: email
+#      description: User email address
+#  responses:
+#    200:
+#      description: User found
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    404:
+#      description: User not found
+###
+GET     /users/by-email/:email           controllers.UserController.getUserByEmail(email: String)
+
+###
+#  summary: Get user by Auth0 ID
+#  tags:
+#    - Users
+#  parameters:
+#    - name: auth0Id
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#      description: Auth0 user ID
+#  responses:
+#    200:
+#      description: User found
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    404:
+#      description: User not found
+###
+GET     /users/by-auth0-id/:auth0Id     controllers.UserController.getUserByAuth0Id(auth0Id: String)
+
+###
+#  summary: Update user account type
+#  tags:
+#    - Users
+#  description: "Updates the account type for a user. Valid values: BUYER, SELLER, ADMIN"
+#  parameters:
+#    - name: id
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: User UUID
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          type: object
+#          required:
+#            - account_type
+#          properties:
+#            account_type:
+#              type: string
+#              enum: [BUYER, SELLER, ADMIN]
+#              description: New account type
+#  responses:
+#    200:
+#      description: Account type updated
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid account_type
+#    404:
+#      description: User not found
+###
+PATCH   /users/:id/account-type          controllers.UserController.updateAccountType(id: java.util.UUID)
+
+###
+#  summary: Get current user
+#  tags:
+#    - Users
+#  description: Returns the current authenticated user (not implemented yet)
+#  responses:
+#    401:
+#      description: Not implemented - JWT validation required
+###
+GET     /users/me                        controllers.UserController.getCurrentUser
+
+# Swagger/OpenAPI Documentation  
+GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson
+GET     /api-docs                        controllers.ApiDocsController.swaggerUI
+
+# Favicon (prevent 404 errors)
+GET     /favicon.ico                     controllers.ApiDocsController.favicon
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file                    controllers.Assets.at(path="/public", file)

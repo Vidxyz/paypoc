@@ -7,7 +7,7 @@ data:
   application.yml: |
     spring:
       datasource:
-        url: jdbc:postgresql://postgres-service.payments-platform.svc.cluster.local:5432/payments_db
+        url: jdbc:postgresql://postgres-service.postgres.svc.cluster.local:5432/payments_db
         username: ${DB_USERNAME:payments_user}
         password: ${DB_PASSWORD:payments_password}
       kafka:

@@ -19,12 +19,13 @@ package object models {
   implicit val userReads: Reads[User] = Json.reads[User]
 
   // Custom Reads/Writes for SignupRequest to map account_type (JSON) -> accountType (Scala)
+  // account_type is optional - defaults to BUYER if not provided (will be overridden by controllers)
   implicit val signupRequestReads: Reads[SignupRequest] = (
     (__ \ "email").read[String] and
     (__ \ "password").read[String] and
     (__ \ "firstname").read[String] and
     (__ \ "lastname").read[String] and
-    (__ \ "account_type").read[AccountType]
+    (__ \ "account_type").readNullable[AccountType].map(_.getOrElse(AccountType.BUYER))
   )(SignupRequest.apply _)
 
   implicit val signupRequestWrites: Writes[SignupRequest] = (
@@ -34,6 +35,9 @@ package object models {
     (__ \ "lastname").write[String] and
     (__ \ "account_type").write[AccountType]
   )(unlift(SignupRequest.unapply))
+
+  // Format that combines the custom Reads and Writes
+  implicit val signupRequestFormat: Format[SignupRequest] = Format(signupRequestReads, signupRequestWrites)
 
   // Custom Writes for UserResponse to map accountType (Scala) -> account_type (JSON)
   implicit val userResponseWrites: Writes[UserResponse] = (

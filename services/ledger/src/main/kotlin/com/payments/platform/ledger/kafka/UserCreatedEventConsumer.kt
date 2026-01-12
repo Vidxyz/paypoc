@@ -86,7 +86,8 @@ class UserCreatedEventConsumer(
             }
 
             // Create SELLER_PAYABLE account for seller
-            // accountId = userId (same as user ID)
+            // accountId = deterministic UUID based on account type + reference + currency
+            // This ensures consistency with payment processing which uses the same pattern
             // accountType = SELLER_PAYABLE
             // referenceId = email (for lookup)
             // currency = USD (default)
@@ -108,8 +109,12 @@ class UserCreatedEventConsumer(
                 return
             }
 
+            // Use deterministic UUID to match payment processing logic
+            // This ensures the account ID is consistent across all operations
+            val accountId = UUID.nameUUIDFromBytes("SELLER_PAYABLE_${email}_$currency".toByteArray())
+
             ledgerService.createAccount(
-                accountId = userId,
+                accountId = accountId,
                 accountType = AccountType.SELLER_PAYABLE,
                 referenceId = email,
                 currency = currency

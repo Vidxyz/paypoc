@@ -88,6 +88,59 @@ POST    /users/signup                    controllers.SignupController.signup
 POST    /users/admin/signup              controllers.AdminSignupController.adminSignup
 
 ###
+#  summary: Create a new seller user account (Public)
+#  tags:
+#    - Users
+#  description: Creates a new SELLER user in Auth0 and local database. This endpoint is currently public (no authentication required). Triggers ledger account creation via Kafka.
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.SignupRequest'
+#  responses:
+#    201:
+#      description: Seller user created successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    400:
+#      description: Invalid request or missing required fields
+#    500:
+#      description: Failed to create seller account
+###
+POST    /users/seller/signup              controllers.SellerSignupController.sellerSignup
+
+###
+#  summary: Get current user
+#  tags:
+#    - Users
+#  description: Returns the current authenticated user. Requires Bearer token authentication. Any account type can access this endpoint.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT)
+#  responses:
+#    200:
+#      description: Current user retrieved successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.UserResponse'
+#    401:
+#      description: Unauthorized - missing, invalid, or expired bearer token
+#    501:
+#      description: Not fully implemented - user lookup from token required
+###
+GET     /users/me                        controllers.UserController.getCurrentUser
+
+###
 #  summary: Get user by ID (Admin Only)
 #  tags:
 #    - Users
@@ -213,34 +266,6 @@ GET     /users/by-email/:email           controllers.UserController.getUserByEma
 #      description: User not found
 ###
 PATCH   /users/:id/account-type          controllers.UserController.updateAccountType(id: java.util.UUID)
-
-###
-#  summary: Get current user
-#  tags:
-#    - Users
-#  description: Returns the current authenticated user. Requires Bearer token authentication. Any account type can access this endpoint.
-#  security:
-#    - bearerAuth: []
-#  parameters:
-#    - name: Authorization
-#      in: header
-#      required: true
-#      schema:
-#        type: string
-#      description: Bearer token (JWT)
-#  responses:
-#    200:
-#      description: Current user retrieved successfully
-#      content:
-#        application/json:
-#          schema:
-#            $ref: '#/components/schemas/models.UserResponse'
-#    401:
-#      description: Unauthorized - missing, invalid, or expired bearer token
-#    501:
-#      description: Not fully implemented - user lookup from token required
-###
-GET     /users/me                        controllers.UserController.getCurrentUser
 
 # Swagger/OpenAPI Documentation  
 GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson

@@ -143,12 +143,53 @@ export const Auth0Provider = ({ children }) => {
         if (hasError) {
           const error = urlParams.get('error') || hashParams.get('error')
           const errorDescription = urlParams.get('error_description') || hashParams.get('error_description')
-          const errorMsg = `Auth0 error: ${error}${errorDescription ? ` - ${errorDescription}` : ''}`
-          console.error(errorMsg)
-          setInitError(errorMsg)
-          window.history.replaceState({}, document.title, window.location.pathname)
-          setIsLoading(false)
-          return
+          
+          // Check if this is an access denied error from Auth0 Action (non-admin user)
+          const isAccessDenied = error === 'access_denied' || 
+                                 error === 'unauthorized' || 
+                                 error === 'unauthorized_client' ||
+                                 (errorDescription && errorDescription.toLowerCase().includes('access denied')) ||
+                                 (errorDescription && errorDescription.toLowerCase().includes('unauthorized'))
+          
+          if (isAccessDenied) {
+            console.warn('Auth0 Action denied access - user is not an ADMIN')
+            // Clear all Auth0 state and cache
+            setIsAuthenticated(false)
+            setUser(null)
+            setAccessToken(null)
+            localStorage.removeItem('bearerToken')
+            localStorage.removeItem('auth0UserId')
+            
+            // Clear Auth0 localStorage cache completely
+            try {
+              const keysToRemove = []
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i)
+                if (key && (key.startsWith('@@auth0spajs@@') || key.includes('auth0'))) {
+                  keysToRemove.push(key)
+                }
+              }
+              keysToRemove.forEach(key => localStorage.removeItem(key))
+              console.log('Cleared Auth0 cache after access denied')
+            } catch (error) {
+              console.error('Error clearing Auth0 cache:', error)
+            }
+            
+            // Set user-friendly error message (runtime error, not initError)
+            setError('Access denied. Only ADMIN users can access the admin console. Please log in with an ADMIN account.')
+            setInitError(null) // Clear initError so login can be retried
+            window.history.replaceState({}, document.title, window.location.pathname)
+            setIsLoading(false)
+            return
+          } else {
+            // Other Auth0 errors (configuration issues, etc.)
+            const errorMsg = `Auth0 error: ${error}${errorDescription ? ` - ${errorDescription}` : ''}`
+            console.error(errorMsg)
+            setInitError(errorMsg)
+            window.history.replaceState({}, document.title, window.location.pathname)
+            setIsLoading(false)
+            return
+          }
         }
 
         if (hasCode) {
@@ -229,9 +270,51 @@ export const Auth0Provider = ({ children }) => {
             return
           } catch (error) {
             console.error('Error handling Auth0 callback:', error)
-            setInitError(error.message || 'Failed to handle Auth0 callback')
-            setIsLoading(false)
-            return
+            
+            // Check if this is an access denied/unauthorized error from Auth0 Action
+            const errorMessage = error.message || error.error || String(error)
+            const isAccessDenied = errorMessage.includes('access_denied') ||
+                                   errorMessage.includes('unauthorized') ||
+                                   errorMessage.includes('Unauthorized') ||
+                                   error.status === 401 ||
+                                   error.error === 'access_denied' ||
+                                   error.error === 'unauthorized'
+            
+            if (isAccessDenied) {
+              console.warn('Auth0 Action denied access during callback - user is not an ADMIN')
+              // Clear all Auth0 state and cache
+              setIsAuthenticated(false)
+              setUser(null)
+              setAccessToken(null)
+              localStorage.removeItem('bearerToken')
+              localStorage.removeItem('auth0UserId')
+              
+              // Clear Auth0 localStorage cache completely
+              try {
+                const keysToRemove = []
+                for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i)
+                  if (key && (key.startsWith('@@auth0spajs@@') || key.includes('auth0'))) {
+                    keysToRemove.push(key)
+                  }
+                }
+                keysToRemove.forEach(key => localStorage.removeItem(key))
+                console.log('Cleared Auth0 cache after access denied in callback')
+              } catch (clearError) {
+                console.error('Error clearing Auth0 cache:', clearError)
+              }
+              
+              // Set user-friendly error message (runtime error, not initError)
+              setError('Access denied. Only ADMIN users can access the admin console. Please log in with an ADMIN account.')
+              setInitError(null) // Clear initError so login can be retried
+              setIsLoading(false)
+              return
+            } else {
+              // Other errors (network, configuration, etc.)
+              setInitError(errorMessage || 'Failed to handle Auth0 callback')
+              setIsLoading(false)
+              return
+            }
           }
         }
 
@@ -315,6 +398,14 @@ export const Auth0Provider = ({ children }) => {
     // Clear any previous runtime errors when attempting a new login
     setError(null)
     
+    // Clear access denied initErrors so user can retry
+    if (initError && (initError.includes('access_denied') || 
+                      initError.includes('unauthorized') || 
+                      initError.includes('Unauthorized') ||
+                      initError.includes('Access denied'))) {
+      setInitError(null)
+    }
+    
     let client = auth0ClientRef.current || auth0Client
     if (initPromiseRef.current && !client) {
       try {
@@ -327,11 +418,22 @@ export const Auth0Provider = ({ children }) => {
       }
     }
 
-    // Only block login if initError is a real configuration error (not access denied)
+    // Only block login if initError is a real configuration error (not access denied/unauthorized)
     // Access denied errors are handled as runtime errors, not init errors
-    if (initError && !initError.includes('Access denied')) {
+    if (initError && 
+        !initError.includes('Access denied') && 
+        !initError.includes('access_denied') &&
+        !initError.includes('unauthorized') &&
+        !initError.includes('Unauthorized')) {
       setError(`Auth0 configuration error: ${initError}`)
       return
+    }
+    
+    // If initError is an access denied error, clear it so user can retry
+    if (initError && (initError.includes('access_denied') || 
+                      initError.includes('unauthorized') || 
+                      initError.includes('Unauthorized'))) {
+      setInitError(null)
     }
 
     if (!client) {

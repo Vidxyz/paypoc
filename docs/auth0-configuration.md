@@ -1,19 +1,28 @@
 # Auth0 Configuration Guide
 
-This guide explains how to configure Auth0 to work with the payments platform after removing the auth service. The frontend now communicates directly with Auth0, and each microservice validates JWT tokens independently.
+This guide explains how to configure Auth0 to work with the payments platform. The platform uses **separate Auth0 applications** for each console (frontend, admin-console, seller-console) to provide better security and user experience.
 
 ## Overview
 
-The architecture now uses:
-- **Frontend**: Direct integration with Auth0 using `@auth0/auth0-spa-js` SDK
+The architecture uses:
+- **Separate Auth0 Applications**: One for each console (frontend, admin-console, seller-console)
+- **Shared Auth0 Tenant**: All applications share the same Auth0 domain and user database
+- **Frontend**: Direct integration with Auth0 using `@auth0/auth0-spa-js` SDK (for BUYER accounts)
+- **Admin Console**: Separate Auth0 application (for ADMIN accounts only)
+- **Seller Console**: Separate Auth0 application (for SELLER accounts only) - Future
 - **Microservices**: Validate Auth0 JWT tokens using Auth0's JWKS endpoint
 - **Custom Claims**: User information (user_id, account_type, etc.) added to tokens via Auth0 Actions
 
-## Step 1: Configure Auth0 Application
+## Step 1: Create Separate Auth0 Applications
+
+You need to create **three separate Auth0 applications** (or two if seller-console isn't ready yet):
+
+### 1.1: Frontend Application (for BUYER accounts)
 
 1. **Log into Auth0 Dashboard**: https://manage.auth0.com/
-2. **Navigate to Applications** → Select your application (or create a new Single Page Application)
+2. **Navigate to Applications** → **Create Application**
 3. **Configure Application Settings**:
+   - **Name**: "BuyIt Frontend" or "Payments Platform Frontend"
    - **Application Type**: Single Page Application
    - **Allowed Callback URLs**: 
      - `http://localhost:5173`
@@ -21,7 +30,6 @@ The architecture now uses:
      - `https://buyit.local`
      - `http://localhost:5173/` (with trailing slash - add both)
      - `https://buyit.local/` (with trailing slash - add both)
-     - ⚠️ **IMPORTANT**: The callback URL must match EXACTLY (including protocol, domain, port, and trailing slash) what you set in `VITE_AUTH0_REDIRECT_URI` or it defaults to `window.location.origin`
    - **Allowed Logout URLs**:
      - `http://localhost:5173`
      - `http://localhost:3000`
@@ -43,10 +51,53 @@ The architecture now uses:
      - ✅ **PKCE**: Enabled (required for SPAs)
 
 4. **Note down**:
-   - **Domain**: e.g., `dev-bm52noc2kc3fce8w.us.auth0.com`
-   - **Client ID**: e.g., `LejLdidlSpBGICwXoUhxNjdHib59SUMr`
+   - **Client ID**: e.g., `LejLdidlSpBGICwXoUhxNjdHib59SUMr` → This is your `AUTH0_FRONTEND_CLIENT_ID`
 
-## Step 1.5: Configure Auth0 API (Required for Access Tokens)
+### 1.2: Admin Console Application (for ADMIN accounts only)
+
+1. **Navigate to Applications** → **Create Application**
+2. **Configure Application Settings**:
+   - **Name**: "BuyIt Admin Console" or "Payments Platform Admin Console"
+   - **Application Type**: Single Page Application
+   - **Allowed Callback URLs**: 
+     - `https://admin.local`
+     - `https://admin.local/` (with trailing slash)
+   - **Allowed Logout URLs**:
+     - `https://admin.local`
+     - `https://admin.local/` (with trailing slash)
+   - **Allowed Web Origins**: 
+     - `https://admin.local`
+   - **Allowed Origins (CORS)**: (same as above)
+   - **OAuth Settings**: (same as frontend application)
+
+3. **Note down**:
+   - **Client ID**: e.g., `AdminConsoleClientId123` → This is your `AUTH0_ADMIN_CLIENT_ID`
+
+### 1.3: Seller Console Application (for SELLER accounts only) - Future
+
+1. **Navigate to Applications** → **Create Application**
+2. **Configure Application Settings**:
+   - **Name**: "BuyIt Seller Console" or "Payments Platform Seller Console"
+   - **Application Type**: Single Page Application
+   - **Allowed Callback URLs**: 
+     - `https://seller.local`
+     - `https://seller.local/` (with trailing slash)
+   - **Allowed Logout URLs**:
+     - `https://seller.local`
+     - `https://seller.local/` (with trailing slash)
+   - **Allowed Web Origins**: 
+     - `https://seller.local`
+   - **OAuth Settings**: (same as frontend application)
+
+3. **Note down**:
+   - **Client ID**: e.g., `SellerConsoleClientId123` → This is your `AUTH0_SELLER_CLIENT_ID` (for future use)
+
+### 1.4: Shared Auth0 Domain
+
+All applications share the same Auth0 tenant/domain:
+- **Domain**: e.g., `dev-bm52noc2kc3fce8w.us.auth0.com` → This is your `AUTH0_DOMAIN`
+
+## Step 3: Configure Auth0 API (Required for Access Tokens)
 
 If you want to use access tokens (instead of ID tokens), you need to create and configure an Auth0 API:
 
@@ -70,10 +121,10 @@ If you want to use access tokens (instead of ID tokens), you need to create and 
    - For SPAs, the authorization happens automatically when you request the audience
 
 6. **Note down the API Identifier** (this is your audience):
-   - This will be used in `VITE_AUTH0_AUDIENCE` environment variable
+   - This will be used in `AUTH0_FRONTEND_AUDIENCE` and `AUTH0_ADMIN_AUDIENCE` environment variables
    - Example: `https://buyit.local/api`
 
-## Step 2: Create Auth0 Action to Add Custom Claims
+## Step 4: Create Auth0 Action to Add Custom Claims
 
 Custom claims are needed so microservices can extract user information (user_id, account_type) from JWT tokens without querying the user service.
 
@@ -241,7 +292,7 @@ exports.onExecutePostLogin = async (event, api) => {
        - It should be after authentication but before token issuance
        - Try moving it to different positions in the flow
 
-## Step 3: Test Custom Claims
+## Step 5: Test Custom Claims
 
 1. **Check Auth0 Logs First**:
    - Go to **Monitoring** → **Logs**
@@ -270,24 +321,47 @@ exports.onExecutePostLogin = async (event, api) => {
    - Test the endpoint manually: `https://user.local/users/by-auth0-id/{auth0_user_id}`
    - Check that the user service is accessible from the internet (Auth0 Actions can't access internal URLs)
 
-## Step 4: Configure Frontend Environment Variables
+## Step 6: Configure Environment Variables
 
-Update your frontend `.env` file or environment variables:
+The platform now uses a centralized `.env` file for all environment variables. This makes it easier to manage credentials across all services.
 
-```env
-VITE_AUTH0_DOMAIN=dev-bm52noc2kc3fce8w.us.auth0.com
-VITE_AUTH0_CLIENT_ID=LejLdidlSpBGICwXoUhxNjdHib59SUMr
-VITE_AUTH0_REDIRECT_URI=http://localhost:5173
+### Setup Instructions
+
+1. **Copy the example file**:
+   ```bash
+   cp scripts/.env.example scripts/.env
+   ```
+
+2. **Edit `scripts/.env`** with your actual Auth0 credentials:
+   ```bash
+   # Required Auth0 variables
+   AUTH0_DOMAIN=dev-bm52noc2kc3fce8w.us.auth0.com
+   AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id
+   AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id
+   AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local
+   AUTH0_ADMIN_REDIRECT_URI=https://admin.local
+   AUTH0_FRONTEND_AUDIENCE=https://buyit.local/api
+   AUTH0_ADMIN_AUDIENCE=https://buyit.local/api
+   ```
+
+3. **The `deploy.sh` script automatically loads variables from `.env`**:
+   - The script sources `scripts/.env` at startup
+   - If `.env` doesn't exist, it will warn you but continue with shell environment variables
+   - The `.env` file is gitignored for security
+
+### Legacy: Manual Environment Variable Setup (Not Recommended)
+
+If you prefer to set environment variables manually instead of using `.env`, you can export them before running `deploy.sh`:
+
+```bash
+export AUTH0_DOMAIN=dev-bm52noc2kc3fce8w.us.auth0.com
+export AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id
+export AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id
+export AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local
+export AUTH0_ADMIN_REDIRECT_URI=https://admin.local
 ```
 
-For production:
-```env
-VITE_AUTH0_DOMAIN=your-tenant.auth0.com
-VITE_AUTH0_CLIENT_ID=your-client-id
-VITE_AUTH0_REDIRECT_URI=https://buyit.local
-```
-
-## Step 5: Configure Payments Service
+## Step 7: Configure Payments Service
 
 Update `services/payments/src/main/resources/application.yml`:
 

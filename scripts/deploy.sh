@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 K8S_DIR="$PROJECT_ROOT/kubernetes"
 
-# Functions
+# Functions (define before using)
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -26,6 +26,20 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
+
+# Load environment variables from .env file if it exists
+ENV_FILE="$SCRIPT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    log_info "Loading environment variables from $ENV_FILE"
+    # Source the .env file, but don't fail if it doesn't exist
+    set -a  # Automatically export all variables
+    source "$ENV_FILE" 2>/dev/null || true
+    set +a  # Disable automatic export
+else
+    log_warn ".env file not found at $ENV_FILE"
+    log_warn "Create $ENV_FILE from $ENV_FILE.example and set your environment variables"
+    log_warn "Continuing with environment variables from current shell..."
+fi
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -54,12 +68,19 @@ check_auth0_env_vars() {
     
     local missing_vars=()
     
+    # Check shared Auth0 domain
     if [[ -z "${AUTH0_DOMAIN:-}" ]]; then
         missing_vars+=("AUTH0_DOMAIN")
     fi
     
-    if [[ -z "${AUTH0_CLIENT_ID:-}" ]]; then
-        missing_vars+=("AUTH0_CLIENT_ID")
+    # Check frontend Auth0 client ID
+    if [[ -z "${AUTH0_FRONTEND_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_FRONTEND_CLIENT_ID")
+    fi
+    
+    # Check admin console Auth0 client ID
+    if [[ -z "${AUTH0_ADMIN_CLIENT_ID:-}" ]]; then
+        missing_vars+=("AUTH0_ADMIN_CLIENT_ID")
     fi
     
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
@@ -68,15 +89,18 @@ check_auth0_env_vars() {
             log_error "  - $var"
         done
         log_error ""
-        log_error "Please set these environment variables before building the frontend:"
-        log_error "  export AUTH0_DOMAIN=your-tenant.auth0.com"
-        log_error "  export AUTH0_CLIENT_ID=your-client-id"
+        log_error "Please set these environment variables in $ENV_FILE or export them:"
+        log_error "  AUTH0_DOMAIN=your-tenant.auth0.com"
+        log_error "  AUTH0_FRONTEND_CLIENT_ID=your-frontend-client-id"
+        log_error "  AUTH0_ADMIN_CLIENT_ID=your-admin-console-client-id"
         log_error ""
         log_error "Optional variables (with defaults):"
-        log_error "  export AUTH0_REDIRECT_URI=https://buyit.local  # Defaults to window.location.origin"
-        log_error "  export AUTH0_AUDIENCE=your-api-audience       # Optional, for API access"
+        log_error "  AUTH0_FRONTEND_REDIRECT_URI=https://buyit.local  # Defaults to window.location.origin"
+        log_error "  AUTH0_ADMIN_REDIRECT_URI=https://admin.local      # Defaults to window.location.origin"
+        log_error "  AUTH0_FRONTEND_AUDIENCE=your-api-audience         # Optional, for API access"
+        log_error "  AUTH0_ADMIN_AUDIENCE=your-api-audience            # Optional, for API access"
         log_error ""
-        log_warn "Building frontend without Auth0 variables will result in a 401 error during login!"
+        log_warn "Building frontend/admin-console without Auth0 variables will result in a 401 error during login!"
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -86,16 +110,27 @@ check_auth0_env_vars() {
     else
         log_info "Auth0 environment variables check passed:"
         log_info "  AUTH0_DOMAIN: ${AUTH0_DOMAIN:0:30}..."
-        log_info "  AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:0:20}..."
-        if [[ -n "${AUTH0_REDIRECT_URI:-}" ]]; then
-            log_info "  AUTH0_REDIRECT_URI: $AUTH0_REDIRECT_URI"
+        log_info "  AUTH0_FRONTEND_CLIENT_ID: ${AUTH0_FRONTEND_CLIENT_ID:0:20}..."
+        log_info "  AUTH0_ADMIN_CLIENT_ID: ${AUTH0_ADMIN_CLIENT_ID:0:20}..."
+        if [[ -n "${AUTH0_FRONTEND_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_FRONTEND_REDIRECT_URI: $AUTH0_FRONTEND_REDIRECT_URI"
         else
-            log_info "  AUTH0_REDIRECT_URI: (not set, will use window.location.origin)"
+            log_info "  AUTH0_FRONTEND_REDIRECT_URI: (not set, will use window.location.origin)"
         fi
-        if [[ -n "${AUTH0_AUDIENCE:-}" ]]; then
-            log_info "  AUTH0_AUDIENCE: $AUTH0_AUDIENCE"
+        if [[ -n "${AUTH0_ADMIN_REDIRECT_URI:-}" ]]; then
+            log_info "  AUTH0_ADMIN_REDIRECT_URI: $AUTH0_ADMIN_REDIRECT_URI"
         else
-            log_info "  AUTH0_AUDIENCE: (not set, optional)"
+            log_info "  AUTH0_ADMIN_REDIRECT_URI: (not set, will use window.location.origin)"
+        fi
+        if [[ -n "${AUTH0_FRONTEND_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_FRONTEND_AUDIENCE: $AUTH0_FRONTEND_AUDIENCE"
+        else
+            log_info "  AUTH0_FRONTEND_AUDIENCE: (not set, optional)"
+        fi
+        if [[ -n "${AUTH0_ADMIN_AUDIENCE:-}" ]]; then
+            log_info "  AUTH0_ADMIN_AUDIENCE: $AUTH0_ADMIN_AUDIENCE"
+        else
+            log_info "  AUTH0_ADMIN_AUDIENCE: (not set, optional)"
         fi
     fi
 }
@@ -148,31 +183,31 @@ build_images() {
     # Set environment variables for frontend build
     local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
     local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
-    local auth0_client_id="${AUTH0_CLIENT_ID:-}"
-    local auth0_redirect_uri="${AUTH0_REDIRECT_URI:-}"
-    local auth0_audience="${AUTH0_AUDIENCE:-}"
+    local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
+    local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
+    local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
     
     log_info "Building frontend image..."
     (cd "$PROJECT_ROOT/services/frontend" && docker build \
         --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
         --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
-        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id" \
-        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri" \
-        --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
         -t frontend:latest .) &
     FRONTEND_PID=$!
     
     log_info "Building admin-console image..."
-    # Use same Auth0 env vars as frontend
+    # Use separate Auth0 client ID for admin console
     local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
-    local auth0_client_id_admin="${AUTH0_CLIENT_ID:-}"
-    local auth0_redirect_uri_admin="${AUTH0_REDIRECT_URI:-}"
-    local auth0_audience_admin="${AUTH0_AUDIENCE:-}"
+    local auth0_admin_client_id="${AUTH0_ADMIN_CLIENT_ID:-}"
+    local auth0_admin_redirect_uri="${AUTH0_ADMIN_REDIRECT_URI:-}"
+    local auth0_admin_audience="${AUTH0_ADMIN_AUDIENCE:-}"
     (cd "$PROJECT_ROOT/services/admin-console" && docker build \
         --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
-        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id_admin" \
-        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri_admin" \
-        --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience_admin" \
+        --build-arg VITE_AUTH0_CLIENT_ID="$auth0_admin_client_id" \
+        --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_admin_redirect_uri" \
+        --build-arg VITE_AUTH0_AUDIENCE="$auth0_admin_audience" \
         -t admin-console:latest .) &
     ADMIN_CONSOLE_PID=$!
     
@@ -230,32 +265,32 @@ build_single_image() {
         frontend)
             local stripe_key="${STRIPE_PUBLISHABLE_KEY:-missing_stripe_publishable_key}"
             local auth0_domain="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
-            local auth0_client_id="${AUTH0_CLIENT_ID:-}"
-            local auth0_redirect_uri="${AUTH0_REDIRECT_URI:-}"
-            local auth0_audience="${AUTH0_AUDIENCE:-}"
+            local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
+            local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
+            local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
             log_info "Building frontend image..."
             (cd "$PROJECT_ROOT/services/frontend" && docker build \
                 --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
                 --build-arg VITE_AUTH0_DOMAIN="$auth0_domain" \
-                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id" \
-                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri" \
-                --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
                 -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
             minikube image load frontend:latest
             log_info "Frontend image built and loaded successfully"
             ;;
         admin-console)
-            # Use same Auth0 env vars as frontend
+            # Use separate Auth0 client ID for admin console
             local auth0_domain_admin="${AUTH0_DOMAIN:-your-tenant.auth0.com}"
-            local auth0_client_id_admin="${AUTH0_CLIENT_ID:-}"
-            local auth0_redirect_uri_admin="${AUTH0_REDIRECT_URI:-}"
-            local auth0_audience_admin="${AUTH0_AUDIENCE:-}"
+            local auth0_admin_client_id="${AUTH0_ADMIN_CLIENT_ID:-}"
+            local auth0_admin_redirect_uri="${AUTH0_ADMIN_REDIRECT_URI:-}"
+            local auth0_admin_audience="${AUTH0_ADMIN_AUDIENCE:-}"
             log_info "Building admin-console image..."
             (cd "$PROJECT_ROOT/services/admin-console" && docker build \
                 --build-arg VITE_AUTH0_DOMAIN="$auth0_domain_admin" \
-                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_client_id_admin" \
-                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_redirect_uri_admin" \
-                --build-arg VITE_AUTH0_AUDIENCE="$auth0_audience_admin" \
+                --build-arg VITE_AUTH0_CLIENT_ID="$auth0_admin_client_id" \
+                --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_admin_redirect_uri" \
+                --build-arg VITE_AUTH0_AUDIENCE="$auth0_admin_audience" \
                 -t admin-console:latest .) || { log_error "Admin-console image build failed"; exit 1; }
             minikube image load admin-console:latest
             log_info "Admin-console image built and loaded successfully"

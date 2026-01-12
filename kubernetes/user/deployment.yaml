@@ -50,6 +50,11 @@ spec:
             secretKeyRef:
               name: user-secrets
               key: AUTH0_M2M_CLIENT_SECRET
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: user-secrets
+              key: AUTH0_AUDIENCE
         - name: PLAY_HTTP_SECRET_KEY
           valueFrom:
             secretKeyRef:

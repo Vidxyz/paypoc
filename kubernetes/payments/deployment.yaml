@@ -46,6 +46,21 @@ spec:
             secretKeyRef:
               name: payments-secrets
               key: STRIPE_WEBHOOK_SECRET
+        - name: LEDGER_SERVICE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: LEDGER_SERVICE_API_TOKEN
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: AUTH0_AUDIENCE
         - name: SPRING_CONFIG_LOCATION
           value: "classpath:/application.yml,file:/config/application.yml"
         volumeMounts:

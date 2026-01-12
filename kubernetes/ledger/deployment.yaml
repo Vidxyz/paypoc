@@ -41,6 +41,21 @@ spec:
             secretKeyRef:
               name: ledger-secrets
               key: INTERNAL_API_TOKEN
+        - name: LEDGER_SERVICE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ledger-secrets
+              key: LEDGER_SERVICE_API_TOKEN
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: ledger-secrets
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: ledger-secrets
+              key: AUTH0_AUDIENCE
         - name: SPRING_CONFIG_LOCATION
           value: "classpath:/application.yml,file:/config/application.yml"
         volumeMounts:

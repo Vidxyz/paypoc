@@ -2,7 +2,7 @@ package auth
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
-import com.auth0.jwt.exceptions.JWTVerificationException
+import com.auth0.jwt.exceptions.{JWTVerificationException, TokenExpiredException}
 import com.auth0.jwt.interfaces.{DecodedJWT, JWTVerifier}
 import com.auth0.jwk.{JwkProvider, JwkProviderBuilder}
 import models.AccountType
@@ -40,6 +40,7 @@ class JwtValidator @Inject()(config: Configuration) {
    * 
    * @param token The JWT token string
    * @return AccountType if token is valid and contains account_type claim, None otherwise
+   *         Returns None if token is expired, invalid, or missing required claims
    */
   def validateAndExtractAccountType(token: String): Option[AccountType] = {
     Try {
@@ -49,6 +50,9 @@ class JwtValidator @Inject()(config: Configuration) {
       accountType
     } match {
       case Success(accountType) => Some(accountType)
+      case Failure(e: TokenExpiredException) =>
+        logger.warn(s"JWT token expired: ${e.getMessage}")
+        None
       case Failure(e: JWTVerificationException) =>
         logger.warn(s"JWT token validation failed: ${e.getMessage}")
         None
@@ -62,7 +66,7 @@ class JwtValidator @Inject()(config: Configuration) {
    * Validates a JWT token without extracting claims (just checks if it's valid).
    * 
    * @param token The JWT token string
-   * @return true if token is valid, false otherwise
+   * @return true if token is valid and not expired, false otherwise
    */
   def validateToken(token: String): Boolean = {
     Try {
@@ -70,6 +74,9 @@ class JwtValidator @Inject()(config: Configuration) {
       true
     } match {
       case Success(_) => true
+      case Failure(e: TokenExpiredException) =>
+        logger.warn(s"JWT token expired: ${e.getMessage}")
+        false
       case Failure(e: JWTVerificationException) =>
         logger.warn(s"JWT token validation failed: ${e.getMessage}")
         false

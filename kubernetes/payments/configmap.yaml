@@ -16,6 +16,13 @@ data:
     ledger:
       service:
         url: http://ledger-service.payments-platform.svc.cluster.local:8081
+        api:
+          token: ${LEDGER_SERVICE_API_TOKEN:ledger-service-secret-token-change-in-production}
+    
+    # Auth0 Configuration (for JWT validation)
+    auth0:
+      domain: ${AUTH0_DOMAIN:your-tenant.auth0.com}
+      audience: ${AUTH0_AUDIENCE:}
     
     logging:
       level:

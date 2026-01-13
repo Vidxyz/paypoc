@@ -155,13 +155,68 @@ check_auth0_env_vars() {
 }
 
 build_images() {
-    local service_name="${1:-all}"
+    local services=("$@")
     
-    if [[ "$service_name" != "all" ]]; then
-        log_info "Building Docker image for $service_name service..."
-        build_single_image "$service_name"
+    # If no services provided, default to "all"
+    if [[ ${#services[@]} -eq 0 ]]; then
+        services=("all")
+    fi
+    
+    # If "all" is specified, build all services
+    if [[ "${services[0]}" == "all" ]]; then
+        build_all_images
         return
     fi
+    
+    # Build multiple services in parallel
+    if [[ ${#services[@]} -gt 1 ]]; then
+        log_info "Building Docker images for services: ${services[*]} (in parallel)..."
+        
+        # Check Auth0 environment variables if any frontend service is being built
+        local has_frontend=false
+        for service in "${services[@]}"; do
+            if [[ "$service" == "frontend" || "$service" == "admin-console" || "$service" == "seller-console" ]]; then
+                has_frontend=true
+                break
+            fi
+        done
+        
+        if [[ "$has_frontend" == true ]]; then
+            check_auth0_env_vars
+        fi
+        
+        # Build all services in parallel using background processes
+        local pids=()
+        for service in "${services[@]}"; do
+            build_single_image "$service" &
+            pids+=($!)
+        done
+        
+        # Wait for all builds to complete
+        local failed=false
+        local i=0
+        for pid in "${pids[@]}"; do
+            wait "$pid" || {
+                log_error "Image build failed for ${services[$i]}"
+                failed=true
+            }
+            ((i++))
+        done
+        
+        if [[ "$failed" == true ]]; then
+            exit 1
+        fi
+        
+        log_info "All images built successfully"
+        return
+    fi
+    
+    # Build single service
+    log_info "Building Docker image for ${services[0]} service..."
+    build_single_image "${services[0]}"
+}
+
+build_all_images() {
     
     log_info "Deleting deployments..."
     
@@ -169,6 +224,7 @@ build_images() {
     kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
 
@@ -281,6 +337,116 @@ build_images() {
     wait
     
     log_info "All images built and loaded"
+}
+
+delete_deployments() {
+    local services=("$@")
+    
+    log_info "Deleting existing deployments for services: ${services[*]}..."
+    for service in "${services[@]}"; do
+        log_info "Deleting existing $service deployment..."
+        case "$service" in
+            ledger)
+                kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
+                ;;
+            payments)
+                kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
+                ;;
+            frontend)
+                kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
+                ;;
+            admin-console)
+                kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
+                ;;
+            seller-console)
+                kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
+                ;;
+            auth)
+                kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
+                ;;
+            user)
+                kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
+                ;;
+        esac
+    done
+}
+
+deploy_multiple_services() {
+    local services=("$@")
+    
+    log_info "Deploying services: ${services[*]} (in parallel)..."
+    create_namespace
+    
+    # Deploy all services in parallel
+    local pids=()
+    for service in "${services[@]}"; do
+        case "$service" in
+            ledger)
+                deploy_ledger &
+                pids+=($!)
+                ;;
+            payments)
+                deploy_payments &
+                pids+=($!)
+                ;;
+            frontend)
+                deploy_frontend &
+                pids+=($!)
+                ;;
+            admin-console)
+                deploy_admin_console &
+                pids+=($!)
+                ;;
+            seller-console)
+                deploy_seller_console &
+                pids+=($!)
+                ;;
+            auth)
+                deploy_auth &
+                pids+=($!)
+                ;;
+            user)
+                deploy_user &
+                pids+=($!)
+                ;;
+        esac
+    done
+    
+    # Wait for all deployments to complete
+    local failed=false
+    for pid in "${pids[@]}"; do
+        wait "$pid" || failed=true
+    done
+    
+    if [[ "$failed" == true ]]; then
+        log_error "One or more service deployments failed"
+        exit 1
+    fi
+    
+    # Wait for all services to be ready
+    wait_for_multiple_services "${services[@]}"
+}
+
+wait_for_multiple_services() {
+    local services=("$@")
+    
+    log_info "Waiting for services to be ready: ${services[*]} (in parallel)..."
+    
+    local pids=()
+    for service in "${services[@]}"; do
+        wait_for_single_service "$service" &
+        pids+=($!)
+    done
+    
+    # Wait for all services to be ready
+    local failed=false
+    for pid in "${pids[@]}"; do
+        wait "$pid" || failed=true
+    done
+    
+    if [[ "$failed" == true ]]; then
+        log_warn "One or more services may not be ready yet"
+    fi
 }
 
 build_single_image() {
@@ -607,7 +773,7 @@ main() {
     log_info "Starting deployment to minikube..."
     
     check_prerequisites
-    build_images
+    build_images "all"
     create_namespace
     
     # Deploy ingress and check postgres in parallel (postgres check is non-blocking)
@@ -644,106 +810,98 @@ main() {
 }
 
 # Parse arguments
-SERVICE_NAME="${1:-}"
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user")
+SERVICES_TO_DEPLOY=()
 
-case "$SERVICE_NAME" in
+# Check if first argument is a command (not a service)
+if [[ $# -eq 0 ]]; then
+    # No arguments - deploy all services
+    main
+    exit 0
+fi
+
+FIRST_ARG="$1"
+
+case "$FIRST_ARG" in
     build)
         check_prerequisites
-        build_images "all"
+        if [[ $# -eq 1 ]]; then
+            build_images "all"
+        else
+            # Build specific services
+            shift
+            build_images "$@"
+        fi
+        exit 0
         ;;
     ingress)
         check_prerequisites
         deploy_ingress
+        exit 0
         ;;
     postgres)
         log_warn "PostgreSQL is now deployed via Terraform. Use 'terraform apply' in infra/minikube/"
-        ;;
-    ledger|payments|frontend|admin-console|seller-console|auth|user)
-        log_info "Deploying $SERVICE_NAME service (fresh deploy)..."
-        check_prerequisites
-        
-        # Delete existing deployment first (fresh deploy)
-        log_info "Deleting existing $SERVICE_NAME deployment..."
-        case "$SERVICE_NAME" in
-            ledger)
-                kubectl delete -f "$K8S_DIR/ledger/deployment.yaml" 2>/dev/null || true
-                ;;
-            payments)
-                kubectl delete -f "$K8S_DIR/payments/deployment.yaml" 2>/dev/null || true
-                ;;
-            frontend)
-                kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
-                ;;
-            admin-console)
-                kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
-                ;;
-            seller-console)
-                kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
-                ;;
-            auth)
-                kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
-                ;;
-            user)
-                kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
-                ;;
-        esac
-        
-        build_images "$SERVICE_NAME"
-        create_namespace
-        case "$SERVICE_NAME" in
-            ledger)
-                deploy_ledger
-                wait_for_single_service "ledger"
-                ;;
-            payments)
-                deploy_payments
-                wait_for_single_service "payments"
-                ;;
-            frontend)
-                deploy_frontend
-                wait_for_single_service "frontend"
-                ;;
-            admin-console)
-                deploy_admin_console
-                wait_for_single_service "admin-console"
-                ;;
-            seller-console)
-                deploy_seller_console
-                wait_for_single_service "seller-console"
-                ;;
-            auth)
-                deploy_auth
-                wait_for_single_service "auth"
-                ;;
-            user)
-                deploy_user
-                wait_for_single_service "user"
-                ;;
-        esac
-        log_info "$SERVICE_NAME service deployed successfully!"
+        exit 0
         ;;
     status)
         show_status
-        ;;
-    "")
-        # No argument - deploy all services
-        main
+        exit 0
         ;;
     *)
-        log_error "Unknown service or command: $SERVICE_NAME"
-        echo ""
-        echo "Usage:"
-        echo "  ./deploy.sh                    - Deploy all services from scratch"
-        echo "  ./deploy.sh <service>           - Deploy a single service (fresh deploy)"
-        echo ""
-        echo "Available services:"
-        echo "  ledger, payments, frontend, admin-console, auth, user"
-        echo ""
-        echo "Other commands:"
-        echo "  ./deploy.sh build               - Build all Docker images"
-        echo "  ./deploy.sh ingress             - Deploy ingress controller"
-        echo "  ./deploy.sh status              - Show deployment status"
-        exit 1
+        # Parse service names
+        for arg in "$@"; do
+            # Check if it's a valid service
+            is_valid=false
+            for valid_service in "${VALID_SERVICES[@]}"; do
+                if [[ "$arg" == "$valid_service" ]]; then
+                    is_valid=true
+                    SERVICES_TO_DEPLOY+=("$arg")
+                    break
+                fi
+            done
+            
+            if [[ "$is_valid" == false ]]; then
+                log_error "Unknown service or command: $arg"
+                echo ""
+                echo "Usage:"
+                echo "  ./deploy.sh                                          - Deploy all services from scratch"
+                echo "  ./deploy.sh <service1> [<service2> ...]               - Deploy one or more services (in parallel)"
+                echo ""
+                echo "Available services:"
+                echo "  ${VALID_SERVICES[*]}"
+                echo ""
+                echo "Other commands:"
+                echo "  ./deploy.sh build [<service1> [<service2> ...]]       - Build Docker images (all or specific services)"
+                echo "  ./deploy.sh ingress                                   - Deploy ingress controller"
+                echo "  ./deploy.sh status                                    - Show deployment status"
+                echo ""
+                echo "Examples:"
+                echo "  ./deploy.sh payments ledger                           - Deploy payments and ledger services in parallel"
+                echo "  ./deploy.sh frontend admin-console seller-console     - Deploy all frontend services in parallel"
+                exit 1
+            fi
+        done
+        
+        # Deploy the specified services
+        if [[ ${#SERVICES_TO_DEPLOY[@]} -eq 0 ]]; then
+            log_error "No services specified"
+            exit 1
+        fi
+        
+        log_info "Deploying services: ${SERVICES_TO_DEPLOY[*]} (in parallel)..."
+        check_prerequisites
+        
+        # Delete existing deployments first (before building images)
+        delete_deployments "${SERVICES_TO_DEPLOY[@]}"
+        
+        # Build images for the specified services
+        build_images "${SERVICES_TO_DEPLOY[@]}"
+        
+        # Deploy the services
+        deploy_multiple_services "${SERVICES_TO_DEPLOY[@]}"
+        
+        log_info "Services deployed successfully: ${SERVICES_TO_DEPLOY[*]}"
+        show_status
         ;;
 esac
 

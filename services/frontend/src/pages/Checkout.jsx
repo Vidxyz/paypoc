@@ -32,7 +32,6 @@ function CheckoutForm({ buyerId }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [paymentId, setPaymentId] = useState(null)
-  const [selectedTestCard, setSelectedTestCard] = useState(null)
   const [copySuccess, setCopySuccess] = useState({})
   
   // Sanitization and validation utilities (defined before useState to use in initial state)
@@ -98,6 +97,7 @@ function CheckoutForm({ buyerId }) {
   })
 
   const testCardPresets = [
+    { id: 'chargeback', name: 'Chargeback', cardNumber: '4000 0000 0000 0259', expiry: '12/28', cvc: '123', zip: '12345', description: 'Payment succeeds, then triggers a chargeback/dispute' },
     { id: 'success', name: 'Success', cardNumber: '4242 4242 4242 4242', expiry: '12/28', cvc: '123', zip: '12345', description: 'Payment succeeds' },
     { id: 'decline', name: 'Decline', cardNumber: '4000 0000 0000 0002', expiry: '12/28', cvc: '123', zip: '12345', description: 'Card is declined' },
     { id: 'insufficient_funds', name: 'Insufficient Funds', cardNumber: '4000 0000 0000 9995', expiry: '12/28', cvc: '123', zip: '12345', description: 'Insufficient funds' },
@@ -107,6 +107,8 @@ function CheckoutForm({ buyerId }) {
     { id: 'requires_payment_method', name: 'Requires Payment Method', cardNumber: '4000 0000 0000 0341', expiry: '12/28', cvc: '123', zip: '12345', description: 'Requires payment method' },
     { id: 'processing_error', name: 'Processing Error', cardNumber: '4000 0000 0000 0119', expiry: '12/28', cvc: '123', zip: '12345', description: 'Processing error' },
   ]
+  
+  const [selectedTestCard, setSelectedTestCard] = useState(null)
 
   const copyToClipboard = async (text, field) => {
     try {

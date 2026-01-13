@@ -133,6 +133,7 @@ class PaymentCapturedEventConsumer(
             // Publish event to notify payments service
             val ledgerTransactionCreatedEvent = LedgerTransactionCreatedEvent(
                 paymentId = event.paymentId,
+                refundId = null,  // This is a payment, not a refund
                 ledgerTransactionId = transaction.id,
                 idempotencyKey = event.idempotencyKey
             )

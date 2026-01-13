@@ -227,6 +227,30 @@ class RefundService(
     fun getRefundsByPaymentId(paymentId: UUID): List<Refund> {
         return refundRepository.findByPaymentId(paymentId).map { it.toDomain() }
     }
+    
+    /**
+     * Updates the ledger transaction ID for a refund.
+     * 
+     * This is called after the ledger service has created a transaction for the refund.
+     * 
+     * @param refundId Refund ID
+     * @param ledgerTransactionId Ledger transaction ID
+     * @return Updated refund
+     */
+    @Transactional
+    fun updateLedgerTransactionId(refundId: UUID, ledgerTransactionId: UUID): Refund {
+        val entity = refundRepository.findById(refundId).orElseThrow {
+            IllegalArgumentException("Refund not found: $refundId")
+        }
+        
+        entity.ledgerTransactionId = ledgerTransactionId
+        entity.updatedAt = Instant.now()
+        
+        val saved = refundRepository.save(entity)
+        logger.info("Updated refund $refundId with ledger transaction ID: $ledgerTransactionId")
+        
+        return saved.toDomain()
+    }
 }
 
 /**

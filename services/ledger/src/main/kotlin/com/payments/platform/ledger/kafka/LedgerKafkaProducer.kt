@@ -25,24 +25,35 @@ class LedgerKafkaProducer(
 
     /**
      * Publish a LedgerTransactionCreatedEvent to the payment.events topic.
-     * The payment ID is used as the Kafka key for partitioning.
+     * The payment ID, refund ID, or chargeback ID is used as the Kafka key for partitioning.
      */
     fun publishLedgerTransactionCreated(event: LedgerTransactionCreatedEvent) {
         try {
-            val result = kafkaTemplate.send(eventsTopic, event.paymentId.toString(), event)
+            // Use paymentId, refundId, or chargebackId as the Kafka key for partitioning
+            val key = when {
+                event.paymentId != null -> event.paymentId.toString()
+                event.refundId != null -> event.refundId.toString()
+                event.chargebackId != null -> event.chargebackId.toString()
+                else -> event.ledgerTransactionId.toString() // Fallback to transaction ID
+            }
+            
+            val result = kafkaTemplate.send(eventsTopic, key, event)
             result.whenComplete { result: SendResult<String, LedgerTransactionCreatedEvent>?, exception: Throwable? ->
                 if (exception != null) {
-                    logger.error("Failed to publish LedgerTransactionCreatedEvent for payment ${event.paymentId}", exception)
+                    val entityId = event.paymentId ?: event.refundId ?: event.chargebackId ?: event.ledgerTransactionId
+                    logger.error("Failed to publish LedgerTransactionCreatedEvent for entity $entityId", exception)
                 } else if (result != null) {
                     val recordMetadata = result.recordMetadata
+                    val entityId = event.paymentId ?: event.refundId ?: event.chargebackId ?: event.ledgerTransactionId
                     logger.info(
-                        "Published LedgerTransactionCreatedEvent for payment ${event.paymentId} " +
+                        "Published LedgerTransactionCreatedEvent for entity $entityId " +
                         "(ledger transaction: ${event.ledgerTransactionId}) to partition ${recordMetadata.partition()}"
                     )
                 }
             }
         } catch (e: Exception) {
-            logger.error("Error publishing LedgerTransactionCreatedEvent for payment ${event.paymentId}", e)
+            val entityId = event.paymentId ?: event.refundId ?: event.chargebackId ?: event.ledgerTransactionId
+            logger.error("Error publishing LedgerTransactionCreatedEvent for entity $entityId", e)
             throw e
         }
     }

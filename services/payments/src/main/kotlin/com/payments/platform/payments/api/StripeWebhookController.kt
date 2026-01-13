@@ -720,6 +720,11 @@ class StripeWebhookController(
      * 
      * This means the dispute status changed (e.g., needs_response → under_review).
      * Updates chargeback state accordingly.
+     * 
+     * IMPORTANT: This method should NOT transition chargebacks that are already in a terminal state
+     * (WON, LOST, WITHDRAWN, WARNING_CLOSED) because the charge.dispute.closed webhook may have
+     * already processed the final state. This prevents race conditions where both events arrive
+     * concurrently and the updated event overwrites the closed event's terminal state.
      */
     private fun handleDisputeUpdated(event: Event) {
         val stripeDispute = event.dataObjectDeserializer.deserializeUnsafe() as com.stripe.model.Dispute
@@ -734,6 +739,18 @@ class StripeWebhookController(
                 logger.warn("Chargeback not found for Stripe Dispute ID: $stripeDisputeId")
                 return
             }
+        
+        // Idempotency check: if chargeback is already in a terminal state, don't update
+        // This prevents race conditions where charge.dispute.closed and charge.dispute.updated
+        // arrive concurrently, and the updated event tries to overwrite the terminal state
+        if (chargeback.outcome != null) {
+            logger.info(
+                "Chargeback ${chargeback.id} already in terminal state (outcome: ${chargeback.outcome}, " +
+                "state: ${chargeback.state}). Ignoring dispute.updated event to prevent race condition. " +
+                "Stripe Dispute ID: $stripeDisputeId"
+            )
+            return
+        }
         
         // Determine target state based on Stripe dispute status
         val targetState = when (disputeStatus) {

@@ -9,6 +9,7 @@ import com.payments.platform.ledger.domain.EntryDirection
 import com.payments.platform.ledger.domain.EntryRequest
 import com.payments.platform.ledger.service.LedgerService
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.kafka.support.Acknowledgment
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
@@ -36,7 +37,8 @@ import java.util.UUID
 @Component
 class ChargebackWonEventConsumer(
     private val ledgerService: LedgerService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val ledgerKafkaProducer: LedgerKafkaProducer
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
@@ -130,6 +132,16 @@ class ChargebackWonEventConsumer(
                 "DR STRIPE_CLEARING: ${event.chargebackAmountCents} (money returned), " +
                 "CR CHARGEBACK_CLEARING: ${event.chargebackAmountCents} (dispute fee remains as expense)"
             )
+            
+            // Publish event to notify payments service
+            val ledgerTransactionCreatedEvent = LedgerTransactionCreatedEvent(
+                paymentId = event.paymentId,  // Include paymentId for reference
+                refundId = null,  // This is a chargeback, not a refund
+                chargebackId = event.chargebackId,
+                ledgerTransactionId = transaction.id,
+                idempotencyKey = event.idempotencyKey
+            )
+            ledgerKafkaProducer.publishLedgerTransactionCreated(ledgerTransactionCreatedEvent)
             
             // Commit offset only after successful processing
             acknowledgment.acknowledge()

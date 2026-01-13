@@ -12,7 +12,7 @@ import {
 } from '@mui/material'
 import { CreditCard } from '@mui/icons-material'
 
-function AddStripeAccountModal({ open, onClose, onSuccess, currency = 'USD' }) {
+function AddStripeAccountModal({ open, onClose, onSuccess, currency = 'CAD' }) {
   const [stripeAccountId, setStripeAccountId] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)

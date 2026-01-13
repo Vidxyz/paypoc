@@ -66,7 +66,7 @@ export const getReconciliationRun = async (reconciliationId) => {
 }
 
 // Payout endpoints
-export const createPayoutForSeller = async (sellerId, currency = 'USD') => {
+export const createPayoutForSeller = async (sellerId, currency = 'CAD') => {
   const response = await adminApi.post(`/sellers/${sellerId}/payout`, null, {
     params: { currency },
   })

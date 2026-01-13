@@ -31,7 +31,7 @@ data class ReconciliationRequest(
     @JsonProperty("currency")
     @Schema(
         description = "Optional currency filter (ISO 4217, uppercase, e.g., USD)",
-        example = "USD",
+        example = "CAD",
         required = false
     )
     val currency: String? = null

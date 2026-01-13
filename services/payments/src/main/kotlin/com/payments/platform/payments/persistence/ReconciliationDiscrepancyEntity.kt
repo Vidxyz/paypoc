@@ -59,7 +59,7 @@ class ReconciliationDiscrepancyEntity(
         ledgerTransactionId = null,
         stripeAmount = null,
         ledgerAmount = null,
-        currency = "USD",
+        currency = "CAD",
         description = "",
         severity = DiscrepancySeverity.CRITICAL,
         createdAt = Instant.now()

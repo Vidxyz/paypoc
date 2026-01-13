@@ -24,7 +24,7 @@ if [ $# -lt 3 ]; then
     echo "  buyer_id     - The buyer ID (e.g., buyer_123)"
     echo "  seller_id    - The seller ID (e.g., seller_456)"
     echo "  amount_cents - Payment amount in cents (e.g., 10000 for $100.00)"
-    echo "  currency     - ISO 4217 currency code (default: USD)"
+    echo "  currency     - ISO 4217 currency code (default: CAD)"
     echo ""
     echo "Note: Payments go to the BuyIt platform account. Seller Stripe account"
     echo "      registration is not required for payment creation. Sellers will"
@@ -35,7 +35,7 @@ fi
 BUYER_ID="$1"
 SELLER_ID="$2"
 AMOUNT_CENTS="$3"
-CURRENCY="${4:-USD}"
+CURRENCY="${4:-CAD}"
 
 # Validate currency format
 if ! [[ "$CURRENCY" =~ ^[A-Z]{3}$ ]]; then

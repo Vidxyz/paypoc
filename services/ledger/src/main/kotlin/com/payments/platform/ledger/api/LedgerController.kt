@@ -142,7 +142,7 @@ class LedgerController(
             ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 BalanceResponseDto(
                     accountId = accountId,
-                    currency = "USD",
+                    currency = "CAD",
                     balanceCents = 0,
                     error = "Account not found: ${e.message}"
                 )
@@ -301,7 +301,7 @@ data class SellerInfoDto(
     val sellerId: String,
     
     @JsonProperty("currency")
-    @Schema(description = "Currency code", example = "USD")
+    @Schema(description = "Currency code", example = "CAD")
     val currency: String,
     
     @JsonProperty("accountId")
@@ -342,7 +342,7 @@ data class EntryDto(
     @Schema(description = "Amount in cents (always positive)", example = "10000")
     val amountCents: Long,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String,
     
     @Schema(description = "Entry creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")

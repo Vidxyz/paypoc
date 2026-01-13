@@ -16,7 +16,7 @@ data class CreatePayoutRequestDto(
     @Schema(description = "Amount to payout in cents", example = "9000", required = true)
     val amountCents: Long,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD", required = true)
+    @Schema(description = "ISO 4217 currency code", example = "CAD", required = true)
     val currency: String,
     
     @Schema(description = "Optional description for the payout", example = "Payout for orders #123, #124", required = false)
@@ -37,7 +37,7 @@ data class PayoutResponseDto(
     @Schema(description = "Amount in cents", example = "9000")
     val amountCents: Long? = null,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String? = null,
     
     @Schema(description = "Payout state (PENDING, PROCESSING, COMPLETED, FAILED)", example = "PROCESSING")

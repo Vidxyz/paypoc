@@ -1,8 +1,9 @@
 package com.payments.platform.payments.api
 
-import com.payments.platform.payments.auth.JwtValidator
+import com.payments.platform.payments.config.AuthenticationInterceptor
 import com.payments.platform.payments.models.User
 import com.payments.platform.payments.service.SellerService
+import com.payments.platform.payments.service.PayoutService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
@@ -27,7 +28,7 @@ import java.util.UUID
 @Tag(name = "Seller Profile", description = "Seller profile and Stripe account information")
 class SellerProfileController(
     private val sellerService: SellerService,
-    private val jwtValidator: JwtValidator
+    private val payoutService: PayoutService
 ) {
     
     /**
@@ -61,20 +62,9 @@ class SellerProfileController(
     fun getSellerStripeAccounts(
         httpRequest: HttpServletRequest
     ): ResponseEntity<List<SellerStripeAccountResponse>> {
-        // Extract bearer token
-        val authHeader = httpRequest.getHeader("Authorization")
-        val token = authHeader?.removePrefix("Bearer ") ?: run {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(emptyList())
-        }
-        
-        // Validate token and extract user info
-        val user = jwtValidator.validateAndExtractUser(token)
+        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
+        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
             ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(emptyList())
-        
-        // Verify user is a SELLER
-        if (user.accountType != User.AccountType.SELLER) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(emptyList())
-        }
         
         // Use email as seller_id (as per requirement: seller_id = email)
         val sellerId = user.email
@@ -138,20 +128,9 @@ class SellerProfileController(
         @RequestBody request: UpdateStripeAccountRequest,
         httpRequest: HttpServletRequest
     ): ResponseEntity<SellerStripeAccountResponse> {
-        // Extract bearer token
-        val authHeader = httpRequest.getHeader("Authorization")
-        val token = authHeader?.removePrefix("Bearer ") ?: run {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
-        }
-        
-        // Validate token and extract user info
-        val user = jwtValidator.validateAndExtractUser(token)
+        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
+        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
             ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
-        
-        // Verify user is a SELLER
-        if (user.accountType != User.AccountType.SELLER) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
-        }
         
         // Use email as seller_id (as per requirement: seller_id = email)
         val sellerId = user.email
@@ -185,6 +164,55 @@ class SellerProfileController(
         
         val status = if (existingAccount != null) HttpStatus.OK else HttpStatus.CREATED
         return ResponseEntity.status(status).body(response)
+    }
+    
+    /**
+     * GET /seller/profile/payouts
+     * Gets the authenticated seller's payouts.
+     * 
+     * Requires: Bearer token with SELLER account_type claim
+     * Returns: List of payouts for the seller
+     */
+    @Operation(
+        summary = "Get seller payouts",
+        description = "Gets all payouts for the authenticated seller. Requires JWT bearer token with SELLER account_type claim.",
+        security = [SecurityRequirement(name = "bearerAuth")]
+    )
+    @ApiResponses(
+        ApiResponse(
+            responseCode = "200",
+            description = "Successfully retrieved seller payouts",
+            content = [Content(schema = Schema(implementation = ListPayoutsResponseDto::class))]
+        ),
+        ApiResponse(
+            responseCode = "401",
+            description = "Unauthorized - Missing, invalid, or expired bearer token"
+        ),
+        ApiResponse(
+            responseCode = "403",
+            description = "Forbidden - Only SELLER accounts can access this endpoint"
+        )
+    )
+    @GetMapping("/payouts")
+    fun getSellerPayouts(
+        httpRequest: HttpServletRequest
+    ): ResponseEntity<ListPayoutsResponseDto> {
+        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
+        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
+            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                ListPayoutsResponseDto(error = "Unauthorized: user not authenticated")
+            )
+        
+        // Use email as seller_id (as per requirement: seller_id = email)
+        val sellerId = user.email
+        
+        // Fetch seller's payouts
+        val payouts = payoutService.getPayoutsBySellerId(sellerId)
+        val payoutResponses = payouts.map { PayoutResponseDto.fromDomain(it) }
+        
+        return ResponseEntity.ok(
+            ListPayoutsResponseDto(payouts = payoutResponses)
+        )
     }
     
 }

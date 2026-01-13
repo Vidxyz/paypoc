@@ -321,8 +321,8 @@ class PaymentController(
         val accountId = when (user.accountType) {
             User.AccountType.SELLER -> {
                 // Use deterministic UUID to match account creation and payment processing
-                // Default to USD for now (can be extended to support multiple currencies)
-                val currency = "USD"
+                // Default to CAD for now (can be extended to support multiple currencies)
+                val currency = "CAD"
                 UUID.nameUUIDFromBytes("SELLER_PAYABLE_${user.email}_$currency".toByteArray())
             }
             User.AccountType.BUYER -> {
@@ -358,7 +358,7 @@ class PaymentController(
                 ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                     BalanceResponseDto(
                         accountId = accountId,
-                        currency = "USD",
+                        currency = "CAD",
                         balanceCents = 0,
                         error = "Account not found: ${e.message}"
                     )

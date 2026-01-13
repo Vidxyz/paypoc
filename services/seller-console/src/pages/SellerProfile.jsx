@@ -24,7 +24,7 @@ function SellerProfile() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [addStripeModalOpen, setAddStripeModalOpen] = useState(false)
-  const [selectedCurrency, setSelectedCurrency] = useState('USD')
+  const [selectedCurrency, setSelectedCurrency] = useState('CAD')
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -88,7 +88,7 @@ function SellerProfile() {
     }
   }
 
-  const handleOpenAddModal = (currency = 'USD') => {
+  const handleOpenAddModal = (currency = 'CAD') => {
     setSelectedCurrency(currency)
     setAddStripeModalOpen(true)
   }
@@ -130,7 +130,7 @@ function SellerProfile() {
               color="warning"
               size="small"
               startIcon={<Add />}
-              onClick={() => handleOpenAddModal('USD')}
+              onClick={() => handleOpenAddModal('CAD')}
             >
               Add Stripe Account
             </Button>

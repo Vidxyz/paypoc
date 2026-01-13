@@ -24,7 +24,7 @@ class AccountInitializationConfig(
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
-    private val SYSTEM_CURRENCIES = listOf("USD") // Can be extended to support multiple currencies
+    private val SYSTEM_CURRENCIES = listOf("CAD") // Can be extended to support multiple currencies
     
     @Bean
     fun initializeInternalAccounts(): CommandLineRunner {

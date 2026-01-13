@@ -398,7 +398,7 @@ class ReconciliationService(
                                         ledgerTransactionId = ledgerTxId,
                                         stripeAmount = groupTotalAmount,
                                         ledgerAmount = ledgerNetAmount,
-                                        currency = "$groupCurrency vs $ledgerCurrency",
+                                        currency = groupCurrency, // Use actual currency code, not description
                                         description = "Chargeback group currency mismatch: " +
                                             "Stripe=$groupCurrency, Ledger=$ledgerCurrency",
                                         severity = DiscrepancySeverity.MEDIUM
@@ -439,7 +439,7 @@ class ReconciliationService(
                                     ledgerTransactionId = ledgerTxId,
                                     stripeAmount = stripeTx.amount,
                                     ledgerAmount = ledgerNetAmount,
-                                    currency = "$stripeCurrency vs $ledgerCurrency",
+                                    currency = stripeCurrency, // Use actual currency code, not description
                                     description = "Currency mismatch: Stripe=$stripeCurrency, Ledger=$ledgerCurrency",
                                     severity = DiscrepancySeverity.MEDIUM
                                 )

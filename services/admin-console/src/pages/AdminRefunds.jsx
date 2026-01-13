@@ -229,7 +229,7 @@ function AdminRefunds() {
     )
   }
 
-  const formatAmount = (cents, currency = 'USD') => {
+  const formatAmount = (cents, currency = 'CAD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: currency,

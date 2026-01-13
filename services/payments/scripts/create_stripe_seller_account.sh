@@ -5,19 +5,19 @@
 # It uses the Stripe API key from the environment variable STRIPE_SECRET_KEY
 stripe accounts create \
   -d type=custom \
-  -d country=US \
+  -d country=CA \
   -d business_type=individual \
-  -d email="tester@buyit.com" \
+  -d email="seller@buyit.com" \
   -d "business_profile[name]=Seller Account" \
   -d "business_profile[url]=https://buyit.com" \
   -d "business_profile[mcc]=5732" \
-  -d "individual[first_name]=Test" \
+  -d "individual[first_name]=Seller" \
   -d "individual[last_name]=User" \
-  -d "individual[email]=tester@buyit.com" \
+  -d "individual[email]=seller@buyit.com" \
   -d "individual[address][line1]=123 King St W" \
   -d "individual[address][city]=Toronto" \
-  -d "individual[address][state]=OH" \
-  -d "individual[address][postal_code]=12345" \
+  -d "individual[address][state]=ON" \
+  -d "individual[address][postal_code]=M5V 1K4" \
   -d "individual[dob][day]=01" \
   -d "individual[dob][month]=01" \
   -d "individual[dob][year]=1990" \

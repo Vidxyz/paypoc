@@ -24,7 +24,7 @@ data class ReconciliationReport(
     val endDate: Instant,
     
     @JsonProperty("currency")
-    @Schema(description = "Currency filter applied (if any)", example = "USD")
+    @Schema(description = "Currency filter applied (if any)", example = "CAD")
     val currency: String?,
     
     @JsonProperty("runAt")
@@ -104,7 +104,7 @@ data class DiscrepancyDto(
     val ledgerAmount: Long?,
     
     @JsonProperty("currency")
-    @Schema(description = "Currency code", example = "USD")
+    @Schema(description = "Currency code", example = "CAD")
     val currency: String,
     
     @JsonProperty("description")

@@ -113,7 +113,7 @@ class PayoutController(
     @PostMapping("/sellers/{sellerId}/payout")
     fun createPayoutForPendingFunds(
         @PathVariable sellerId: String,
-        @RequestParam(defaultValue = "USD") currency: String
+        @RequestParam(defaultValue = "CAD") currency: String
     ): ResponseEntity<PayoutResponseDto> {
         return try {
             val payout = payoutService.createPayoutForPendingFunds(

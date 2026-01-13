@@ -546,6 +546,7 @@ deploy_ledger() {
     kubectl apply -f "$K8S_DIR/ledger/secret.yaml" &
     kubectl apply -f "$K8S_DIR/ledger/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/ledger/service.yaml" &
+    kubectl apply -f "$K8S_DIR/ledger/ingress.yaml" &
     wait
 }
 
@@ -625,6 +626,7 @@ deploy_user() {
     kubectl apply -f "$K8S_DIR/user/secret.yaml" &
     kubectl apply -f "$K8S_DIR/user/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/user/service.yaml" &
+    kubectl apply -f "$K8S_DIR/user/ingress.yaml" &
     wait
 }
 

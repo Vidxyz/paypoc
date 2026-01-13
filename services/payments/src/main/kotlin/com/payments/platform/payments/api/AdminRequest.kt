@@ -28,7 +28,7 @@ data class SellerWithBalanceDto(
     val sellerId: String,
     
     @JsonProperty("currency")
-    @Schema(description = "Currency code", example = "USD")
+    @Schema(description = "Currency code", example = "CAD")
     val currency: String,
     
     @JsonProperty("accountId")

@@ -69,6 +69,17 @@ class AuthenticationInterceptor(
             }
         }
         
+        // Check if this is a seller-only route
+        if (isSellerRoute(request.requestURI)) {
+            if (user.accountType != User.AccountType.SELLER) {
+                logger.warn("Non-SELLER user (${user.userId}, account_type: ${user.accountType}) attempted to access seller route: ${request.requestURI}")
+                response.status = HttpServletResponse.SC_FORBIDDEN
+                response.contentType = "application/json"
+                response.writer.write("""{"error":"Only SELLER users can access this endpoint"}""")
+                return false
+            }
+        }
+        
         // Set user in request attributes for use in controllers
         request.setAttribute(USER_ATTRIBUTE, user)
         logger.debug("Authenticated request for user: ${user.userId} (${user.email}, account_type: ${user.accountType})")
@@ -104,5 +115,18 @@ class AuthenticationInterceptor(
         // Check if URI contains "/admin" as a path segment
         val pathSegments = uri.split("/").filter { it.isNotBlank() }
         return pathSegments.contains("admin")
+    }
+    
+    /**
+     * Checks if a route is seller-only (starts with "/seller" in the path).
+     * Examples:
+     * - /seller/profile/stripe-accounts -> true
+     * - /seller/profile/payouts -> true
+     * - /payments -> false
+     * - /admin/payments -> false
+     */
+    private fun isSellerRoute(uri: String): Boolean {
+        // Check if URI starts with "/seller"
+        return uri.startsWith("/seller")
     }
 }

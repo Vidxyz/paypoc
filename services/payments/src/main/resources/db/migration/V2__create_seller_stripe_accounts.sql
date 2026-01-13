@@ -20,5 +20,5 @@ CREATE INDEX idx_seller_stripe_accounts_currency ON seller_stripe_accounts(curre
 COMMENT ON TABLE seller_stripe_accounts IS 'Maps seller_id to Stripe connected account ID, supports multiple currencies per seller';
 COMMENT ON COLUMN seller_stripe_accounts.seller_id IS 'Seller identifier (business ID)';
 COMMENT ON COLUMN seller_stripe_accounts.stripe_account_id IS 'Stripe connected account ID (e.g., acct_1234567890)';
-COMMENT ON COLUMN seller_stripe_accounts.currency IS 'Currency code (ISO 4217, e.g., USD)';
+COMMENT ON COLUMN seller_stripe_accounts.currency IS 'Currency code (ISO 4217, e.g., CAD)';
 

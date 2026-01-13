@@ -29,7 +29,7 @@ object TestHelper {
         port: Int,
         sellerId: String,
         stripeAccountId: String,
-        currency: String = "USD",
+        currency: String = "CAD",
         internalApiToken: String = "internal-test-token-change-in-production"
     ): Boolean {
         return try {
@@ -68,7 +68,7 @@ object TestHelper {
         restTemplate: TestRestTemplate,
         port: Int,
         sellerId: String,
-        currency: String = "USD",
+        currency: String = "CAD",
         internalApiToken: String = "internal-test-token-change-in-production"
     ): Boolean {
         return try {
@@ -103,7 +103,7 @@ object TestHelper {
         restTemplate: TestRestTemplate,
         port: Int,
         sellerId: String,
-        currency: String = "USD",
+        currency: String = "CAD",
         internalApiToken: String = "internal-test-token-change-in-production"
     ): Map<*, *>? {
         return try {

@@ -22,7 +22,7 @@ data class CreateTransactionRequestDto(
     @field:NotBlank(message = "currency is required")
     @field:Pattern(regexp = "^[A-Z]{3}$", message = "currency must be 3 uppercase letters")
     @JsonProperty("currency")
-    @Schema(description = "ISO 4217 currency code (3 uppercase letters)", example = "USD", required = true)
+    @Schema(description = "ISO 4217 currency code (3 uppercase letters)", example = "CAD", required = true)
     val currency: String,
 
     @field:NotBlank(message = "idempotencyKey is required")
@@ -42,7 +42,7 @@ data class BalanceResponseDto(
     val accountId: UUID? = null,
 
     @JsonProperty("currency")
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String? = null,
 
     @JsonProperty("balanceCents")

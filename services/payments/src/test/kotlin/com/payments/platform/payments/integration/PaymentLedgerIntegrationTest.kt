@@ -147,7 +147,7 @@ class PaymentLedgerIntegrationTest {
             port = port,
             sellerId = sellerId,
             stripeAccountId = testStripeAccountId,
-            currency = "USD",
+            currency = "CAD",
             internalApiToken = paymentsInternalApiToken
         )
         
@@ -165,7 +165,7 @@ class PaymentLedgerIntegrationTest {
             restTemplate = restTemplate,
             port = port,
             sellerId = sellerId,
-            currency = "USD",
+            currency = "CAD",
             internalApiToken = paymentsInternalApiToken
         )
         
@@ -200,7 +200,7 @@ class PaymentLedgerIntegrationTest {
             buyerId = buyerId,
             sellerId = unregisteredSellerId,
             grossAmountCents = 10000L,
-            currency = "USD",
+            currency = "CAD",
             description = "Test payment"
         )
         
@@ -251,7 +251,7 @@ class PaymentLedgerIntegrationTest {
             buyerId = buyerId,
             sellerId = sellerId,
             grossAmountCents = 10000L,  // $100.00
-            currency = "USD",
+            currency = "CAD",
             description = "Test payment"
         )
         

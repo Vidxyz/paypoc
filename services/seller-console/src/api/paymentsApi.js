@@ -101,6 +101,15 @@ export const createPaymentsApiClient = (getAccessToken) => {
       return response.data
     },
     
+    /**
+     * Get seller's payouts
+     * @returns {Promise<Object>} Response with payouts array
+     */
+    getSellerPayouts: async () => {
+      const response = await paymentsApi.get('/seller/profile/payouts')
+      return response.data
+    },
+    
     // Cleanup function to remove interceptor if needed
     cleanup: () => {
       paymentsApi.interceptors.request.eject(requestInterceptor)

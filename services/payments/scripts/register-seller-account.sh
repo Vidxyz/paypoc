@@ -26,7 +26,7 @@ if [ $# -lt 2 ]; then
     echo "Arguments:"
     echo "  seller_id         - The seller ID (e.g., seller_123)"
     echo "  stripe_account_id - The Stripe connected account ID (e.g., acct_1234567890)"
-    echo "  currency          - ISO 4217 currency code (default: USD)"
+    echo "  currency          - ISO 4217 currency code (default: CAD)"
     echo ""
     echo "Environment variables:"
     echo "  PAYMENTS_SERVICE_URL - Payments Service URL (default: http://localhost:8080)"
@@ -36,7 +36,7 @@ fi
 
 SELLER_ID="$1"
 STRIPE_ACCOUNT_ID="$2"
-CURRENCY="${3:-USD}"
+CURRENCY="${3:-CAD}"
 
 # Validate currency format (3 uppercase letters)
 if ! [[ "$CURRENCY" =~ ^[A-Z]{3}$ ]]; then

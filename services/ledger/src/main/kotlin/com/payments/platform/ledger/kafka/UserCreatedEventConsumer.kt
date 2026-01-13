@@ -73,7 +73,7 @@ class UserCreatedEventConsumer(
             val email = message["email"] as? String ?: throw IllegalArgumentException("Missing email in message")
             val auth0UserId = message["auth0UserId"] as? String ?: throw IllegalArgumentException("Missing auth0UserId in message")
             val accountType = message["accountType"] as? String ?: "BUYER"
-            val currency = "USD" // Default currency, can be configurable in the future
+            val currency = "CAD" // Default currency, can be configurable in the future
 
             logger.info("Received user.created event for user $userId (email: $email, auth0UserId: $auth0UserId, account_type: $accountType)")
 
@@ -90,7 +90,7 @@ class UserCreatedEventConsumer(
             // This ensures consistency with payment processing which uses the same pattern
             // accountType = SELLER_PAYABLE
             // referenceId = email (for lookup)
-            // currency = USD (default)
+            // currency = CAD (default)
             
             // Check if account already exists (idempotency)
             val existingAccount = try {

@@ -40,5 +40,5 @@ COMMENT ON COLUMN ledger_entries.transaction_id IS 'Reference to the parent tran
 COMMENT ON COLUMN ledger_entries.account_id IS 'Reference to the account this entry affects';
 COMMENT ON COLUMN ledger_entries.direction IS 'DEBIT or CREDIT';
 COMMENT ON COLUMN ledger_entries.amount_cents IS 'Amount in cents (always positive, direction indicates DEBIT/CREDIT)';
-COMMENT ON COLUMN ledger_entries.currency IS 'Currency code (ISO 4217, e.g., USD)';
+COMMENT ON COLUMN ledger_entries.currency IS 'Currency code (ISO 4217, e.g., CAD)';
 

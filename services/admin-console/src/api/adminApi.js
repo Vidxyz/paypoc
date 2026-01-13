@@ -149,7 +149,7 @@ export const getReconciliationRun = async (reconciliationId) => {
 }
 
 // Payout endpoints (admin-only)
-export const createPayoutForSeller = async (sellerId, currency = 'USD') => {
+export const createPayoutForSeller = async (sellerId, currency = 'CAD') => {
   const response = await adminApi.post(`/admin/sellers/${sellerId}/payout`, null, {
     params: { currency },
   })

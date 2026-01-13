@@ -72,7 +72,7 @@ class UserCreatedEventConsumer(
             val userId = UUID.fromString(message["userId"] as? String ?: throw IllegalArgumentException("Missing userId in message"))
             val email = message["email"] as? String ?: throw IllegalArgumentException("Missing email in message")
             val accountType = message["accountType"] as? String ?: "BUYER"
-            val currency = "USD" // Default currency, can be configurable in the future
+            val currency = "CAD" // Default currency, can be configurable in the future
 
             logger.info("Received user.created event for user $userId (email: $email, account_type: $accountType)")
 

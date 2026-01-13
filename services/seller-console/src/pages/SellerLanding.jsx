@@ -20,6 +20,7 @@ import {
 import StoreIcon from '@mui/icons-material/Store'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import PaymentIcon from '@mui/icons-material/Payment'
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import { useAuth0 } from '../auth/Auth0Provider'
 import { createPaymentsApiClient } from '../api/paymentsApi'
 
@@ -28,6 +29,7 @@ function SellerLanding() {
   const userEmail = user?.email || user?.['https://buyit.local/email'] || ''
   const [balance, setBalance] = useState(null)
   const [payments, setPayments] = useState([])
+  const [payouts, setPayouts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -43,20 +45,25 @@ function SellerLanding() {
 
         const paymentsApi = createPaymentsApiClient(getAccessToken)
 
-        // Fetch balance and payments in parallel
-        const [balanceData, paymentsData] = await Promise.all([
+        // Fetch balance, payments, and payouts in parallel
+        const [balanceData, paymentsData, payoutsData] = await Promise.all([
           paymentsApi.getSellerBalance().catch((err) => {
             console.warn('Failed to fetch balance:', err)
-            return { balanceCents: 0, currency: 'USD', error: err.message }
+            return { balanceCents: 0, currency: 'CAD', error: err.message }
           }),
           paymentsApi.getSellerPayments({ page: 0, size: 10, sortBy: 'createdAt', sortDirection: 'DESC' }).catch((err) => {
             console.warn('Failed to fetch payments:', err)
             return { payments: [], total: 0 }
           }),
+          paymentsApi.getSellerPayouts().catch((err) => {
+            console.warn('Failed to fetch payouts:', err)
+            return { payouts: [] }
+          }),
         ])
 
         setBalance(balanceData)
         setPayments(paymentsData.payments || [])
+        setPayouts(payoutsData.payouts || [])
 
         paymentsApi.cleanup()
       } catch (err) {
@@ -70,7 +77,7 @@ function SellerLanding() {
     fetchData()
   }, [isAuthenticated, getAccessToken])
 
-  const formatAmount = (cents, currency = 'USD') => {
+  const formatAmount = (cents, currency = 'CAD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: currency,
@@ -96,6 +103,21 @@ function SellerLanding() {
         return 'info'
       case 'CREATED':
       case 'CONFIRMING':
+        return 'warning'
+      case 'FAILED':
+        return 'error'
+      default:
+        return 'default'
+    }
+  }
+
+  const getPayoutStateColor = (state) => {
+    switch (state) {
+      case 'COMPLETED':
+        return 'success'
+      case 'PROCESSING':
+        return 'info'
+      case 'PENDING':
         return 'warning'
       case 'FAILED':
         return 'error'
@@ -226,6 +248,68 @@ function SellerLanding() {
                           size="small"
                         />
                       </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Payouts */}
+      <Card>
+        <CardContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+            <AccountBalanceWalletIcon sx={{ fontSize: 32, color: 'primary.main', mr: 1 }} />
+            <Typography variant="h5" component="h2">
+              Payouts
+            </Typography>
+          </Box>
+          {payouts.length === 0 ? (
+            <Alert severity="info">No payouts found.</Alert>
+          ) : (
+            <TableContainer component={Paper} variant="outlined">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Payout ID</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Amount</TableCell>
+                    <TableCell>State</TableCell>
+                    <TableCell>Stripe Transfer ID</TableCell>
+                    <TableCell>Completed At</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {payouts.map((payout) => (
+                    <TableRow key={payout.id}>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {payout.id?.substring(0, 8)}...
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{formatDate(payout.createdAt)}</TableCell>
+                      <TableCell>{formatAmount(payout.amountCents, payout.currency)}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={payout.state}
+                          color={getPayoutStateColor(payout.state)}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {payout.stripeTransferId ? (
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                            {payout.stripeTransferId.substring(0, 12)}...
+                          </Typography>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            N/A
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>{formatDate(payout.completedAt)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

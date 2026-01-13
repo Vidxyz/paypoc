@@ -84,15 +84,15 @@ function CheckoutForm({ buyerId }) {
   }
 
   const validateCurrency = (currency) => {
-    // Only allow USD for now (as per recent changes)
-    const allowedCurrencies = ['USD']
-    return allowedCurrencies.includes(currency) ? currency : 'USD'
+    // Only allow CAD for now (as per recent changes)
+    const allowedCurrencies = ['CAD']
+    return allowedCurrencies.includes(currency) ? currency : 'CAD'
   }
 
   const [formData, setFormData] = useState({
     sellerId: sanitizeSellerId('seller@example.com'),
     grossAmountCents: 10000,
-    currency: validateCurrency('USD'),
+    currency: validateCurrency('CAD'),
     description: sanitizeDescription('Test payment from BuyIt frontend')
   })
 
@@ -330,10 +330,10 @@ function CheckoutForm({ buyerId }) {
               onChange={handleInputChange}
               label="Currency"
             >
-              <MenuItem value="USD">USD</MenuItem>
+              <MenuItem value="CAD">CAD</MenuItem>
               <MenuItem value="EUR" disabled>EUR (Coming soon)</MenuItem>
               <MenuItem value="GBP" disabled>GBP (Coming soon)</MenuItem>
-              <MenuItem value="CAD" disabled>CAD (Coming soon)</MenuItem>
+              <MenuItem value="USD" disabled>USD (Coming soon)</MenuItem>
             </Select>
           </FormControl>
 

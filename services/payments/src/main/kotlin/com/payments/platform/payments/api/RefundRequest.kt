@@ -25,7 +25,7 @@ data class RefundResponseDto(
     @Schema(description = "Net seller refund in cents (90% of refund amount)", example = "9000")
     val netSellerRefundCents: Long? = null,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String? = null,
     
     @Schema(description = "Refund state (REFUNDING, REFUNDED, FAILED)", example = "REFUNDING")

@@ -29,7 +29,7 @@ data class CreatePaymentRequestDto(
     @field:NotBlank(message = "currency is required")
     @field:Pattern(regexp = "^[A-Z]{3}$", message = "currency must be 3 uppercase letters")
     @JsonProperty("currency")
-    @Schema(description = "ISO 4217 currency code (3 uppercase letters)", example = "USD", required = true)
+    @Schema(description = "ISO 4217 currency code (3 uppercase letters)", example = "CAD", required = true)
     val currency: String,
     
     @JsonProperty("description")
@@ -60,7 +60,7 @@ data class PaymentResponseDto(
     @Schema(description = "Net seller amount in cents (90% of gross)", example = "9000")
     val netSellerAmountCents: Long? = null,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String? = null,
     
     @Schema(description = "Payment state (CREATED, CONFIRMING, AUTHORIZED, CAPTURED, FAILED)", example = "CREATED")
@@ -168,7 +168,7 @@ data class BalanceResponseDto(
     @Schema(description = "The account ID", example = "550e8400-e29b-41d4-a716-446655440000")
     val accountId: UUID? = null,
     
-    @Schema(description = "ISO 4217 currency code", example = "USD")
+    @Schema(description = "ISO 4217 currency code", example = "CAD")
     val currency: String? = null,
     
     @Schema(description = "Current balance in cents (from Ledger Service)", example = "125000")

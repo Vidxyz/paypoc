@@ -314,6 +314,10 @@ build_all_images() {
     (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) &
     INVENTORY_PID=$!
     
+    log_info "Building cart-service image..."
+    (cd "$PROJECT_ROOT/services/cart" && docker build -t cart-service:latest .) &
+    CART_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -340,6 +344,9 @@ build_all_images() {
     wait $INVENTORY_PID || { log_error "Inventory image build failed"; exit 1; }
     log_info "Inventory image built successfully"
     
+    wait $CART_PID || { log_error "Cart image build failed"; exit 1; }
+    log_info "Cart image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
@@ -350,6 +357,7 @@ build_all_images() {
     minikube image load user-service:latest &
     minikube image load catalog-service:latest &
     minikube image load inventory-service:latest &
+    minikube image load cart-service:latest &
     
     # Wait for all image loads to complete
     wait
@@ -439,6 +447,10 @@ deploy_multiple_services() {
                 ;;
             inventory)
                 deploy_inventory &
+                pids+=($!)
+                ;;
+            cart)
+                deploy_cart &
                 pids+=($!)
                 ;;
         esac
@@ -694,6 +706,17 @@ deploy_inventory() {
     wait
 }
 
+deploy_cart() {
+    log_info "Deploying Cart Service..."
+    kubectl apply -f "$K8S_DIR/cart/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/service.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/ingress.yaml" &
+    wait
+}
+
 wait_for_services() {
     local service_name="${1:-all}"
     
@@ -741,6 +764,10 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet" &
     INVENTORY_PID=$!
     
+    log_info "Waiting for Cart Service..."
+    kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet" &
+    CART_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
@@ -751,6 +778,7 @@ wait_for_services() {
     wait $USER_PID
     wait $CATALOG_PID
     wait $INVENTORY_PID
+    wait $CART_PID
     
     log_info "Services deployment complete"
 }
@@ -790,6 +818,10 @@ wait_for_single_service() {
             inventory)
             log_info "Waiting for Inventory Service..."
             kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet"
+            ;;
+            cart)
+            log_info "Waiting for Cart Service..."
+            kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet"
             ;;
         esac
 }
@@ -896,7 +928,7 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user" "catalog" "inventory")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user" "catalog" "inventory" "cart")
 SERVICES_TO_DEPLOY=()
 EXCLUDED_SERVICES=()
 EXCLUDE_MODE=false

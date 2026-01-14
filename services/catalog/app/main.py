@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.db.database import init_db
-from app.api import products, categories, health
+from app.api import products, categories, health, images
 
 # Configure logging
 logging.basicConfig(
@@ -103,6 +103,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(products.router, prefix="/api/catalog")
 app.include_router(categories.router, prefix="/api/catalog")
+app.include_router(images.router, prefix="/api/catalog")
 
 
 @app.get("/")

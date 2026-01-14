@@ -17,6 +17,7 @@ dependencies = [
     "PyJWT[crypto]==2.8.0",
     "cryptography==42.0.0",
     "requests==2.31.0",
+    "httpx==0.26.0",
     # Kafka
     "confluent-kafka==2.3.0",
     # Cloudinary (active image provider)

@@ -59,4 +59,41 @@ variable "postgres_namespace" {
   default     = "postgres"
 }
 
+variable "redis_namespace" {
+  description = "Kubernetes namespace for Redis"
+  type        = string
+  default     = "redis"
+}
+
+variable "redis_chart_version" {
+  description = "Version of the Bitnami Redis Helm chart"
+  type        = string
+  default     = "19.1.0"
+}
+
+variable "redis_password" {
+  description = "Redis password (leave empty for no password)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "redis_replica_count" {
+  description = "Number of Redis replicas"
+  type        = number
+  default     = 1
+}
+
+variable "redis_memory_limit" {
+  description = "Memory limit for Redis (e.g., '256Mi')"
+  type        = string
+  default     = "256Mi"
+}
+
+variable "redis_cpu_limit" {
+  description = "CPU limit for Redis (e.g., '500m')"
+  type        = string
+  default     = "500m"
+}
+
 

@@ -17,6 +17,9 @@ function SellerNavbar({ onLogout, userEmail }) {
           <Button color="inherit" onClick={() => navigate('/dashboard')}>
             Dashboard
           </Button>
+          <Button color="inherit" onClick={() => navigate('/products')}>
+            Products
+          </Button>
           <Button color="inherit" onClick={() => navigate('/profile')}>
             Profile
           </Button>

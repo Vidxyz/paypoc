@@ -227,6 +227,8 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -308,6 +310,10 @@ build_all_images() {
     (cd "$PROJECT_ROOT/services/catalog" && docker build -t catalog-service:latest .) &
     CATALOG_PID=$!
     
+    log_info "Building inventory-service image..."
+    (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) &
+    INVENTORY_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -331,6 +337,9 @@ build_all_images() {
     wait $CATALOG_PID || { log_error "Catalog image build failed"; exit 1; }
     log_info "Catalog image built successfully"
     
+    wait $INVENTORY_PID || { log_error "Inventory image build failed"; exit 1; }
+    log_info "Inventory image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
@@ -340,6 +349,7 @@ build_all_images() {
     minikube image load seller-console:latest &
     minikube image load user-service:latest &
     minikube image load catalog-service:latest &
+    minikube image load inventory-service:latest &
     
     # Wait for all image loads to complete
     wait
@@ -377,6 +387,9 @@ delete_deployments() {
                 ;;
             catalog)
                 kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
+                ;;
+            inventory)
+                kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
                 ;;
         esac
     done
@@ -422,6 +435,10 @@ deploy_multiple_services() {
                 ;;
             catalog)
                 deploy_catalog &
+                pids+=($!)
+                ;;
+            inventory)
+                deploy_inventory &
                 pids+=($!)
                 ;;
         esac
@@ -535,15 +552,21 @@ build_single_image() {
             minikube image load user-service:latest
             log_info "User image built and loaded successfully"
             ;;
-        catalog)
+            catalog)
             log_info "Building catalog-service image..."
             (cd "$PROJECT_ROOT/services/catalog" && docker build -t catalog-service:latest .) || { log_error "Catalog image build failed"; exit 1; }
             minikube image load catalog-service:latest
             log_info "Catalog image built and loaded successfully"
             ;;
+            inventory)
+            log_info "Building inventory-service image..."
+            (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) || { log_error "Inventory image build failed"; exit 1; }
+            minikube image load inventory-service:latest
+            log_info "Inventory image built and loaded successfully"
+            ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, auth, user, catalog"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, auth, user, catalog, inventory"
             exit 1
             ;;
     esac
@@ -661,6 +684,16 @@ deploy_catalog() {
     wait
 }
 
+deploy_inventory() {
+    log_info "Deploying Inventory Service..."
+    kubectl apply -f "$K8S_DIR/inventory/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/service.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/ingress.yaml" &
+    wait
+}
+
 wait_for_services() {
     local service_name="${1:-all}"
     
@@ -704,6 +737,10 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/catalog-service -n "$NAMESPACE" --timeout=300s || log_warn "Catalog Service not ready yet" &
     CATALOG_PID=$!
     
+    log_info "Waiting for Inventory Service..."
+    kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet" &
+    INVENTORY_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
@@ -713,6 +750,7 @@ wait_for_services() {
     wait $SELLER_CONSOLE_PID
     wait $USER_PID
     wait $CATALOG_PID
+    wait $INVENTORY_PID
     
     log_info "Services deployment complete"
 }
@@ -748,6 +786,10 @@ wait_for_single_service() {
             catalog)
             log_info "Waiting for Catalog Service..."
             kubectl wait --for=condition=available deployment/catalog-service -n "$NAMESPACE" --timeout=300s || log_warn "Catalog Service not ready yet"
+            ;;
+            inventory)
+            log_info "Waiting for Inventory Service..."
+            kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet"
             ;;
         esac
 }
@@ -838,6 +880,7 @@ main() {
     deploy_auth &
     deploy_user &
     deploy_catalog &
+    deploy_inventory &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -853,7 +896,7 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user" "catalog")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user" "catalog" "inventory")
 SERVICES_TO_DEPLOY=()
 EXCLUDED_SERVICES=()
 EXCLUDE_MODE=false

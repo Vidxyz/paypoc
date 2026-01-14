@@ -38,4 +38,19 @@ output "postgres_namespace" {
   value       = kubernetes_namespace.postgres.metadata[0].name
 }
 
+output "redis_service_host" {
+  description = "Redis service host"
+  value       = module.redis.service_host
+}
+
+output "redis_service_port" {
+  description = "Redis service port"
+  value       = module.redis.service_port
+}
+
+output "redis_namespace" {
+  description = "Kubernetes namespace where Redis is deployed"
+  value       = kubernetes_namespace.redis.metadata[0].name
+}
+
 

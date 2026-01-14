@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: inventory-service
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/inventory_db
+    username: ${DB_USERNAME:inventory_user}
+    password: ${DB_PASSWORD:inventory_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      transaction-isolation: TRANSACTION_SERIALIZABLE  # Critical for stock correctness
+  
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Never auto-create tables, use Flyway
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        connection:
+          isolation: 8  # SERIALIZABLE isolation level
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: inventory-service
+      auto-offset-reset: earliest
+
+# Internal API Configuration
+inventory:
+  internal:
+    api:
+      token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
+
+# Kafka Topics Configuration
+kafka:
+  topics:
+    events: inventory.events
+    commands: inventory.commands
+    catalog-events: catalog.events  # Listen to catalog events
+
+# Auth0 Configuration
+auth0:
+  domain: ${AUTH0_DOMAIN:your-tenant.auth0.com}
+  audience: ${AUTH0_AUDIENCE:}  # Optional: API audience identifier
+
+server:
+  port: 8083
+
+logging:
+  level:
+    com.payments.platform.inventory: DEBUG
+    org.springframework.web: DEBUG
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /api/docs
+    enabled: true
+    tags-sorter: alpha
+    operations-sorter: alpha
+

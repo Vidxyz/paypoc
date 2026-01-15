@@ -78,13 +78,19 @@ class InventoryService(
                 kafkaProducer.publishStockCreatedEvent(StockCreatedEvent(
                     stockId = saved.id,
                     productId = saved.productId,
-                    quantity = saved.totalQuantity
+                    availableQuantity = saved.availableQuantity,
+                    totalQuantity = saved.totalQuantity,
+                    reservedQuantity = saved.reservedQuantity,
+                    allocatedQuantity = saved.allocatedQuantity
                 ))
             } else {
                 kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
                     stockId = saved.id,
                     productId = saved.productId,
-                    newQuantity = saved.totalQuantity
+                    availableQuantity = saved.availableQuantity,
+                    totalQuantity = saved.totalQuantity,
+                    reservedQuantity = saved.reservedQuantity,
+                    allocatedQuantity = saved.allocatedQuantity
                 ))
             }
             
@@ -118,7 +124,10 @@ class InventoryService(
             kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
                 stockId = saved.id,
                 productId = saved.productId,
-                newQuantity = saved.totalQuantity
+                availableQuantity = saved.availableQuantity,
+                totalQuantity = saved.totalQuantity,
+                reservedQuantity = saved.reservedQuantity,
+                allocatedQuantity = saved.allocatedQuantity
             ))
             
             saved.toDomain()

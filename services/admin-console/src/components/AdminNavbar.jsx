@@ -1,6 +1,6 @@
 import React from 'react'
 import { AppBar, Toolbar, Typography, Button, Box, Avatar, Menu, MenuItem, Divider, ListItemIcon, ListItemText, IconButton } from '@mui/material'
-import { Logout, Dashboard, AccountCircle, MoneyOff, AccountBalance, Payment } from '@mui/icons-material'
+import { Logout, Dashboard, AccountCircle, MoneyOff, AccountBalance, Payment, Inventory } from '@mui/icons-material'
 import { useNavigate, useLocation } from 'react-router-dom'
 
 function AdminNavbar({ onLogout, userEmail }) {
@@ -100,6 +100,23 @@ function AdminNavbar({ onLogout, userEmail }) {
             }}
           >
             Payouts
+          </Button>
+          <Button
+            color="inherit"
+            startIcon={<Inventory />}
+            onClick={() => navigate('/products')}
+            sx={{
+              minWidth: 'auto',
+              px: 2,
+              py: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/products' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
+          >
+            Products
           </Button>
         </Box>
         

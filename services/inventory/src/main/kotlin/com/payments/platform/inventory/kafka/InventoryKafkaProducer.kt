@@ -71,13 +71,19 @@ class InventoryKafkaProducer(
 data class StockCreatedEvent(
     val stockId: UUID,
     val productId: UUID,
-    val quantity: Int
+    val availableQuantity: Int,
+    val totalQuantity: Int,
+    val reservedQuantity: Int,
+    val allocatedQuantity: Int
 )
 
 data class StockUpdatedEvent(
     val stockId: UUID,
     val productId: UUID,
-    val newQuantity: Int
+    val availableQuantity: Int,
+    val totalQuantity: Int,
+    val reservedQuantity: Int,
+    val allocatedQuantity: Int
 )
 
 data class ReservationCreatedEvent(

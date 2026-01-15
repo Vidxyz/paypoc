@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, BigInteger, Text, DateTime, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 
@@ -32,4 +33,7 @@ class Product(Base):
         Index("idx_status", "status", postgresql_where=deleted_at.is_(None)),
         {"schema": None}  # Use default schema
     )
+    
+    # Relationship to denormalized inventory cache
+    inventory_cache = relationship("ProductInventory", back_populates="product", uselist=False)
 

@@ -5,6 +5,7 @@ import { useAuth0 } from './auth/Auth0Provider'
 import AdminRefunds from './pages/AdminRefunds'
 import AdminReconciliation from './pages/AdminReconciliation'
 import AdminPayouts from './pages/AdminPayouts'
+import AdminProducts from './pages/AdminProducts'
 import AdminNavbar from './components/AdminNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -160,6 +161,16 @@ function App() {
             element={
               isAdminAuthenticated ? (
                 <AdminPayouts />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/products"
+            element={
+              isAdminAuthenticated ? (
+                <AdminProducts />
               ) : (
                 <Navigate to="/" replace />
               )

@@ -3,11 +3,13 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 import logging
+import asyncio
 
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductUpdate, ProductListResponse
 from app.services.seller_service import SellerService
 from app.services import get_image_provider
+from app.services.inventory_client import get_inventory_client
 from app.kafka.producer import event_producer
 
 logger = logging.getLogger(__name__)
@@ -32,8 +34,13 @@ class ProductService:
             # Return empty list if conversion fails
             return []
     
-    def _product_to_response_dict(self, product: Product) -> dict:
-        """Convert Product model to dict with image URLs instead of IDs"""
+    def _product_to_response_dict(self, product: Product, inventory: Optional[dict] = None) -> dict:
+        """Convert Product model to dict with image URLs instead of IDs
+        
+        Args:
+            product: Product model instance
+            inventory: Optional inventory information dict
+        """
         product_dict = {
             "id": product.id,
             "seller_id": product.seller_id,
@@ -49,6 +56,11 @@ class ProductService:
             "created_at": product.created_at,
             "updated_at": product.updated_at,
         }
+        
+        # Add inventory if provided
+        if inventory:
+            product_dict["inventory"] = inventory
+        
         return product_dict
     
     def create_product(
@@ -109,13 +121,16 @@ class ProductService:
         
         return product
     
-    def list_seller_products(
+    async def list_seller_products(
         self,
         user_id: str,
         user_email: str,
-        status_filter: Optional[str] = None
-    ) -> List[Product]:
-        """List products for a specific seller"""
+        status_filter: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+        auth_token: Optional[str] = None  # Deprecated: kept for backward compatibility, not used for inventory
+    ) -> ProductListResponse:
+        """List products for a specific seller with pagination and inventory information"""
         try:
             logger.info(f"Getting seller_id for user_id: {user_id}, email: {user_email}")
             seller_id = self.seller_service.get_seller_id(user_id, user_email)
@@ -130,9 +145,43 @@ class ProductService:
                 logger.debug(f"Filtering by status: {status_filter}")
                 query = query.filter(Product.status == status_filter)
             
-            products = query.order_by(Product.created_at.desc()).all()
-            logger.info(f"Found {len(products)} products for seller_id: {seller_id}")
-            return products
+            # Get total count
+            total = query.count()
+            
+            # Apply pagination
+            products = query.order_by(Product.created_at.desc()).offset(
+                (page - 1) * page_size
+            ).limit(page_size).all()
+            
+            logger.info(f"Found {len(products)} products (page {page}, total: {total}) for seller_id: {seller_id}")
+            
+            # Fetch inventory for all products in batch (using internal API token)
+            inventory_map = {}
+            if products:
+                try:
+                    inventory_client = get_inventory_client()
+                    product_ids = [p.id for p in products]
+                    logger.debug(f"Fetching inventory for {len(product_ids)} products: {product_ids}")
+                    inventory_map = await inventory_client.get_stock_batch(product_ids)
+                    inventory_count = len([v for v in inventory_map.values() if v is not None])
+                    logger.info(f"Successfully fetched inventory for {inventory_count} out of {len(product_ids)} products")
+                except Exception as e:
+                    logger.error(f"Failed to fetch inventory information: {e}", exc_info=True)
+                    # Continue without inventory - it's optional
+            
+            # Build product response dicts with inventory
+            product_dicts = []
+            for product in products:
+                inventory = inventory_map.get(product.id)
+                product_dicts.append(self._product_to_response_dict(product, inventory))
+            
+            return ProductListResponse(
+                products=product_dicts,
+                total=total,
+                page=page,
+                page_size=page_size,
+                has_next=(page * page_size) < total
+            )
         except Exception as e:
             logger.error(f"Error in list_seller_products for user {user_email}: {e}", exc_info=True)
             raise
@@ -256,13 +305,14 @@ class ProductService:
         except Exception as e:
             logger.error(f"Failed to publish ProductDeletedEvent: {e}", exc_info=True)
     
-    def browse_products(
+    async     def browse_products(
         self,
         category_ids: Optional[List[UUID]] = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        sort_by: str = "newest"
     ) -> ProductListResponse:
-        """Browse products with pagination
+        """Browse products with pagination and inventory information
         
         If category_ids is provided (list of category UUIDs):
         - For each category: if it's a top-level category, includes products from that category and all its subcategories
@@ -301,12 +351,61 @@ class ProductService:
                 query = query.filter(Product.category_id == UUID('00000000-0000-0000-0000-000000000000'))
         
         total = query.count()
-        products = query.order_by(Product.created_at.desc()).offset(
-            (page - 1) * page_size
-        ).limit(page_size).all()
         
-        # Convert products to response dicts with image URLs
-        product_dicts = [self._product_to_response_dict(product) for product in products]
+        # For availability sorting, fetch a larger set to sort properly, then paginate
+        # For newest sorting, fetch only the needed page (more efficient)
+        if sort_by == "availability":
+            # Fetch up to 10 pages worth to sort by availability, then paginate
+            # This is a trade-off: better sorting accuracy vs. performance
+            fetch_limit = min(page_size * 10, total)  # Fetch up to 10 pages or all products, whichever is less
+            products_to_sort = query.order_by(Product.created_at.desc()).limit(fetch_limit).all()
+        else:
+            # Default: newest first - fetch only the page we need
+            products_to_sort = query.order_by(Product.created_at.desc()).offset(
+                (page - 1) * page_size
+            ).limit(page_size).all()
+        
+        # Fetch inventory for products in batch (using internal API token)
+        inventory_map = {}
+        if products_to_sort:
+            try:
+                inventory_client = get_inventory_client()
+                product_ids = [p.id for p in products_to_sort]
+                logger.debug(f"Fetching inventory for {len(product_ids)} products in browse: {product_ids}")
+                inventory_map = await inventory_client.get_stock_batch(product_ids)
+                inventory_count = len([v for v in inventory_map.values() if v is not None])
+                logger.info(f"Successfully fetched inventory for {inventory_count} out of {len(product_ids)} products in browse")
+            except Exception as e:
+                logger.error(f"Failed to fetch inventory information in browse: {e}", exc_info=True)
+                # Continue without inventory - it's optional
+        
+        # Sort by availability if requested
+        # todo-vh: This isnt very efficient - we might need an API from inventory service to fetch this more efficinetly instead of stitching response here
+        if sort_by == "availability":
+            def get_available_quantity(product):
+                inventory = inventory_map.get(product.id)
+                if inventory is None:
+                    return 0
+                return inventory.get("available_quantity", inventory.get("availableQuantity", 0))
+            
+            # Sort: in-stock first (available_quantity > 0), then by quantity descending, then by creation date
+            products_to_sort.sort(key=lambda p: (
+                0 if get_available_quantity(p) > 0 else 1,  # In stock first
+                -get_available_quantity(p),  # Higher quantity first
+                -p.created_at.timestamp() if p.created_at else 0  # Newer first as tiebreaker
+            ))
+            
+            # Apply pagination after sorting
+            paginated_products = products_to_sort[(page - 1) * page_size:page * page_size]
+        else:
+            # Already paginated for newest sorting
+            paginated_products = products_to_sort
+        
+        # Convert products to response dicts with image URLs and inventory
+        product_dicts = []
+        for product in paginated_products:
+            inventory = inventory_map.get(product.id)
+            product_dicts.append(self._product_to_response_dict(product, inventory))
         
         return ProductListResponse(
             products=product_dicts,

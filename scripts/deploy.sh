@@ -225,8 +225,9 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
-    kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -304,6 +305,18 @@ build_all_images() {
     (cd "$PROJECT_ROOT/services/user" && docker build -t user-service:latest .) &
     USER_PID=$!
     
+    log_info "Building catalog-service image..."
+    (cd "$PROJECT_ROOT/services/catalog" && docker build -t catalog-service:latest .) &
+    CATALOG_PID=$!
+    
+    log_info "Building inventory-service image..."
+    (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) &
+    INVENTORY_PID=$!
+    
+    log_info "Building cart-service image..."
+    (cd "$PROJECT_ROOT/services/cart" && docker build -t cart-service:latest .) &
+    CART_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -324,6 +337,15 @@ build_all_images() {
     wait $USER_PID || { log_error "User image build failed"; exit 1; }
     log_info "User image built successfully"
     
+    wait $CATALOG_PID || { log_error "Catalog image build failed"; exit 1; }
+    log_info "Catalog image built successfully"
+    
+    wait $INVENTORY_PID || { log_error "Inventory image build failed"; exit 1; }
+    log_info "Inventory image built successfully"
+    
+    wait $CART_PID || { log_error "Cart image build failed"; exit 1; }
+    log_info "Cart image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
@@ -332,6 +354,9 @@ build_all_images() {
     minikube image load admin-console:latest &
     minikube image load seller-console:latest &
     minikube image load user-service:latest &
+    minikube image load catalog-service:latest &
+    minikube image load inventory-service:latest &
+    minikube image load cart-service:latest &
     
     # Wait for all image loads to complete
     wait
@@ -361,11 +386,14 @@ delete_deployments() {
             seller-console)
                 kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
                 ;;
-            auth)
-                kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
-                ;;
             user)
                 kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
+                ;;
+            catalog)
+                kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
+                ;;
+            inventory)
+                kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
                 ;;
         esac
     done
@@ -401,12 +429,20 @@ deploy_multiple_services() {
                 deploy_seller_console &
                 pids+=($!)
                 ;;
-            auth)
-                deploy_auth &
-                pids+=($!)
-                ;;
             user)
                 deploy_user &
+                pids+=($!)
+                ;;
+            catalog)
+                deploy_catalog &
+                pids+=($!)
+                ;;
+            inventory)
+                deploy_inventory &
+                pids+=($!)
+                ;;
+            cart)
+                deploy_cart &
                 pids+=($!)
                 ;;
         esac
@@ -520,9 +556,21 @@ build_single_image() {
             minikube image load user-service:latest
             log_info "User image built and loaded successfully"
             ;;
+            catalog)
+            log_info "Building catalog-service image..."
+            (cd "$PROJECT_ROOT/services/catalog" && docker build -t catalog-service:latest .) || { log_error "Catalog image build failed"; exit 1; }
+            minikube image load catalog-service:latest
+            log_info "Catalog image built and loaded successfully"
+            ;;
+            inventory)
+            log_info "Building inventory-service image..."
+            (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) || { log_error "Inventory image build failed"; exit 1; }
+            minikube image load inventory-service:latest
+            log_info "Inventory image built and loaded successfully"
+            ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, auth, user"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart"
             exit 1
             ;;
     esac
@@ -580,7 +628,7 @@ deploy_payments() {
 
 deploy_frontend() {
     log_info "Deploying Frontend..."
-    kubectl apply -f "$K8S_DIR/frontend/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/service.yaml" &
@@ -590,7 +638,7 @@ deploy_frontend() {
 
 deploy_admin_console() {
     log_info "Deploying Admin Console..."
-    kubectl apply -f "$K8S_DIR/admin-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/service.yaml" &
@@ -600,22 +648,11 @@ deploy_admin_console() {
 
 deploy_seller_console() {
     log_info "Deploying Seller Console..."
-    kubectl apply -f "$K8S_DIR/seller-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/service.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/ingress.yaml" &
-    wait
-}
-
-deploy_auth() {
-    log_info "Deploying Auth Service..."
-    kubectl apply -f "$K8S_DIR/auth/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/service.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/ingress.yaml" &
     wait
 }
 
@@ -627,6 +664,39 @@ deploy_user() {
     kubectl apply -f "$K8S_DIR/user/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/user/service.yaml" &
     kubectl apply -f "$K8S_DIR/user/ingress.yaml" &
+    wait
+}
+
+deploy_catalog() {
+    log_info "Deploying Catalog Service..."
+    kubectl apply -f "$K8S_DIR/catalog/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/catalog/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/catalog/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/catalog/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/catalog/service.yaml" &
+    kubectl apply -f "$K8S_DIR/catalog/ingress.yaml" &
+    wait
+}
+
+deploy_inventory() {
+    log_info "Deploying Inventory Service..."
+    kubectl apply -f "$K8S_DIR/inventory/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/service.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/ingress.yaml" &
+    wait
+}
+
+deploy_cart() {
+    log_info "Deploying Cart Service..."
+    kubectl apply -f "$K8S_DIR/cart/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/service.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/ingress.yaml" &
     wait
 }
 
@@ -654,20 +724,32 @@ wait_for_services() {
     PAYMENTS_PID=$!
     
     log_info "Waiting for Frontend..."
-    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet" &
+    kubectl wait --for=condition=available deployment/frontend -n "ui" --timeout=300s || log_warn "Frontend not ready yet" &
     FRONTEND_PID=$!
     
     log_info "Waiting for Admin Console..."
-    kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
+    kubectl wait --for=condition=available deployment/admin-console -n "ui" --timeout=300s || log_warn "Admin Console not ready yet" &
     ADMIN_CONSOLE_PID=$!
     
     log_info "Waiting for Seller Console..."
-    kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet" &
+    kubectl wait --for=condition=available deployment/seller-console -n "ui" --timeout=300s || log_warn "Seller Console not ready yet" &
     SELLER_CONSOLE_PID=$!
     
     log_info "Waiting for User Service..."
     kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet" &
     USER_PID=$!
+    
+    log_info "Waiting for Catalog Service..."
+    kubectl wait --for=condition=available deployment/catalog-service -n "catalog" --timeout=300s || log_warn "Catalog Service not ready yet" &
+    CATALOG_PID=$!
+    
+    log_info "Waiting for Inventory Service..."
+    kubectl wait --for=condition=available deployment/inventory-service -n "inventory" --timeout=300s || log_warn "Inventory Service not ready yet" &
+    INVENTORY_PID=$!
+    
+    log_info "Waiting for Cart Service..."
+    kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet" &
+    CART_PID=$!
     
     # Wait for all services to be ready
     wait $POSTGRES_PID
@@ -677,6 +759,9 @@ wait_for_services() {
     wait $ADMIN_CONSOLE_PID
     wait $SELLER_CONSOLE_PID
     wait $USER_PID
+    wait $CATALOG_PID
+    wait $INVENTORY_PID
+    wait $CART_PID
     
     log_info "Services deployment complete"
 }
@@ -695,26 +780,60 @@ wait_for_single_service() {
             ;;
         frontend)
             log_info "Waiting for Frontend..."
-            kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet"
+            kubectl wait --for=condition=available deployment/frontend -n "ui" --timeout=300s || log_warn "Frontend not ready yet"
             ;;
         admin-console)
             log_info "Waiting for Admin Console..."
-            kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet"
+            kubectl wait --for=condition=available deployment/admin-console -n "ui" --timeout=300s || log_warn "Admin Console not ready yet"
             ;;
         seller-console)
             log_info "Waiting for Seller Console..."
-            kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet"
+            kubectl wait --for=condition=available deployment/seller-console -n "ui" --timeout=300s || log_warn "Seller Console not ready yet"
             ;;
-        user)
+            user)
             log_info "Waiting for User Service..."
             kubectl wait --for=condition=available deployment/user-service -n user --timeout=300s || log_warn "User Service not ready yet"
             ;;
-    esac
+            catalog)
+            log_info "Waiting for Catalog Service..."
+            kubectl wait --for=condition=available deployment/catalog-service -n "catalog" --timeout=300s || log_warn "Catalog Service not ready yet"
+            ;;
+            inventory)
+            log_info "Waiting for Inventory Service..."
+            kubectl wait --for=condition=available deployment/inventory-service -n "inventory" --timeout=300s || log_warn "Inventory Service not ready yet"
+            ;;
+            cart)
+            log_info "Waiting for Cart Service..."
+            kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet"
+            ;;
+        esac
 }
 
 show_status() {
     log_info "Deployment Status:"
     echo ""
+    echo "=== UI Namespace ==="
+    kubectl get pods -n "ui"
+    echo ""
+    kubectl get services -n "ui"
+    echo ""
+    kubectl get ingress -n "ui"
+    echo ""
+    echo "=== Catalog Namespace ==="
+    kubectl get pods -n "catalog"
+    echo ""
+    kubectl get services -n "catalog"
+    echo ""
+    kubectl get ingress -n "catalog"
+    echo ""
+    echo "=== Inventory Namespace ==="
+    kubectl get pods -n "inventory"
+    echo ""
+    kubectl get services -n "inventory"
+    echo ""
+    kubectl get ingress -n "inventory"
+    echo ""
+    echo "=== Payments Platform Namespace ==="
     kubectl get pods -n "$NAMESPACE"
     echo ""
     kubectl get services -n "$NAMESPACE"
@@ -724,32 +843,32 @@ show_status() {
     
     log_info "Access URLs:"
     MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "localhost")
-    INGRESS_IP=$(kubectl get ingress frontend-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP=$(kubectl get ingress frontend-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     
     if [ -n "$INGRESS_IP" ]; then
         echo "  Frontend (Ingress): http://buyit.local"
     else
         echo "  Frontend (Ingress): http://buyit.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP buyit.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/frontend 3000:80"
     fi
     
-    INGRESS_IP_ADMIN=$(kubectl get ingress admin-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP_ADMIN=$(kubectl get ingress admin-console-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_ADMIN" ]; then
         echo "  Admin Console (Ingress): http://admin.local"
     else
         echo "  Admin Console (Ingress): http://admin.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP admin.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/admin-console 3001:80"
     fi
     
-    INGRESS_IP_SELLER=$(kubectl get ingress seller-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP_SELLER=$(kubectl get ingress seller-console-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_SELLER" ]; then
         echo "  Seller Console (Ingress): http://seller.local"
     else
         echo "  Seller Console (Ingress): http://seller.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP seller.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/seller-console 3002:80"
     fi
     
     INGRESS_IP_PAYMENTS=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
@@ -763,9 +882,9 @@ show_status() {
     echo "  Ledger Service: http://$(kubectl get svc ledger-service -n $NAMESPACE -o jsonpath='{.spec.clusterIP}'):8081 (ClusterIP only)"
     echo ""
     log_info "To port-forward services:"
-    echo "  Frontend: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
-    echo "  Admin Console: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
-    echo "  Seller Console: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
+    echo "  Frontend: kubectl port-forward -n ui svc/frontend 3000:80"
+    echo "  Admin Console: kubectl port-forward -n ui svc/admin-console 3001:80"
+    echo "  Seller Console: kubectl port-forward -n ui svc/seller-console 3002:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
 }
@@ -795,8 +914,9 @@ main() {
     deploy_frontend &
     deploy_admin_console &
     deploy_seller_console &
-    deploy_auth &
     deploy_user &
+    deploy_catalog &
+    deploy_inventory &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -812,27 +932,112 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart")
 SERVICES_TO_DEPLOY=()
+EXCLUDED_SERVICES=()
+EXCLUDE_MODE=false
+
+# Parse exclude flags and other arguments
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -x|--exclude)
+            EXCLUDE_MODE=true
+            shift
+            if [[ $# -eq 0 ]]; then
+                log_error "-x/--exclude requires a service name"
+                exit 1
+            fi
+            # Validate the service name
+            is_valid=false
+            for valid_service in "${VALID_SERVICES[@]}"; do
+                if [[ "$1" == "$valid_service" ]]; then
+                    is_valid=true
+                    EXCLUDED_SERVICES+=("$1")
+                    break
+                fi
+            done
+            if [[ "$is_valid" == false ]]; then
+                log_error "Unknown service to exclude: $1"
+                log_error "Available services: ${VALID_SERVICES[*]}"
+                exit 1
+            fi
+            shift
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# If exclude mode is active, calculate services to deploy/build
+if [[ "$EXCLUDE_MODE" == true ]]; then
+    if [[ ${#EXCLUDED_SERVICES[@]} -eq 0 ]]; then
+        log_error "No services specified for exclusion"
+        exit 1
+    fi
+    
+    # Start with all services and remove excluded ones
+    for service in "${VALID_SERVICES[@]}"; do
+        should_exclude=false
+        for excluded in "${EXCLUDED_SERVICES[@]}"; do
+            if [[ "$service" == "$excluded" ]]; then
+                should_exclude=true
+                break
+            fi
+        done
+        if [[ "$should_exclude" == false ]]; then
+            SERVICES_TO_DEPLOY+=("$service")
+        fi
+    done
+    
+    if [[ ${#SERVICES_TO_DEPLOY[@]} -eq 0 ]]; then
+        log_error "Cannot exclude all services. At least one service must be deployed/built."
+        exit 1
+    fi
+fi
 
 # Check if first argument is a command (not a service)
-if [[ $# -eq 0 ]]; then
-    # No arguments - deploy all services
-    main
+if [[ ${#ARGS[@]} -eq 0 ]]; then
+    # No arguments - deploy all services (or all except excluded)
+    if [[ "$EXCLUDE_MODE" == true ]]; then
+        log_info "Excluding services: ${EXCLUDED_SERVICES[*]}"
+        log_info "Deploying services: ${SERVICES_TO_DEPLOY[*]} (in parallel)..."
+        check_prerequisites
+        
+        # Delete existing deployments first (before building images)
+        delete_deployments "${SERVICES_TO_DEPLOY[@]}"
+        
+        # Build images for the specified services
+        build_images "${SERVICES_TO_DEPLOY[@]}"
+        
+        # Deploy the services
+        deploy_multiple_services "${SERVICES_TO_DEPLOY[@]}"
+        
+        log_info "Services deployed successfully: ${SERVICES_TO_DEPLOY[*]}"
+        show_status
+    else
+        main
+    fi
     exit 0
 fi
 
-FIRST_ARG="$1"
+FIRST_ARG="${ARGS[0]}"
 
 case "$FIRST_ARG" in
     build)
         check_prerequisites
-        if [[ $# -eq 1 ]]; then
+        if [[ "$EXCLUDE_MODE" == true ]]; then
+            # Build all except excluded services
+            log_info "Excluding services: ${EXCLUDED_SERVICES[*]}"
+            log_info "Building services: ${SERVICES_TO_DEPLOY[*]} (in parallel)..."
+            build_images "${SERVICES_TO_DEPLOY[@]}"
+        elif [[ ${#ARGS[@]} -eq 1 ]]; then
             build_images "all"
         else
             # Build specific services
-            shift
-            build_images "$@"
+            build_images "${ARGS[@]:1}"
         fi
         exit 0
         ;;
@@ -850,8 +1055,28 @@ case "$FIRST_ARG" in
         exit 0
         ;;
     *)
+        # If exclude mode is active, we've already calculated SERVICES_TO_DEPLOY
+        if [[ "$EXCLUDE_MODE" == true ]]; then
+            log_info "Excluding services: ${EXCLUDED_SERVICES[*]}"
+            log_info "Deploying services: ${SERVICES_TO_DEPLOY[*]} (in parallel)..."
+            check_prerequisites
+            
+            # Delete existing deployments first (before building images)
+            delete_deployments "${SERVICES_TO_DEPLOY[@]}"
+            
+            # Build images for the specified services
+            build_images "${SERVICES_TO_DEPLOY[@]}"
+            
+            # Deploy the services
+            deploy_multiple_services "${SERVICES_TO_DEPLOY[@]}"
+            
+            log_info "Services deployed successfully: ${SERVICES_TO_DEPLOY[*]}"
+            show_status
+            exit 0
+        fi
+        
         # Parse service names
-        for arg in "$@"; do
+        for arg in "${ARGS[@]}"; do
             # Check if it's a valid service
             is_valid=false
             for valid_service in "${VALID_SERVICES[@]}"; do
@@ -868,6 +1093,8 @@ case "$FIRST_ARG" in
                 echo "Usage:"
                 echo "  ./deploy.sh                                          - Deploy all services from scratch"
                 echo "  ./deploy.sh <service1> [<service2> ...]               - Deploy one or more services (in parallel)"
+                echo "  ./deploy.sh -x <service1> [-x <service2> ...]        - Deploy all services except excluded ones"
+                echo "  ./deploy.sh build -x <service1> [-x <service2> ...]  - Build all services except excluded ones"
                 echo ""
                 echo "Available services:"
                 echo "  ${VALID_SERVICES[*]}"
@@ -880,6 +1107,8 @@ case "$FIRST_ARG" in
                 echo "Examples:"
                 echo "  ./deploy.sh payments ledger                           - Deploy payments and ledger services in parallel"
                 echo "  ./deploy.sh frontend admin-console seller-console     - Deploy all frontend services in parallel"
+                echo "  ./deploy.sh -x ledger -x payments                     - Deploy all services except ledger and payments"
+                echo "  ./deploy.sh build -x ledger -x payments               - Build all services except ledger and payments"
                 exit 1
             fi
         done

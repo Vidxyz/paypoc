@@ -256,15 +256,27 @@ function Payments({ buyerId, userEmail }) {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="lg" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
       <Card>
-        <CardContent>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
             <Box>
-              <Typography variant="h4" component="h2" gutterBottom>
+              <Typography 
+                variant="h4" 
+                component="h2" 
+                gutterBottom
+                sx={{ 
+                  fontWeight: 700,
+                  background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+                  backgroundClip: 'text',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  mb: 1,
+                }}
+              >
                 Payment History
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body1" color="text.secondary">
                 All payments for <strong>{userEmail || buyerId}</strong>
               </Typography>
             </Box>

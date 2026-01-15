@@ -500,8 +500,63 @@ export const Auth0Provider = ({ children }) => {
     })
   }
 
+  /**
+   * Checks if a JWT token is expired
+   * @param {string} token - JWT token string
+   * @returns {boolean} True if token is expired or invalid
+   */
+  const isTokenExpired = (token) => {
+    if (!token) return true
+    
+    try {
+      const claims = decodeJWT(token)
+      if (!claims || !claims.exp) return true
+      
+      // exp is in seconds, Date.now() is in milliseconds
+      const expirationTime = claims.exp * 1000
+      const now = Date.now()
+      
+      // Consider token expired if it expires within the next 5 seconds (buffer)
+      return now >= (expirationTime - 5000)
+    } catch (error) {
+      console.error('Error checking token expiration:', error)
+      return true
+    }
+  }
+
+  const forceLogout = () => {
+    console.warn('Forcing logout due to expired or missing token')
+    setIsAuthenticated(false)
+    setUser(null)
+    setAccessToken(null)
+    localStorage.removeItem('bearerToken')
+    localStorage.removeItem('auth0UserId')
+    
+    // Clear Auth0 cache
+    try {
+      const keysToRemove = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && (key.startsWith('@@auth0spajs@@') || key.includes('auth0'))) {
+          keysToRemove.push(key)
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key))
+    } catch (error) {
+      console.error('Error clearing Auth0 cache:', error)
+    }
+    
+    setError('Your session has expired. Please log in again.')
+    // Dispatch event to show login modal
+    window.dispatchEvent(new CustomEvent('auth:force-login'))
+  }
+
   const getAccessToken = async () => {
-    if (!auth0Client) return null
+    if (!auth0Client) {
+      forceLogout()
+      return null
+    }
+    
     try {
       const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
       const tokenResponse = await auth0Client.getTokenSilently({ 
@@ -515,11 +570,28 @@ export const Auth0Provider = ({ children }) => {
       if (!token) {
         throw new Error('No access token received from Auth0')
       }
+      
+      // Check if token is expired
+      if (isTokenExpired(token)) {
+        forceLogout()
+        return null
+      }
+      
       setAccessToken(token)
       localStorage.setItem('bearerToken', token)
       return token
     } catch (error) {
       console.error('Error getting access token:', error)
+      
+      // If token retrieval fails due to expiration or login required, force logout
+      if (error.error === 'login_required' || 
+          error.error === 'consent_required' ||
+          error.message?.includes('login_required') ||
+          error.message?.includes('expired') ||
+          error.message?.includes('invalid_token')) {
+        forceLogout()
+      }
+      
       return null
     }
   }
@@ -532,6 +604,7 @@ export const Auth0Provider = ({ children }) => {
     login,
     logout,
     getAccessToken,
+    forceLogout,
     initError,
     error,
     setError,

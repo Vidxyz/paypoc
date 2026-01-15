@@ -137,10 +137,21 @@ function AdminReconciliation() {
   }
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="xl" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h4" component="h1" gutterBottom>
+          <Typography 
+            variant="h4" 
+            component="h1" 
+            gutterBottom
+            sx={{ 
+              fontWeight: 700,
+              background: 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
             Reconciliation
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>

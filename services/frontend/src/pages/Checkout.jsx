@@ -279,7 +279,19 @@ function CheckoutForm({ buyerId }) {
   return (
     <Card>
       <CardContent>
-        <Typography variant="h4" component="h2" gutterBottom>
+        <Typography 
+          variant="h4" 
+          component="h2" 
+          gutterBottom
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            mb: 3,
+          }}
+        >
           Checkout
         </Typography>
         
@@ -487,7 +499,7 @@ function CheckoutForm({ buyerId }) {
 
 function Checkout({ buyerId }) {
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
       <Elements stripe={stripePromise}>
         <CheckoutForm buyerId={buyerId} />
       </Elements>

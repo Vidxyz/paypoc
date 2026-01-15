@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: catalog
+  labels:
+    app: catalog-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+    spec:
+      containers:
+      - name: catalog-service
+        image: catalog-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8082
+          name: http
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: DATABASE_URL
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: AUTH0_AUDIENCE
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: catalog-service-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: KAFKA_EVENTS_TOPIC
+          valueFrom:
+            configMapKeyRef:
+              name: catalog-service-config
+              key: KAFKA_EVENTS_TOPIC
+        - name: PAYMENTS_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: catalog-service-config
+              key: PAYMENTS_SERVICE_URL
+        - name: PAYMENTS_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: PAYMENTS_INTERNAL_API_TOKEN
+        - name: CLOUDINARY_CLOUD_NAME
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: CLOUDINARY_CLOUD_NAME
+        - name: CLOUDINARY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: CLOUDINARY_API_KEY
+        - name: CLOUDINARY_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: catalog-service-secret
+              key: CLOUDINARY_API_SECRET
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 10
+          periodSeconds: 5
+

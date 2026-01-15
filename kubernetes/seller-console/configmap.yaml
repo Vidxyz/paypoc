@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: seller-console-config
-  namespace: payments-platform
+  namespace: ui
 data:
   # VITE_API_BASE_URL is no longer needed - seller-console uses /api which nginx proxies
   # This ConfigMap is kept for future runtime configuration if needed

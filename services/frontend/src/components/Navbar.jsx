@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useState } from 'react'
 import {
   AppBar,
   Toolbar,
@@ -6,13 +7,29 @@ import {
   Button,
   Box,
   Chip,
+  Badge,
+  IconButton,
 } from '@mui/material'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import PersonIcon from '@mui/icons-material/Person'
 import LogoutIcon from '@mui/icons-material/Logout'
+import { useCart } from '../context/CartContext'
+import CartPopup from './CartPopup'
 
 function Navbar({ onLogout, buyerId, userEmail }) {
   const location = useLocation()
+  const { getTotalItems } = useCart()
+  const cartItemCount = getTotalItems()
+  const [cartAnchorEl, setCartAnchorEl] = useState(null)
+  const cartPopupOpen = Boolean(cartAnchorEl)
+
+  const handleCartClick = (event) => {
+    setCartAnchorEl(event.currentTarget)
+  }
+
+  const handleCartClose = () => {
+    setCartAnchorEl(null)
+  }
 
   return (
     <AppBar position="static" elevation={2}>
@@ -43,6 +60,25 @@ function Navbar({ onLogout, buyerId, userEmail }) {
           >
             Home
           </Button>
+          <IconButton
+            onClick={handleCartClick}
+            color="inherit"
+            sx={{
+              border: location.pathname === '/checkout' ? 1 : 0,
+              borderColor: 'rgba(255, 255, 255, 0.5)',
+              borderRadius: 1,
+              px: 1,
+            }}
+          >
+            <Badge badgeContent={cartItemCount} color="error" max={99}>
+              <ShoppingCartIcon />
+            </Badge>
+          </IconButton>
+          <CartPopup
+            anchorEl={cartAnchorEl}
+            open={cartPopupOpen}
+            onClose={handleCartClose}
+          />
           <Button
             component={Link}
             to="/checkout"

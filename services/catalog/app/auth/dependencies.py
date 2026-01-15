@@ -1,54 +1,77 @@
-from fastapi import Header, HTTPException, status, Depends
-from typing import Optional
+from fastapi import HTTPException, status, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.auth.jwt_validator import jwt_validator
+import logging
 
-logger = None
-try:
-    import logging
-    logger = logging.getLogger(__name__)
-except:
-    pass
+logger = logging.getLogger(__name__)
 
 
 async def get_current_user(
-    authorization: Optional[str] = Header(None)
+    credentials: HTTPAuthorizationCredentials = Security(HTTPBearer())
 ) -> dict:
     """Dependency to extract and validate JWT token
     
-    Works with both Header-based and Security-based authentication.
-    When Security(security) is used, the header is still available.
+    Works with Security(security) authentication scheme.
     """
-    if not authorization:
+    if not credentials:
+        logger.warning("Authentication credentials missing")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header missing"
         )
     
+    token = credentials.credentials
+    
     try:
-        # Extract token from "Bearer <token>"
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
+        logger.debug(f"Verifying JWT token for user")
+        # Verify token and extract claims
+        payload = jwt_validator.verify_token(token)
+        
+        # Extract user information from payload
+        custom_namespace = "https://buyit.local/"
+        user_id = payload.get(custom_namespace + "user_id")
+        # Email can be in standard location or namespaced location
+        email = payload.get(custom_namespace + "email")
+        account_type = payload.get(custom_namespace + "account_type")
+        
+        if not user_id:
+            logger.warning("Token missing user_id claim")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme"
+                detail="Token missing user_id claim"
             )
-    except ValueError:
+        
+        if not account_type:
+            logger.warning("Token missing account_type claim")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token missing account_type claim"
+            )
+        
+        if not email:
+            logger.warning("Token missing email claim")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token missing email claim"
+            )
+        
+        logger.info(f"Authenticated user: {email} (user_id: {user_id}, account_type: {account_type})")
+        
+        return {
+            "user_id": user_id,
+            "email": email,
+            "account_type": account_type,
+            "payload": payload
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions (they already have proper status codes)
+        raise
+    except Exception as e:
+        logger.error(f"Error authenticating user: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication failed"
         )
-    
-    payload = jwt_validator.verify_token(token)
-    user_id = jwt_validator.extract_user_id(token)
-    email = jwt_validator.extract_email(token)
-    account_type = jwt_validator.extract_account_type(token)
-    
-    return {
-        "user_id": user_id,
-        "email": email,
-        "account_type": account_type,
-        "payload": payload
-    }
 
 
 async def require_account_type(account_type: str):

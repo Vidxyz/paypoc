@@ -77,9 +77,11 @@ class JWTValidator:
         return user_id
     
     def extract_email(self, token: str) -> Optional[str]:
-        """Extract email from JWT token"""
+        """Extract email from JWT token - checks both standard and namespaced locations"""
         payload = self.verify_token(token)
-        return payload.get("email")
+        custom_namespace = "https://buyit.local/"
+        # Email can be in standard location or namespaced location
+        return payload.get(custom_namespace + "email")
     
     def extract_account_type(self, token: str) -> Optional[str]:
         """Extract account_type from JWT token"""

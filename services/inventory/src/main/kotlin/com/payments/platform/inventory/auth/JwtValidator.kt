@@ -51,13 +51,16 @@ class JwtValidator(
         return try {
             val decodedJWT = decodeToken(token)
             val user = extractUserFromClaims(decodedJWT)
-            logger.debug("Successfully validated JWT token for user: ${user.userId}")
+            logger.debug("Successfully validated JWT token for user: ${user.userId} (${user.email})")
             user
         } catch (e: TokenExpiredException) {
             logger.warn("JWT token expired: ${e.message}")
             null
         } catch (e: JWTVerificationException) {
             logger.warn("JWT token validation failed: ${e.message}")
+            null
+        } catch (e: IllegalArgumentException) {
+            logger.warn("JWT token missing required claims: ${e.message}")
             null
         } catch (e: Exception) {
             logger.error("Error validating JWT token: ${e.message}", e)
@@ -89,16 +92,24 @@ class JwtValidator(
         
         val userIdClaim = claims[customNamespace + "user_id"]?.asString()
             ?: throw IllegalArgumentException("Token missing custom claim: ${customNamespace}user_id")
-        val userId = UUID.fromString(userIdClaim)
+        
+        val userId = try {
+            UUID.fromString(userIdClaim)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid user_id format in token: $userIdClaim", e)
+        }
         
         val accountTypeClaim = claims[customNamespace + "account_type"]?.asString()
             ?: throw IllegalArgumentException("Token missing custom claim: ${customNamespace}account_type")
         val accountType = User.AccountType.fromString(accountTypeClaim)
-            ?: throw IllegalArgumentException("Invalid account_type in token: $accountTypeClaim")
+            ?: throw IllegalArgumentException("Invalid account_type in token: $accountTypeClaim (expected BUYER, SELLER, or ADMIN)")
         
+        // Email can be in namespaced location or standard location
         val email = claims[customNamespace + "email"]?.asString()
             ?: claims["email"]?.asString()
-            ?: throw IllegalArgumentException("Token missing 'email' claim")
+            ?: throw IllegalArgumentException("Token missing 'email' claim (checked both '${customNamespace}email' and 'email')")
+        
+        logger.debug("Extracted user from token: userId=$userId, email=$email, accountType=$accountType")
         
         return User(
             userId = userId,

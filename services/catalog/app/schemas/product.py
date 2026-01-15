@@ -38,7 +38,7 @@ class ProductResponse(BaseModel):
     currency: str = Field(..., description="Currency code", example="USD")
     status: str = Field(..., description="Product status", example="ACTIVE")
     attributes: Optional[Dict[str, Any]] = Field(None, description="Additional attributes")
-    images: Optional[List[str]] = Field(None, description="List of image IDs")
+    images: Optional[List[str]] = Field(None, description="List of image URLs (Cloudinary CDN URLs)")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -56,7 +56,7 @@ class ProductResponse(BaseModel):
                 "currency": "USD",
                 "status": "ACTIVE",
                 "attributes": {"color": "red", "size": "L"},
-                "images": ["image-id-1", "image-id-2"],
+                "images": ["https://res.cloudinary.com/dwuu3lcth/image/upload/v1/products/image-id-1", "https://res.cloudinary.com/dwuu3lcth/image/upload/v1/products/image-id-2"],
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:30:00Z"
             }

@@ -36,6 +36,9 @@ class InventoryService(
         return executeWithRetry(maxRetries = 10) {
             val existing = inventoryRepository.findByProductId(productId)
             
+            // Calculate delta for transaction recording (0 for new inventory, difference for existing)
+            val delta = if (existing == null) quantity else quantity - existing.totalQuantity
+            
             val entity = if (existing == null) {
                 logger.info("Creating new inventory for product ID: $productId, seller: $sellerId, sku: $sku, quantity: $quantity")
                 InventoryEntity(
@@ -49,9 +52,14 @@ class InventoryService(
                 )
             } else {
                 logger.info("Updating inventory for product ID: $productId from ${existing.totalQuantity} to $quantity")
-                val delta = quantity - existing.totalQuantity
-                existing.availableQuantity += delta
-                existing.totalQuantity = quantity
+                
+                // Use smart adjustment logic for both increases and decreases
+                // This ensures proper handling of reserved/allocated quantities when reducing stock
+                val currentInventory = existing.toDomain()
+                val updatedInventory = currentInventory.adjustStock(delta)
+                
+                // Update entity with the adjusted values
+                updateEntity(existing, updatedInventory)
                 existing
             }
             
@@ -60,9 +68,9 @@ class InventoryService(
             // Record transaction
             recordTransaction(
                 inventoryId = saved.id,
-                transactionType = if (existing == null) TransactionType.STOCK_ADD else TransactionType.STOCK_ADD,
-                quantity = quantity,
-                description = if (existing == null) "Initial stock" else "Stock adjustment"
+                transactionType = if (delta >= 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
+                quantity = kotlin.math.abs(delta),
+                description = if (existing == null) "Initial stock" else "Stock adjustment (set to $quantity)"
             )
             
             // Publish event

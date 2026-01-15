@@ -204,16 +204,16 @@ function Products() {
     }
   }
 
-  // Generate Cloudinary URL from public_id
-  // Note: This is a simplified approach. In production, you might want to:
-  // 1. Store full URLs in the database, or
-  // 2. Call the API endpoint to get URLs, or
-  // 3. Configure cloud name in frontend env
-  const getImageUrl = (publicId) => {
+  // Get image URL from API (ensures correct cloud name and version)
+  const getImageUrl = async (publicId, catalogApi) => {
     if (!publicId) return null
-    // Basic Cloudinary URL format
-    // This will work if the public_id includes the folder path
-    return `https://res.cloudinary.com/demo/image/upload/${publicId}`
+    try {
+      const url = await catalogApi.getImageUrl(publicId)
+      return url
+    } catch (err) {
+      console.warn(`Failed to get image URL for ${publicId}:`, err)
+      return null
+    }
   }
 
   if (loading) {
@@ -270,44 +270,48 @@ function Products() {
             <TableBody>
               {products.map((product) => {
                 const stock = inventoryData[product.id]
-                const firstImageId = product.images && product.images.length > 0 ? product.images[0] : null
-                const imageUrl = getImageUrl(firstImageId)
+                // Images are now full Cloudinary URLs directly from the API
+                const imageUrl = product.images && Array.isArray(product.images) && product.images.length > 0 
+                  ? product.images[0] 
+                  : null
                 
                 return (
                   <TableRow key={product.id}>
                     <TableCell>
-                      {imageUrl ? (
-                        <Box
-                          component="img"
-                          src={imageUrl}
-                          alt={product.name}
-                          sx={{
-                            width: 60,
-                            height: 60,
-                            objectFit: 'cover',
-                            borderRadius: 1,
-                          }}
-                          onError={(e) => {
-                            e.target.style.display = 'none'
-                          }}
-                        />
-                      ) : (
-                        <Box
-                          sx={{
-                            width: 60,
-                            height: 60,
-                            bgcolor: 'grey.200',
-                            borderRadius: 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
+                      <Box
+                        sx={{
+                          width: 60,
+                          height: 60,
+                          borderRadius: 1,
+                          overflow: 'hidden',
+                          bgcolor: 'grey.200',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        {imageUrl ? (
+                          <Box
+                            component="img"
+                            src={imageUrl}
+                            alt={product.name}
+                            sx={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                            }}
+                            onError={(e) => {
+                              // On error, hide the image - the placeholder background will show
+                              e.target.style.display = 'none'
+                            }}
+                          />
+                        ) : null}
+                        {!imageUrl && (
                           <Typography variant="caption" color="text.secondary">
                             No Image
                           </Typography>
-                        </Box>
-                      )}
+                        )}
+                      </Box>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 'medium' }}>

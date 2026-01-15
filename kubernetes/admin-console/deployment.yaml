@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: admin-console
-  namespace: payments-platform
+  namespace: ui
   labels:
     app: admin-console
     component: admin-console

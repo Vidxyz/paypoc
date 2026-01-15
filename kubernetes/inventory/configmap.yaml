@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: inventory-service-config
-  namespace: payments-platform
+  namespace: inventory
 data:
   application.yml: |
     spring:

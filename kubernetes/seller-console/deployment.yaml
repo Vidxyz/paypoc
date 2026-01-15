@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: seller-console
-  namespace: payments-platform
+  namespace: ui
   labels:
     app: seller-console
     component: seller-console

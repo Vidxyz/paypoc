@@ -225,7 +225,6 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/frontend/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/admin-console/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
-    kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
@@ -387,9 +386,6 @@ delete_deployments() {
             seller-console)
                 kubectl delete -f "$K8S_DIR/seller-console/deployment.yaml" 2>/dev/null || true
                 ;;
-            auth)
-                kubectl delete -f "$K8S_DIR/auth/deployment.yaml" 2>/dev/null || true
-                ;;
             user)
                 kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
                 ;;
@@ -431,10 +427,6 @@ deploy_multiple_services() {
                 ;;
             seller-console)
                 deploy_seller_console &
-                pids+=($!)
-                ;;
-            auth)
-                deploy_auth &
                 pids+=($!)
                 ;;
             user)
@@ -578,7 +570,7 @@ build_single_image() {
             ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, auth, user, catalog, inventory"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart"
             exit 1
             ;;
     esac
@@ -636,7 +628,7 @@ deploy_payments() {
 
 deploy_frontend() {
     log_info "Deploying Frontend..."
-    kubectl apply -f "$K8S_DIR/frontend/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/frontend/service.yaml" &
@@ -646,7 +638,7 @@ deploy_frontend() {
 
 deploy_admin_console() {
     log_info "Deploying Admin Console..."
-    kubectl apply -f "$K8S_DIR/admin-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/admin-console/service.yaml" &
@@ -656,22 +648,11 @@ deploy_admin_console() {
 
 deploy_seller_console() {
     log_info "Deploying Seller Console..."
-    kubectl apply -f "$K8S_DIR/seller-console/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/service.yaml" &
     kubectl apply -f "$K8S_DIR/seller-console/ingress.yaml" &
-    wait
-}
-
-deploy_auth() {
-    log_info "Deploying Auth Service..."
-    kubectl apply -f "$K8S_DIR/auth/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/service.yaml" &
-    kubectl apply -f "$K8S_DIR/auth/ingress.yaml" &
     wait
 }
 
@@ -688,6 +669,7 @@ deploy_user() {
 
 deploy_catalog() {
     log_info "Deploying Catalog Service..."
+    kubectl apply -f "$K8S_DIR/catalog/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/catalog/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/catalog/secret.yaml" &
     kubectl apply -f "$K8S_DIR/catalog/deployment.yaml" &
@@ -698,6 +680,7 @@ deploy_catalog() {
 
 deploy_inventory() {
     log_info "Deploying Inventory Service..."
+    kubectl apply -f "$K8S_DIR/inventory/namespace.yaml" &
     kubectl apply -f "$K8S_DIR/inventory/configmap.yaml" &
     kubectl apply -f "$K8S_DIR/inventory/secret.yaml" &
     kubectl apply -f "$K8S_DIR/inventory/deployment.yaml" &
@@ -741,15 +724,15 @@ wait_for_services() {
     PAYMENTS_PID=$!
     
     log_info "Waiting for Frontend..."
-    kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet" &
+    kubectl wait --for=condition=available deployment/frontend -n "ui" --timeout=300s || log_warn "Frontend not ready yet" &
     FRONTEND_PID=$!
     
     log_info "Waiting for Admin Console..."
-    kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet" &
+    kubectl wait --for=condition=available deployment/admin-console -n "ui" --timeout=300s || log_warn "Admin Console not ready yet" &
     ADMIN_CONSOLE_PID=$!
     
     log_info "Waiting for Seller Console..."
-    kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet" &
+    kubectl wait --for=condition=available deployment/seller-console -n "ui" --timeout=300s || log_warn "Seller Console not ready yet" &
     SELLER_CONSOLE_PID=$!
     
     log_info "Waiting for User Service..."
@@ -757,11 +740,11 @@ wait_for_services() {
     USER_PID=$!
     
     log_info "Waiting for Catalog Service..."
-    kubectl wait --for=condition=available deployment/catalog-service -n "$NAMESPACE" --timeout=300s || log_warn "Catalog Service not ready yet" &
+    kubectl wait --for=condition=available deployment/catalog-service -n "catalog" --timeout=300s || log_warn "Catalog Service not ready yet" &
     CATALOG_PID=$!
     
     log_info "Waiting for Inventory Service..."
-    kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet" &
+    kubectl wait --for=condition=available deployment/inventory-service -n "inventory" --timeout=300s || log_warn "Inventory Service not ready yet" &
     INVENTORY_PID=$!
     
     log_info "Waiting for Cart Service..."
@@ -797,15 +780,15 @@ wait_for_single_service() {
             ;;
         frontend)
             log_info "Waiting for Frontend..."
-            kubectl wait --for=condition=available deployment/frontend -n "$NAMESPACE" --timeout=300s || log_warn "Frontend not ready yet"
+            kubectl wait --for=condition=available deployment/frontend -n "ui" --timeout=300s || log_warn "Frontend not ready yet"
             ;;
         admin-console)
             log_info "Waiting for Admin Console..."
-            kubectl wait --for=condition=available deployment/admin-console -n "$NAMESPACE" --timeout=300s || log_warn "Admin Console not ready yet"
+            kubectl wait --for=condition=available deployment/admin-console -n "ui" --timeout=300s || log_warn "Admin Console not ready yet"
             ;;
         seller-console)
             log_info "Waiting for Seller Console..."
-            kubectl wait --for=condition=available deployment/seller-console -n "$NAMESPACE" --timeout=300s || log_warn "Seller Console not ready yet"
+            kubectl wait --for=condition=available deployment/seller-console -n "ui" --timeout=300s || log_warn "Seller Console not ready yet"
             ;;
             user)
             log_info "Waiting for User Service..."
@@ -813,11 +796,11 @@ wait_for_single_service() {
             ;;
             catalog)
             log_info "Waiting for Catalog Service..."
-            kubectl wait --for=condition=available deployment/catalog-service -n "$NAMESPACE" --timeout=300s || log_warn "Catalog Service not ready yet"
+            kubectl wait --for=condition=available deployment/catalog-service -n "catalog" --timeout=300s || log_warn "Catalog Service not ready yet"
             ;;
             inventory)
             log_info "Waiting for Inventory Service..."
-            kubectl wait --for=condition=available deployment/inventory-service -n "$NAMESPACE" --timeout=300s || log_warn "Inventory Service not ready yet"
+            kubectl wait --for=condition=available deployment/inventory-service -n "inventory" --timeout=300s || log_warn "Inventory Service not ready yet"
             ;;
             cart)
             log_info "Waiting for Cart Service..."
@@ -829,6 +812,28 @@ wait_for_single_service() {
 show_status() {
     log_info "Deployment Status:"
     echo ""
+    echo "=== UI Namespace ==="
+    kubectl get pods -n "ui"
+    echo ""
+    kubectl get services -n "ui"
+    echo ""
+    kubectl get ingress -n "ui"
+    echo ""
+    echo "=== Catalog Namespace ==="
+    kubectl get pods -n "catalog"
+    echo ""
+    kubectl get services -n "catalog"
+    echo ""
+    kubectl get ingress -n "catalog"
+    echo ""
+    echo "=== Inventory Namespace ==="
+    kubectl get pods -n "inventory"
+    echo ""
+    kubectl get services -n "inventory"
+    echo ""
+    kubectl get ingress -n "inventory"
+    echo ""
+    echo "=== Payments Platform Namespace ==="
     kubectl get pods -n "$NAMESPACE"
     echo ""
     kubectl get services -n "$NAMESPACE"
@@ -838,32 +843,32 @@ show_status() {
     
     log_info "Access URLs:"
     MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "localhost")
-    INGRESS_IP=$(kubectl get ingress frontend-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP=$(kubectl get ingress frontend-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     
     if [ -n "$INGRESS_IP" ]; then
         echo "  Frontend (Ingress): http://buyit.local"
     else
         echo "  Frontend (Ingress): http://buyit.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP buyit.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/frontend 3000:80"
     fi
     
-    INGRESS_IP_ADMIN=$(kubectl get ingress admin-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP_ADMIN=$(kubectl get ingress admin-console-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_ADMIN" ]; then
         echo "  Admin Console (Ingress): http://admin.local"
     else
         echo "  Admin Console (Ingress): http://admin.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP admin.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/admin-console 3001:80"
     fi
     
-    INGRESS_IP_SELLER=$(kubectl get ingress seller-console-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    INGRESS_IP_SELLER=$(kubectl get ingress seller-console-ingress -n "ui" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     if [ -n "$INGRESS_IP_SELLER" ]; then
         echo "  Seller Console (Ingress): http://seller.local"
     else
         echo "  Seller Console (Ingress): http://seller.local"
         echo "    Add to /etc/hosts: $MINIKUBE_IP seller.local"
-        echo "    Or use port-forward: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
+        echo "    Or use port-forward: kubectl port-forward -n ui svc/seller-console 3002:80"
     fi
     
     INGRESS_IP_PAYMENTS=$(kubectl get ingress payments-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
@@ -877,9 +882,9 @@ show_status() {
     echo "  Ledger Service: http://$(kubectl get svc ledger-service -n $NAMESPACE -o jsonpath='{.spec.clusterIP}'):8081 (ClusterIP only)"
     echo ""
     log_info "To port-forward services:"
-    echo "  Frontend: kubectl port-forward -n $NAMESPACE svc/frontend 3000:80"
-    echo "  Admin Console: kubectl port-forward -n $NAMESPACE svc/admin-console 3001:80"
-    echo "  Seller Console: kubectl port-forward -n $NAMESPACE svc/seller-console 3002:80"
+    echo "  Frontend: kubectl port-forward -n ui svc/frontend 3000:80"
+    echo "  Admin Console: kubectl port-forward -n ui svc/admin-console 3001:80"
+    echo "  Seller Console: kubectl port-forward -n ui svc/seller-console 3002:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
 }
@@ -909,7 +914,6 @@ main() {
     deploy_frontend &
     deploy_admin_console &
     deploy_seller_console &
-    deploy_auth &
     deploy_user &
     deploy_catalog &
     deploy_inventory &
@@ -928,7 +932,7 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "auth" "user" "catalog" "inventory" "cart")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart")
 SERVICES_TO_DEPLOY=()
 EXCLUDED_SERVICES=()
 EXCLUDE_MODE=false

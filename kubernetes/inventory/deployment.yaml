@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: inventory-service
-  namespace: payments-platform
+  namespace: inventory
   labels:
     app: inventory-service
 spec:

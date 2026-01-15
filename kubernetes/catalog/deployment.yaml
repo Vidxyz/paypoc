@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: catalog-service
-  namespace: payments-platform
+  namespace: catalog
   labels:
     app: catalog-service
 spec:

@@ -186,7 +186,7 @@ async def upload_image_url(
 
 
 @router.get(
-    "/{public_id}/url",
+    "/{public_id:path}/url",
     response_model=ImageUrlResponse,
     summary="Get image URL",
     description="""
@@ -198,6 +198,8 @@ async def upload_image_url(
     
     **Query Parameters:**
     - variant: Optional transformation variant (e.g., 'thumbnail', 'large')
+    
+    **Note:** The public_id can contain slashes (e.g., 'products/gahqqdwqvw4ehspjpyqc')
     """,
     dependencies=[Depends(security)],
     responses={

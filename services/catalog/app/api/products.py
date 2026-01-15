@@ -83,7 +83,7 @@ async def create_product(
             user_id=current_user.get("user_id"),
             user_email=current_user.get("email")
         )
-        return product
+        return product_service._product_to_response_dict(product)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -123,12 +123,25 @@ async def list_seller_products(
     product_service: ProductService = Depends(get_product_service)
 ):
     """List seller's products (returns current user's products only)"""
-    products = product_service.list_seller_products(
-        user_id=current_user.get("user_id"),
-        user_email=current_user.get("email"),
-        status_filter=status
-    )
-    return products
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"Listing products for user: {current_user.get('email')} (user_id: {current_user.get('user_id')})")
+        products = product_service.list_seller_products(
+            user_id=current_user.get("user_id"),
+            user_email=current_user.get("email"),
+            status_filter=status
+        )
+        logger.info(f"Found {len(products)} products for user {current_user.get('email')}")
+        # Convert products to response dicts with image URLs
+        return [product_service._product_to_response_dict(product) for product in products]
+    except Exception as e:
+        logger.error(f"Error listing products for user {current_user.get('email')}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list products: {str(e)}"
+        )
 
 
 @router.get(
@@ -176,7 +189,44 @@ async def list_products_by_seller(
         seller_id=seller_id,
         status_filter=status
     )
-    return products
+    # Convert products to response dicts with image URLs
+    return [product_service._product_to_response_dict(product) for product in products]
+
+
+@router.get(
+    "/browse",
+    response_model=ProductListResponse,
+    summary="Browse products",
+    description="""
+    Browse and search products. This is a public endpoint - no authentication required.
+    
+    **Features:**
+    - Pagination support
+    - Filter by category
+    - Only shows ACTIVE, non-deleted products
+    - Results ordered by creation date (newest first)
+    
+    **Pagination:**
+    - Default page size: 20
+    - Maximum page size: 100
+    - Use `has_next` to determine if more pages exist
+    """,
+    responses={
+        200: {"description": "List of products with pagination metadata"}
+    }
+)
+async def browse_products(
+    category_id: Optional[UUID] = Query(None, description="Filter by category UUID"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    product_service: ProductService = Depends(get_product_service)
+):
+    """Browse products (public endpoint)"""
+    return product_service.browse_products(
+        category_id=category_id,
+        page=page,
+        page_size=page_size
+    )
 
 
 @router.get(
@@ -200,7 +250,7 @@ async def get_product(
     """Get product by ID (public endpoint)"""
     try:
         product = product_service.get_product_by_id(product_id)
-        return product
+        return product_service._product_to_response_dict(product)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -248,7 +298,7 @@ async def update_product(
             user_email=current_user.get("email"),
             account_type=current_user.get("account_type")
         )
-        return product
+        return product_service._product_to_response_dict(product)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -312,39 +362,3 @@ async def delete_product(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e)
         )
-
-
-@router.get(
-    "/browse",
-    response_model=ProductListResponse,
-    summary="Browse products",
-    description="""
-    Browse and search products. This is a public endpoint - no authentication required.
-    
-    **Features:**
-    - Pagination support
-    - Filter by category
-    - Only shows ACTIVE, non-deleted products
-    - Results ordered by creation date (newest first)
-    
-    **Pagination:**
-    - Default page size: 20
-    - Maximum page size: 100
-    - Use `has_next` to determine if more pages exist
-    """,
-    responses={
-        200: {"description": "List of products with pagination metadata"}
-    }
-)
-async def browse_products(
-    category_id: Optional[UUID] = Query(None, description="Filter by category UUID"),
-    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    product_service: ProductService = Depends(get_product_service)
-):
-    """Browse products (public endpoint)"""
-    return product_service.browse_products(
-        category_id=category_id,
-        page=page,
-        page_size=page_size
-    )

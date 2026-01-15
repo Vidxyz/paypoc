@@ -23,11 +23,13 @@ import LinkIcon from '@mui/icons-material/Link'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { useAuth0 } from '../auth/Auth0Provider'
 import { createCatalogApiClient } from '../api/catalogApi'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 
 function AddProduct() {
   const { isAuthenticated, getAccessToken } = useAuth0()
   const navigate = useNavigate()
+  const { productId } = useParams()
+  const isEditMode = !!productId
   
   // Form state
   const [sku, setSku] = useState('')
@@ -63,6 +65,60 @@ function AddProduct() {
     }
     loadCategories()
   }, [isAuthenticated, getAccessToken])
+
+  // Load product data if in edit mode
+  useEffect(() => {
+    if (!isAuthenticated || !isEditMode || !productId) return
+
+    const loadProduct = async () => {
+      try {
+        const catalogApi = createCatalogApiClient(getAccessToken)
+        const product = await catalogApi.getProduct(productId)
+        
+        // Populate form with product data
+        setSku(product.sku || '')
+        setName(product.name || '')
+        setDescription(product.description || '')
+        setPriceCents(product.price_cents ? (product.price_cents / 100).toString() : '')
+        setCurrency(product.currency || 'USD')
+        setStatus(product.status || 'DRAFT')
+        setSelectedCategoryId(product.category_id || '')
+        
+        // Load images - API now returns URLs directly
+        if (product.images && product.images.length > 0) {
+          // Extract public_id from Cloudinary URL
+          // URL format: https://res.cloudinary.com/{cloud_name}/image/upload/{version}/{public_id}
+          const loadedImages = product.images.map((imageUrl) => {
+            try {
+              // Extract public_id from URL
+              // Pattern: https://res.cloudinary.com/{cloud}/image/upload/{version}/{public_id}
+              const urlMatch = imageUrl.match(/\/upload\/(?:v\d+\/)?(.+)$/)
+              const publicId = urlMatch ? urlMatch[1] : null
+              
+              if (publicId) {
+                return { public_id: publicId, url: imageUrl, type: 'file' }
+              } else {
+                console.warn(`Could not extract public_id from URL: ${imageUrl}`)
+                return null
+              }
+            } catch (err) {
+              console.warn(`Failed to process image URL ${imageUrl}:`, err)
+              return null
+            }
+          }).filter(img => img !== null)
+          
+          setImages(loadedImages)
+        }
+        
+        catalogApi.cleanup()
+      } catch (err) {
+        console.error('Failed to load product:', err)
+        setError(`Failed to load product: ${err.message}`)
+      }
+    }
+    
+    loadProduct()
+  }, [isAuthenticated, isEditMode, productId, getAccessToken])
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0]
@@ -161,14 +217,18 @@ function AddProduct() {
         images: images.map(img => img.public_id),
       }
 
-      await catalogApi.createProduct(productData)
+      if (isEditMode) {
+        await catalogApi.updateProduct(productId, productData)
+      } else {
+        await catalogApi.createProduct(productData)
+      }
       catalogApi.cleanup()
       
       // Navigate back to products list
       navigate('/products')
     } catch (err) {
-      console.error('Failed to create product:', err)
-      setError(`Failed to create product: ${err.message}`)
+      console.error(`Failed to ${isEditMode ? 'update' : 'create'} product:`, err)
+      setError(`Failed to ${isEditMode ? 'update' : 'create'} product: ${err.message}`)
     } finally {
       setSubmitting(false)
     }
@@ -185,7 +245,7 @@ function AddProduct() {
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h4" component="h1">
-          Add New Product
+          {isEditMode ? 'Edit Product' : 'Add New Product'}
         </Typography>
       </Box>
 
@@ -435,7 +495,7 @@ function AddProduct() {
                 variant="contained"
                 disabled={submitting}
               >
-                {submitting ? <CircularProgress size={24} /> : 'Create Product'}
+                {submitting ? <CircularProgress size={24} /> : (isEditMode ? 'Update Product' : 'Create Product')}
               </Button>
             </Box>
           </Grid>

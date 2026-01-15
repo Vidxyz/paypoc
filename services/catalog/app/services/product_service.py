@@ -7,6 +7,7 @@ import logging
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductUpdate, ProductListResponse
 from app.services.seller_service import SellerService
+from app.services import get_image_provider
 from app.kafka.producer import event_producer
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,37 @@ class ProductService:
     def __init__(self, db: Session):
         self.db = db
         self.seller_service = SellerService()
+        self.image_provider = get_image_provider()
+    
+    def _convert_image_ids_to_urls(self, image_ids: List[str]) -> List[str]:
+        """Convert image public_ids to Cloudinary CDN URLs"""
+        if not image_ids:
+            return []
+        try:
+            return [self.image_provider.get_image_url(public_id) for public_id in image_ids]
+        except Exception as e:
+            logger.warning(f"Failed to convert some image IDs to URLs: {e}")
+            # Return empty list if conversion fails
+            return []
+    
+    def _product_to_response_dict(self, product: Product) -> dict:
+        """Convert Product model to dict with image URLs instead of IDs"""
+        product_dict = {
+            "id": product.id,
+            "seller_id": product.seller_id,
+            "sku": product.sku,
+            "name": product.name,
+            "description": product.description,
+            "category_id": product.category_id,
+            "price_cents": product.price_cents,
+            "currency": product.currency,
+            "status": product.status,
+            "attributes": product.attributes,
+            "images": self._convert_image_ids_to_urls(product.images) if product.images else [],
+            "created_at": product.created_at,
+            "updated_at": product.updated_at,
+        }
+        return product_dict
     
     def create_product(
         self,
@@ -77,17 +109,26 @@ class ProductService:
         status_filter: Optional[str] = None
     ) -> List[Product]:
         """List products for a specific seller"""
-        seller_id = self.seller_service.get_seller_id(user_id, user_email)
-        
-        query = self.db.query(Product).filter(
-            Product.seller_id == seller_id,
-            Product.deleted_at.is_(None)
-        )
-        
-        if status_filter:
-            query = query.filter(Product.status == status_filter)
-        
-        return query.order_by(Product.created_at.desc()).all()
+        try:
+            logger.info(f"Getting seller_id for user_id: {user_id}, email: {user_email}")
+            seller_id = self.seller_service.get_seller_id(user_id, user_email)
+            logger.info(f"Found seller_id: {seller_id} for user {user_email}")
+            
+            query = self.db.query(Product).filter(
+                Product.seller_id == seller_id,
+                Product.deleted_at.is_(None)
+            )
+            
+            if status_filter:
+                logger.debug(f"Filtering by status: {status_filter}")
+                query = query.filter(Product.status == status_filter)
+            
+            products = query.order_by(Product.created_at.desc()).all()
+            logger.info(f"Found {len(products)} products for seller_id: {seller_id}")
+            return products
+        except Exception as e:
+            logger.error(f"Error in list_seller_products for user {user_email}: {e}", exc_info=True)
+            raise
     
     def list_products_by_seller_id(
         self,
@@ -221,8 +262,11 @@ class ProductService:
             (page - 1) * page_size
         ).limit(page_size).all()
         
+        # Convert products to response dicts with image URLs
+        product_dicts = [self._product_to_response_dict(product) for product in products]
+        
         return ProductListResponse(
-            products=products,
+            products=product_dicts,
             total=total,
             page=page,
             page_size=page_size,

@@ -61,8 +61,8 @@ class InventoryKafkaProducer(
             .setHeader(KafkaHeaders.TOPIC, eventsTopic)
             .setHeader(KafkaHeaders.KEY, key)
             .setHeader("type", eventType)
-            .setHeader("id", UUID.randomUUID().toString())
-            .setHeader("timestamp", Instant.now().toString())
+            .setHeader("eventId", UUID.randomUUID().toString())  // Changed from "id" to "eventId" (id is read-only)
+            .setHeader("eventTimestamp", Instant.now().toString())  // Changed from "timestamp" to "eventTimestamp" (timestamp is read-only)
             .build()
     }
 }

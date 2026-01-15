@@ -12,11 +12,17 @@ const paymentsApi = axios.create({
   },
 })
 
-// Add request interceptor for error handling
+// Add response interceptor for error handling and token expiration detection
 paymentsApi.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.data?.error) {
+    // Handle 401 Unauthorized - token expired or missing
+    if (error.response?.status === 401) {
+      console.warn('Received 401 Unauthorized - forcing re-login')
+      // Dispatch event to force logout and show login modal
+      window.dispatchEvent(new CustomEvent('auth:force-login'))
+      error.message = 'Your session has expired. Please log in again.'
+    } else if (error.response?.data?.error) {
       error.message = error.response.data.error
     } else if (error.response?.data?.details) {
       error.message = JSON.stringify(error.response.data.details)

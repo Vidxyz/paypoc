@@ -380,3 +380,53 @@ async def delete_product(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e)
         )
+
+
+@router.post(
+    "/sync-inventory",
+    status_code=status.HTTP_200_OK,
+    summary="Sync all inventory data (ADMIN only)",
+    description="""
+    Sync all inventory data from the inventory service to the catalog service's
+    denormalized product_inventory table. This endpoint is only available to ADMIN users.
+    
+    This performs a one-time sync of all active products' inventory information.
+    """,
+    dependencies=[Depends(security)],
+    responses={
+        200: {"description": "Inventory sync completed successfully"},
+        401: {"description": "Authentication required"},
+        403: {"description": "Requires ADMIN account type"},
+        500: {"description": "Internal server error during sync"}
+    }
+)
+async def sync_inventory(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    current_user: dict = Depends(get_current_user),
+    product_service: ProductService = Depends(get_product_service)
+):
+    """Sync all inventory data (ADMIN only)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Only ADMIN can use this endpoint
+    if current_user.get("account_type") != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only available to ADMIN users"
+        )
+    
+    try:
+        result = await product_service.sync_all_inventory()
+        return {
+            "message": "Inventory sync completed successfully",
+            "synced_count": result["synced_count"],
+            "total_products": result["total_products"],
+            "products_without_inventory": result["products_without_inventory"]
+        }
+    except Exception as e:
+        logger.error(f"Error syncing inventory: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync inventory: {str(e)}"
+        )

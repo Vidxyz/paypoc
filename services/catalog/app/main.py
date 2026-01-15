@@ -9,6 +9,8 @@ import traceback
 
 from app.db.database import init_db
 from app.api import products, categories, health, images
+from app.kafka.inventory_consumer import get_inventory_consumer
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -23,10 +25,23 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Catalog Service...")
     await init_db()
+    
+    # Start inventory event consumer in background thread
+    inventory_consumer = get_inventory_consumer()
+    consumer_thread = threading.Thread(
+        target=inventory_consumer.start,
+        daemon=True,
+        name="inventory-consumer"
+    )
+    consumer_thread.start()
+    logger.info("Started inventory event consumer in background thread")
+    
     logger.info("Catalog Service started successfully")
     yield
     # Shutdown
     logger.info("Shutting down Catalog Service...")
+    inventory_consumer.stop()
+    logger.info("Stopped inventory event consumer")
 
 
 app = FastAPI(

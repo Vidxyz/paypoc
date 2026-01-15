@@ -381,35 +381,36 @@ function ProductModal({ open, onClose, product }) {
                     </Typography>
                   </Box>
                 ) : (
-                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
-                    <TextField
-                      label="Quantity"
-                      type="number"
-                      value={quantity}
-                      onChange={handleQuantityChange}
-                      inputProps={{ min: 1, max: availableQty }}
-                      sx={{ width: 100 }}
-                      size="small"
-                      helperText={availableQty > 0 ? `${availableQty} available` : ''}
-                      disabled={isOutOfStock}
-                    />
-                    <Button
-                      variant="contained"
-                      startIcon={<ShoppingCartIcon />}
-                      onClick={handleAddToCart}
-                      fullWidth
-                      size="large"
-                      disabled={isOutOfStock || quantity > availableQty}
-                    >
-                      {inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart'}
-                    </Button>
-                </Box>
+                  <>
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+                      <TextField
+                        label="Quantity"
+                        type="number"
+                        value={quantity}
+                        onChange={handleQuantityChange}
+                        inputProps={{ min: 1, max: availableQty }}
+                        sx={{ width: 100 }}
+                        size="small"
+                        helperText={availableQty > 0 ? `${availableQty} available` : ''}
+                        disabled={isOutOfStock}
+                      />
+                      <Button
+                        variant="contained"
+                        startIcon={<ShoppingCartIcon />}
+                        onClick={handleAddToCart}
+                        fullWidth
+                        size="large"
+                        disabled={isOutOfStock || quantity > availableQty}
+                      >
+                        {inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart'}
+                      </Button>
+                    </Box>
                     {inCart && (
-                      <Typography variant="body2" color="success.main" sx={{ textAlign: 'center' }}>
+                      <Typography variant="body2" color="success.main" sx={{ textAlign: 'center', mt: 1 }}>
                         ✓ {cartQuantity} item{cartQuantity > 1 ? 's' : ''} in your cart
                       </Typography>
                     )}
-                  </Box>
+                  </>
                 )}
               </Box>
             </Box>

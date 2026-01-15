@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import case
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
@@ -350,62 +351,55 @@ class ProductService:
                 # No valid categories found, return empty results
                 query = query.filter(Product.category_id == UUID('00000000-0000-0000-0000-000000000000'))
         
+        # Join with product_inventory for availability sorting and to include inventory in response
+        from app.models.product_inventory import ProductInventory
+        from sqlalchemy.orm import joinedload
+        
+        # Always join to get inventory data in response (LEFT OUTER JOIN)
+        query = query.outerjoin(
+            ProductInventory,
+            Product.id == ProductInventory.product_id
+        ).options(joinedload(Product.inventory_cache))
+        
         total = query.count()
         
-        # For availability sorting, fetch a larger set to sort properly, then paginate
-        # For newest sorting, fetch only the needed page (more efficient)
+        # Apply sorting
         if sort_by == "availability":
-            # Fetch up to 10 pages worth to sort by availability, then paginate
-            # This is a trade-off: better sorting accuracy vs. performance
-            fetch_limit = min(page_size * 10, total)  # Fetch up to 10 pages or all products, whichever is less
-            products_to_sort = query.order_by(Product.created_at.desc()).limit(fetch_limit).all()
+            # Database-level sorting: in-stock first (available_quantity > 0), then by quantity descending, then by creation date
+            # Use CASE to prioritize in-stock items, then sort by available_quantity DESC
+            query = query.order_by(
+                # In-stock products first (available_quantity > 0 gets 0, out-of-stock/null gets 1)
+                case(
+                    (ProductInventory.available_quantity > 0, 0),
+                    else_=1
+                ).asc(),
+                # Then by available quantity descending (higher quantity first)
+                ProductInventory.available_quantity.desc().nulls_last(),
+                # Then by creation date (newer first)
+                Product.created_at.desc()
+            )
         else:
-            # Default: newest first - fetch only the page we need
-            products_to_sort = query.order_by(Product.created_at.desc()).offset(
-                (page - 1) * page_size
-            ).limit(page_size).all()
+            # Default: newest first
+            query = query.order_by(Product.created_at.desc())
         
-        # Fetch inventory for products in batch (using internal API token)
-        inventory_map = {}
-        if products_to_sort:
-            try:
-                inventory_client = get_inventory_client()
-                product_ids = [p.id for p in products_to_sort]
-                logger.debug(f"Fetching inventory for {len(product_ids)} products in browse: {product_ids}")
-                inventory_map = await inventory_client.get_stock_batch(product_ids)
-                inventory_count = len([v for v in inventory_map.values() if v is not None])
-                logger.info(f"Successfully fetched inventory for {inventory_count} out of {len(product_ids)} products in browse")
-            except Exception as e:
-                logger.error(f"Failed to fetch inventory information in browse: {e}", exc_info=True)
-                # Continue without inventory - it's optional
-        
-        # Sort by availability if requested
-        # todo-vh: This isnt very efficient - we might need an API from inventory service to fetch this more efficinetly instead of stitching response here
-        if sort_by == "availability":
-            def get_available_quantity(product):
-                inventory = inventory_map.get(product.id)
-                if inventory is None:
-                    return 0
-                return inventory.get("available_quantity", inventory.get("availableQuantity", 0))
-            
-            # Sort: in-stock first (available_quantity > 0), then by quantity descending, then by creation date
-            products_to_sort.sort(key=lambda p: (
-                0 if get_available_quantity(p) > 0 else 1,  # In stock first
-                -get_available_quantity(p),  # Higher quantity first
-                -p.created_at.timestamp() if p.created_at else 0  # Newer first as tiebreaker
-            ))
-            
-            # Apply pagination after sorting
-            paginated_products = products_to_sort[(page - 1) * page_size:page * page_size]
-        else:
-            # Already paginated for newest sorting
-            paginated_products = products_to_sort
+        # Apply pagination
+        products = query.offset((page - 1) * page_size).limit(page_size).all()
         
         # Convert products to response dicts with image URLs and inventory
         product_dicts = []
-        for product in paginated_products:
-            inventory = inventory_map.get(product.id)
-            product_dicts.append(self._product_to_response_dict(product, inventory))
+        for product in products:
+            # Get inventory from joined table (if available) or None
+            inventory_data = None
+            if product.inventory_cache:
+                inv = product.inventory_cache
+                inventory_data = {
+                    "inventory_id": None,  # Not stored in cache
+                    "available_quantity": inv.available_quantity,
+                    "total_quantity": inv.total_quantity,
+                    "reserved_quantity": inv.reserved_quantity,
+                    "allocated_quantity": inv.allocated_quantity,
+                }
+            product_dicts.append(self._product_to_response_dict(product, inventory_data))
         
         return ProductListResponse(
             products=product_dicts,
@@ -414,4 +408,63 @@ class ProductService:
             page_size=page_size,
             has_next=(page * page_size) < total
         )
+    
+    async def sync_all_inventory(self) -> dict:
+        """Sync all inventory data from inventory service to catalog database
+        
+        This method fetches all active products and syncs their inventory
+        data from the inventory service into the denormalized product_inventory table.
+        
+        Returns:
+            dict with sync statistics (synced_count, total_products, products_without_inventory)
+        """
+        from app.models.product_inventory import ProductInventory
+        
+        # Get all active products
+        products = self.db.query(Product).filter(
+            Product.status == "ACTIVE",
+            Product.deleted_at.is_(None)
+        ).all()
+        
+        if not products:
+            logger.info("No active products found to sync")
+            return {
+                "synced_count": 0,
+                "total_products": 0,
+                "products_without_inventory": 0
+            }
+        
+        product_ids = [p.id for p in products]
+        logger.info(f"Syncing inventory for {len(product_ids)} active products...")
+        
+        # Fetch all inventory in batch
+        inventory_client = get_inventory_client()
+        inventory_map = await inventory_client.get_stock_batch(product_ids)
+        
+        # Upsert into product_inventory table
+        synced_count = 0
+        for product_id, inventory in inventory_map.items():
+            if inventory:
+                # Use merge to handle both insert and update
+                self.db.merge(ProductInventory(
+                    product_id=product_id,
+                    available_quantity=inventory.get("available_quantity", 0),
+                    total_quantity=inventory.get("total_quantity", 0),
+                    reserved_quantity=inventory.get("reserved_quantity", 0),
+                    allocated_quantity=inventory.get("allocated_quantity", 0),
+                ))
+                synced_count += 1
+        
+        self.db.commit()
+        products_without_inventory = len(product_ids) - synced_count
+        
+        logger.info(f"Successfully synced inventory for {synced_count} out of {len(product_ids)} products")
+        if products_without_inventory > 0:
+            logger.info(f"Note: {products_without_inventory} products have no inventory (this is normal)")
+        
+        return {
+            "synced_count": synced_count,
+            "total_products": len(product_ids),
+            "products_without_inventory": products_without_inventory
+        }
 

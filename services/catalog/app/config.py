@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_events_topic: str = "catalog.events"
+    kafka_inventory_events_topic: str = "inventory.events"  # Topic from inventory service
     
     # Cloudinary (active image provider)
     cloudinary_cloud_name: Optional[str] = None

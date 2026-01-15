@@ -125,11 +125,21 @@ function AdminPayouts() {
   const sellersWithoutBalance = sellers.filter((s) => s.balanceCents === 0)
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container maxWidth="xl" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
       <Card>
         <CardContent>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h4" component="h1">
+            <Typography 
+              variant="h4" 
+              component="h1"
+              sx={{ 
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)',
+                backgroundClip: 'text',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
               Seller Payouts
             </Typography>
             <Button

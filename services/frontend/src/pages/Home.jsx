@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Container,
   Typography,
@@ -12,11 +12,19 @@ import {
   Pagination,
   Alert,
   Button,
+  Paper,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  Chip,
 } from '@mui/material'
 import { catalogApiClient } from '../api/catalogApi'
 import ProductModal from '../components/ProductModal'
+import { useAuth0 } from '../auth/Auth0Provider'
 
 function Home() {
+  const { isAuthenticated, getAccessToken } = useAuth0()
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -25,17 +33,74 @@ function Home() {
   const [totalProducts, setTotalProducts] = useState(0)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [categories, setCategories] = useState([])
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState(new Set())
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
   const pageSize = 20
 
+  // Load categories on mount
   useEffect(() => {
-    fetchProducts(page)
-  }, [page])
+    if (!isAuthenticated) {
+      setCategoriesLoading(false)
+      return
+    }
+    
+    const loadCategories = async () => {
+      try {
+        const token = await getAccessToken()
+        const categoriesData = await catalogApiClient.getCategories(token)
+        setCategories(categoriesData || [])
+      } catch (err) {
+        console.warn('Failed to load categories:', err)
+      } finally {
+        setCategoriesLoading(false)
+      }
+    }
+    loadCategories()
+  }, [isAuthenticated, getAccessToken])
 
-  const fetchProducts = async (currentPage) => {
+  // Organize categories hierarchically
+  const organizedCategories = useMemo(() => {
+    if (!categories.length) return []
+    
+    const topLevel = []
+    const processedSubcategories = new Set()
+    
+    categories.forEach(cat => {
+      const parentId = cat.parent_id ? String(cat.parent_id) : null
+      if (!parentId) {
+        // Top-level category
+        topLevel.push(cat)
+        const parentIdStr = String(cat.id)
+        
+        // Find and add its subcategories immediately after
+        const subcategories = categories.filter(c => {
+          const cParentId = c.parent_id ? String(c.parent_id) : null
+          return cParentId === parentIdStr && !processedSubcategories.has(String(c.id))
+        })
+        
+        subcategories.forEach(subcat => {
+          topLevel.push(subcat)
+          processedSubcategories.add(String(subcat.id))
+        })
+      }
+    })
+    
+    return topLevel
+  }, [categories])
+
+  // Fetch products when page or categories change
+  useEffect(() => {
+    const categoryIdsArray = selectedCategoryIds.size > 0 ? Array.from(selectedCategoryIds) : null
+    fetchProducts(page, categoryIdsArray)
+  }, [page, selectedCategoryIds])
+
+  const fetchProducts = async (currentPage, categoryIds = null) => {
     setLoading(true)
     setError(null)
     try {
       const response = await catalogApiClient.browseProducts({
+        category_ids: categoryIds,
         page: currentPage,
         page_size: pageSize,
       })
@@ -50,6 +115,24 @@ function Home() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCategoryToggle = (categoryId) => {
+    setSelectedCategoryIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(categoryId)) {
+        newSet.delete(categoryId)
+      } else {
+        newSet.add(categoryId)
+      }
+      return newSet
+    })
+    setPage(1) // Reset to first page when category changes
+  }
+
+  const handleClearFilter = () => {
+    setSelectedCategoryIds(new Set())
+    setPage(1)
   }
 
   const handleProductClick = async (productId) => {
@@ -74,15 +157,56 @@ function Home() {
     setSelectedProduct(null)
   }
 
+  const selectedCategories = Array.from(selectedCategoryIds).map(id => 
+    categories.find(c => String(c.id) === id)
+  ).filter(Boolean)
+
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h3" component="h1" gutterBottom fontWeight="bold">
-          Shop Products
+    <Container maxWidth="xl" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
+      <Box sx={{ mb: 4, textAlign: { xs: 'center', sm: 'left' } }}>
+        <Typography 
+          variant="h3" 
+          component="h1" 
+          gutterBottom 
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            mb: 1,
+          }}
+        >
+          Discover Amazing Products
         </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Browse our collection of {totalProducts} products
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
+            {selectedCategories.length > 0
+              ? `Showing ${totalProducts} product${totalProducts !== 1 ? 's' : ''} in ${selectedCategories.length} categor${selectedCategories.length !== 1 ? 'ies' : 'y'}`
+              : `Browse our collection of ${totalProducts} carefully curated products`
+            }
+          </Typography>
+          {selectedCategories.length > 0 && (
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {selectedCategories.map(category => (
+                <Chip
+                  key={category.id}
+                  label={category.name}
+                  onDelete={() => handleCategoryToggle(String(category.id))}
+                  color="primary"
+                  variant="outlined"
+                />
+              ))}
+              <Chip
+                label="Clear All"
+                onClick={handleClearFilter}
+                color="default"
+                variant="outlined"
+                sx={{ cursor: 'pointer' }}
+              />
+            </Box>
+          )}
+        </Box>
       </Box>
 
       {error && (
@@ -91,33 +215,109 @@ function Home() {
         </Alert>
       )}
 
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
-          <CircularProgress />
-        </Box>
-      ) : products.length === 0 ? (
-        <Box sx={{ textAlign: 'center', py: 8 }}>
-          <Typography variant="h5" color="text.secondary" gutterBottom>
-            No products available
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Check back later for new products
-          </Typography>
-        </Box>
-      ) : (
-        <>
-          <Grid container spacing={3} sx={{ mb: 4 }}>
-            {products.map((product) => (
+      <Grid container spacing={3}>
+        {/* Categories Sidebar */}
+        <Grid item xs={12} md={3}>
+          <Paper 
+            sx={{ 
+              p: 2, 
+              position: 'sticky', 
+              top: 20,
+              maxHeight: 'calc(100vh - 40px)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2, flexShrink: 0 }}>
+              Categories
+            </Typography>
+            {categoriesLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2, flexShrink: 0 }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : (
+              <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                <List dense sx={{ p: 0 }}>
+                {organizedCategories.map((category, index) => {
+                  const isSubcategory = category.parent_id !== null && category.parent_id !== undefined
+                  const categoryId = String(category.id)
+                  const isSelected = selectedCategoryIds.has(categoryId)
+                  
+                  return (
+                    <ListItem key={categoryId} disablePadding>
+                      <ListItemButton
+                        onClick={() => handleCategoryToggle(categoryId)}
+                        selected={isSelected}
+                        sx={{
+                          pl: isSubcategory ? 4 : 2,
+                          borderRadius: 1,
+                          mb: 0.5,
+                          '&.Mui-selected': {
+                            backgroundColor: 'primary.main',
+                            color: 'primary.contrastText',
+                            '&:hover': {
+                              backgroundColor: 'primary.dark',
+                            },
+                          },
+                        }}
+                      >
+                        <ListItemText 
+                          primary={isSubcategory ? `└─ ${category.name}` : category.name}
+                          primaryTypographyProps={{
+                            fontWeight: isSelected ? 600 : 400,
+                          }}
+                        />
+                      </ListItemButton>
+                    </ListItem>
+                  )
+                })}
+                </List>
+              </Box>
+            )}
+          </Paper>
+        </Grid>
+
+        {/* Products Grid */}
+        <Grid item xs={12} md={9}>
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+              <CircularProgress />
+            </Box>
+          ) : products.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <Typography variant="h5" color="text.secondary" gutterBottom>
+                No products available
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {selectedCategories.length > 0
+                  ? `No products found in selected categor${selectedCategories.length !== 1 ? 'ies' : 'y'}`
+                  : 'Check back later for new products'
+                }
+              </Typography>
+              {selectedCategories.length > 0 && (
+                <Button variant="outlined" onClick={handleClearFilter}>
+                  View All Products
+                </Button>
+              )}
+            </Box>
+          ) : (
+            <>
+              <Grid container spacing={3} sx={{ mb: 4 }}>
+                {products.map((product) => (
               <Grid item xs={12} sm={6} md={4} lg={3} key={product.id}>
                 <Card
                   sx={{
                     height: '100%',
                     display: 'flex',
                     flexDirection: 'column',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    border: '1px solid',
+                    borderColor: 'divider',
                     '&:hover': {
-                      transform: 'translateY(-4px)',
-                      boxShadow: 4,
+                      transform: 'translateY(-8px)',
+                      boxShadow: '0 12px 24px rgba(0, 0, 0, 0.15)',
+                      borderColor: 'primary.main',
                     },
                   }}
                 >
@@ -127,12 +327,16 @@ function Home() {
                   >
                     <CardMedia
                       component="img"
-                      height="200"
+                      height="240"
                       image={product.images?.[0] || 'https://via.placeholder.com/300?text=No+Image'}
                       alt={product.name}
                       sx={{
                         objectFit: 'cover',
                         backgroundColor: 'grey.100',
+                        transition: 'transform 0.3s ease-in-out',
+                        '&:hover': {
+                          transform: 'scale(1.05)',
+                        },
                       }}
                       onError={(e) => {
                         e.target.src = 'https://via.placeholder.com/300?text=Image+Not+Available'
@@ -169,13 +373,23 @@ function Home() {
                       >
                         {product.description || 'No description available'}
                       </Typography>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="h6" color="primary" fontWeight="bold">
-                          ${(product.price_cents / 100).toFixed(2)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {product.currency}
-                        </Typography>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center',
+                        mt: 'auto',
+                        pt: 2,
+                        borderTop: '1px solid',
+                        borderColor: 'divider',
+                      }}>
+                        <Box>
+                          <Typography variant="h5" color="primary" fontWeight={700} sx={{ lineHeight: 1.2 }}>
+                            ${(product.price_cents / 100).toFixed(2)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {product.currency}
+                          </Typography>
+                        </Box>
                       </Box>
                     </CardContent>
                   </CardActionArea>
@@ -184,21 +398,23 @@ function Home() {
             ))}
           </Grid>
 
-          {totalPages > 1 && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-              <Pagination
-                count={totalPages}
-                page={page}
-                onChange={handlePageChange}
-                color="primary"
-                size="large"
-                showFirstButton
-                showLastButton
-              />
-            </Box>
+              {totalPages > 1 && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+                  <Pagination
+                    count={totalPages}
+                    page={page}
+                    onChange={handlePageChange}
+                    color="primary"
+                    size="large"
+                    showFirstButton
+                    showLastButton
+                  />
+                </Box>
+              )}
+            </>
           )}
-        </>
-      )}
+        </Grid>
+      </Grid>
 
       <ProductModal open={modalOpen} onClose={handleCloseModal} product={selectedProduct} />
     </Container>

@@ -216,14 +216,18 @@ async def list_products_by_seller(
     }
 )
 async def browse_products(
-    category_id: Optional[UUID] = Query(None, description="Filter by category UUID"),
+    category_ids: Optional[List[UUID]] = Query(None, description="Filter by category UUIDs (multiple categories supported, OR logic)"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
     product_service: ProductService = Depends(get_product_service)
 ):
-    """Browse products (public endpoint)"""
+    """Browse products (public endpoint)
+    
+    Supports filtering by multiple categories. Products matching ANY of the provided categories (OR logic) are returned.
+    If a top-level category is provided, products from that category and all its subcategories are included.
+    """
     return product_service.browse_products(
-        category_id=category_id,
+        category_ids=category_ids,
         page=page,
         page_size=page_size
     )

@@ -6,6 +6,7 @@ import { CartProvider } from './context/CartContext'
 import Home from './pages/Home'
 import Checkout from './pages/Checkout'
 import Payments from './pages/Payments'
+import Profile from './pages/Profile'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
 import SuccessModal from './components/SuccessModal'
@@ -144,6 +145,16 @@ function App() {
             element={
               isAuthenticated ? (
                 <Payments buyerId={userId} userEmail={userEmail} />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              isAuthenticated ? (
+                <Profile />
               ) : (
                 <Navigate to="/" replace />
               )

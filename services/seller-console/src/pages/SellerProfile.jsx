@@ -113,8 +113,20 @@ function SellerProfile() {
   const hasStripeAccount = stripeAccounts.some((account) => account.stripeAccountId !== null)
 
   return (
-    <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 4 }}>
+    <Container maxWidth="md" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
+      <Typography 
+        variant="h4" 
+        component="h1" 
+        gutterBottom 
+        sx={{ 
+          mb: 4,
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #4a90e2 0%, #3a7bc8 100%)',
+          backgroundClip: 'text',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+        }}
+      >
         Seller Profile
       </Typography>
 

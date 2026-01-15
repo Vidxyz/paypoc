@@ -12,8 +12,8 @@ class CategoryService:
         self.db = db
     
     def list_categories(self) -> List[Category]:
-        """List all top-level categories"""
-        return self.db.query(Category).filter(Category.parent_id.is_(None)).all()
+        """List all categories (top-level and subcategories), ordered by parent then name"""
+        return self.db.query(Category).order_by(Category.parent_id.nulls_first(), Category.name).all()
     
     def get_category_by_id(self, category_id: UUID) -> Category:
         """Get a category by ID"""

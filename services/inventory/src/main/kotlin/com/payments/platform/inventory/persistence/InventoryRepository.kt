@@ -15,5 +15,8 @@ interface InventoryRepository : JpaRepository<InventoryEntity, UUID> {
     
     @Query("SELECT i FROM InventoryEntity i WHERE i.availableQuantity <= i.lowStockThreshold")
     fun findLowStockItems(): List<InventoryEntity>
+    
+    @Query("SELECT i FROM InventoryEntity i WHERE i.productId IN :productIds")
+    fun findByProductIdIn(@Param("productIds") productIds: List<UUID>): List<InventoryEntity>
 }
 

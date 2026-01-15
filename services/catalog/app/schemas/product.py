@@ -27,6 +27,16 @@ class ProductUpdate(BaseModel):
     images: Optional[List[str]] = Field(None, description="List of image IDs (Cloudinary public_ids)", example=["new-image-id"])
 
 
+class InventoryInfo(BaseModel):
+    """Inventory information for a product"""
+    inventory_id: Optional[UUID] = Field(None, description="Inventory record ID")
+    available_quantity: int = Field(0, description="Available quantity", ge=0)
+    reserved_quantity: int = Field(0, description="Reserved quantity", ge=0)
+    allocated_quantity: int = Field(0, description="Allocated quantity", ge=0)
+    total_quantity: int = Field(0, description="Total quantity", ge=0)
+    low_stock_threshold: Optional[int] = Field(None, description="Low stock threshold", ge=0)
+
+
 class ProductResponse(BaseModel):
     id: UUID = Field(..., description="Product UUID", example="123e4567-e89b-12d3-a456-426614174000")
     seller_id: str = Field(..., description="Seller ID (email)", example="seller@example.com")
@@ -39,6 +49,7 @@ class ProductResponse(BaseModel):
     status: str = Field(..., description="Product status", example="ACTIVE")
     attributes: Optional[Dict[str, Any]] = Field(None, description="Additional attributes")
     images: Optional[List[str]] = Field(None, description="List of image URLs (Cloudinary CDN URLs)")
+    inventory: Optional[InventoryInfo] = Field(None, description="Inventory information (if available)")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     

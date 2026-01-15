@@ -141,6 +141,15 @@ class InventoryService(
     }
     
     @Transactional(readOnly = true)
+    fun getStockByProductIds(productIds: List<UUID>): Map<UUID, Inventory> {
+        if (productIds.isEmpty()) {
+            return emptyMap()
+        }
+        val entities = inventoryRepository.findByProductIdIn(productIds)
+        return entities.associate { it.productId to it.toDomain() }
+    }
+    
+    @Transactional(readOnly = true)
     fun getLowStockItems(): List<Inventory> {
         return inventoryRepository.findLowStockItems().map { it.toDomain() }
     }

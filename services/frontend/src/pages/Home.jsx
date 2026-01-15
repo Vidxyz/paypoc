@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Container,
   Typography,
@@ -18,6 +19,10 @@ import {
   ListItemButton,
   ListItemText,
   Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material'
 import { catalogApiClient } from '../api/catalogApi'
 import ProductModal from '../components/ProductModal'
@@ -25,6 +30,7 @@ import { useAuth0 } from '../auth/Auth0Provider'
 
 function Home() {
   const { isAuthenticated, getAccessToken } = useAuth0()
+  const location = useLocation()
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -36,7 +42,19 @@ function Home() {
   const [categories, setCategories] = useState([])
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(new Set())
   const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [sortBy, setSortBy] = useState('newest') // 'newest', 'availability'
   const pageSize = 20
+
+  // Apply category filter from navigation state
+  useEffect(() => {
+    if (location.state?.categoryId) {
+      const categoryId = String(location.state.categoryId)
+      setSelectedCategoryIds(new Set([categoryId]))
+      setPage(1)
+      // Clear the state to avoid re-applying on re-render
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state])
 
   // Load categories on mount
   useEffect(() => {
@@ -92,10 +110,10 @@ function Home() {
   // Fetch products when page or categories change
   useEffect(() => {
     const categoryIdsArray = selectedCategoryIds.size > 0 ? Array.from(selectedCategoryIds) : null
-    fetchProducts(page, categoryIdsArray)
-  }, [page, selectedCategoryIds])
+    fetchProducts(page, categoryIdsArray, sortBy)
+  }, [page, selectedCategoryIds, sortBy])
 
-  const fetchProducts = async (currentPage, categoryIds = null) => {
+  const fetchProducts = async (currentPage, categoryIds = null, sortOption = 'newest') => {
     setLoading(true)
     setError(null)
     try {
@@ -103,6 +121,7 @@ function Home() {
         category_ids: categoryIds,
         page: currentPage,
         page_size: pageSize,
+        sort_by: sortOption,
       })
       setProducts(response.products || [])
       setTotalProducts(response.total || 0)
@@ -280,6 +299,27 @@ function Home() {
 
         {/* Products Grid */}
         <Grid item xs={12} md={9}>
+          {/* Sort and Filter Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="body2" color="text.secondary">
+              {totalProducts} product{totalProducts !== 1 ? 's' : ''} found
+            </Typography>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortBy}
+                label="Sort By"
+                onChange={(e) => {
+                  setSortBy(e.target.value)
+                  setPage(1) // Reset to first page when sorting changes
+                }}
+              >
+                <MenuItem value="newest">Newest First</MenuItem>
+                <MenuItem value="availability">Availability (In Stock First)</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+          
           {loading ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
               <CircularProgress />
@@ -325,23 +365,48 @@ function Home() {
                     onClick={() => handleProductClick(product.id)}
                     sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
                   >
-                    <CardMedia
-                      component="img"
-                      height="240"
-                      image={product.images?.[0] || 'https://via.placeholder.com/300?text=No+Image'}
-                      alt={product.name}
-                      sx={{
-                        objectFit: 'cover',
-                        backgroundColor: 'grey.100',
-                        transition: 'transform 0.3s ease-in-out',
-                        '&:hover': {
-                          transform: 'scale(1.05)',
-                        },
-                      }}
-                      onError={(e) => {
-                        e.target.src = 'https://via.placeholder.com/300?text=Image+Not+Available'
-                      }}
-                    />
+                    <Box sx={{ position: 'relative' }}>
+                      <CardMedia
+                        component="img"
+                        height="240"
+                        image={product.images?.[0] || 'https://via.placeholder.com/300?text=No+Image'}
+                        alt={product.name}
+                        sx={{
+                          objectFit: 'cover',
+                          backgroundColor: 'grey.100',
+                          transition: 'transform 0.3s ease-in-out',
+                          opacity: (() => {
+                            const availableQty = product.inventory?.available_quantity ?? product.inventory?.availableQuantity ?? 0
+                            return availableQty > 0 ? 1 : 0.6
+                          })(),
+                          '&:hover': {
+                            transform: 'scale(1.05)',
+                          },
+                        }}
+                        onError={(e) => {
+                          e.target.src = 'https://via.placeholder.com/300?text=Image+Not+Available'
+                        }}
+                      />
+                      {(() => {
+                        const availableQty = product.inventory?.available_quantity ?? product.inventory?.availableQuantity ?? 0
+                        if (availableQty <= 0) {
+                          return (
+                            <Chip
+                              label="Out of Stock"
+                              color="error"
+                              size="small"
+                              sx={{
+                                position: 'absolute',
+                                top: 8,
+                                right: 8,
+                                fontWeight: 600,
+                              }}
+                            />
+                          )
+                        }
+                        return null
+                      })()}
+                    </Box>
                     <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                       <Typography
                         variant="h6"

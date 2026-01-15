@@ -27,10 +27,12 @@ import re
 import logging
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
+from datetime import datetime
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
@@ -368,9 +370,12 @@ class CatalogAPIClient:
     def get_categories(self) -> Dict[str, str]:
         """Get all categories and return mapping: slug -> UUID"""
         if self.category_cache:
+            logger.info(f"Using cached categories ({len(self.category_cache)} mappings)")
             return self.category_cache
         
+        logger.info(f"Fetching categories from {self.base_url}/api/catalog/categories...")
         try:
+            start_time = time.time()
             response = requests.get(
                 f'{self.base_url}/api/catalog/categories',
                 headers=self.headers,
@@ -378,8 +383,12 @@ class CatalogAPIClient:
             )
             response.raise_for_status()
             categories = response.json()
+            elapsed = time.time() - start_time
+            
+            logger.info(f"✓ Received {len(categories)} categories in {elapsed:.2f}s")
             
             # Build mapping: category slug/name -> UUID
+            logger.info("Building category mapping...")
             mapping = {}
             for cat in categories:
                 cat_id = cat.get('id')
@@ -396,18 +405,30 @@ class CatalogAPIClient:
                             mapping[word] = cat_id
             
             self.category_cache = mapping
-            logger.info(f"Loaded {len(categories)} categories, created {len(mapping)} mappings")
+            logger.info(f"✓ Created {len(mapping)} category mappings from {len(categories)} categories")
             return mapping
+        except requests.exceptions.HTTPError as e:
+            elapsed = time.time() - start_time if 'start_time' in locals() else 0
+            response_text = ""
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    response_text = e.response.text
+                except:
+                    response_text = f"Could not read response text: {str(e)}"
+            logger.error(f"✗ HTTP {e.response.status_code if hasattr(e, 'response') and e.response else 'unknown'} error loading categories ({elapsed:.2f}s)")
+            logger.error(f"  Response content: {response_text}")
+            return {}
         except Exception as e:
-            logger.warning(f"Failed to load categories: {e}. Category mapping will be skipped.")
+            logger.warning(f"✗ Failed to load categories: {e}. Category mapping will be skipped.")
             return {}
     
-    def upload_image(self, image_url: str) -> Optional[str]:
+    def upload_image(self, image_url: str, image_num: int = 0, total_images: int = 0) -> Optional[str]:
         """Upload image from URL and return public_id"""
         if not image_url or not image_url.startswith(('http://', 'https://')):
             return None
         
         try:
+            start_time = time.time()
             response = requests.post(
                 f'{self.base_url}/api/catalog/images/upload-url',
                 headers=self.headers,
@@ -416,13 +437,37 @@ class CatalogAPIClient:
             )
             response.raise_for_status()
             result = response.json()
-            return result.get('public_id')
+            public_id = result.get('public_id')
+            elapsed = time.time() - start_time
+            
+            if total_images > 0:
+                logger.info(f"    ↳ Image {image_num}/{total_images}: Uploaded {public_id[:30]}... ({elapsed:.2f}s)")
+            else:
+                logger.debug(f"    ↳ Uploaded image: {public_id[:30]}... ({elapsed:.2f}s)")
+            return public_id
+        except requests.exceptions.HTTPError as e:
+            elapsed = time.time() - start_time
+            response_text = ""
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    response_text = e.response.text
+                except:
+                    response_text = f"Could not read response text: {str(e)}"
+            logger.warning(f"    ↳ Image {image_num}/{total_images}: HTTP {e.response.status_code if hasattr(e, 'response') and e.response else 'unknown'} error uploading {image_url[:50]}... ({elapsed:.2f}s)")
+            logger.warning(f"      Response content: {response_text}")
+            return None
+        except requests.exceptions.Timeout:
+            elapsed = time.time() - start_time if 'start_time' in locals() else 0
+            logger.warning(f"    ↳ Image {image_num}/{total_images}: Timeout uploading {image_url[:50]}... ({elapsed:.2f}s)")
+            return None
         except Exception as e:
-            logger.warning(f"Failed to upload image {image_url[:50]}...: {e}")
+            elapsed = time.time() - start_time if 'start_time' in locals() else 0
+            logger.warning(f"    ↳ Image {image_num}/{total_images}: Failed to upload {image_url[:50]}...: {str(e)} ({elapsed:.2f}s)")
             return None
     
-    def create_product(self, product_data: Dict[str, Any]) -> bool:
-        """Create a product"""
+    def create_product(self, product_data: Dict[str, Any], product_num: int = 0, total: int = 0) -> Optional[str]:
+        """Create a product and return product ID"""
+        start_time = time.time()
         try:
             response = requests.post(
                 f'{self.base_url}/api/catalog/products',
@@ -431,15 +476,93 @@ class CatalogAPIClient:
                 timeout=10
             )
             response.raise_for_status()
+            elapsed = time.time() - start_time
+            
+            result = response.json()
+            product_id = result.get('id')
+            if product_id:
+                if total > 0:
+                    logger.info(f"  ✓ Product created: ID={product_id[:8]}... ({elapsed:.2f}s)")
+                return product_id
+            else:
+                logger.warning(f"  ⚠ Product created but no ID returned ({elapsed:.2f}s)")
+                return None
+        except requests.exceptions.HTTPError as e:
+            elapsed = time.time() - start_time
+            response_text = ""
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    response_text = e.response.text
+                except:
+                    response_text = f"Could not read response text: {str(e)}"
+            
+            if e.response.status_code == 409:
+                logger.warning(f"  ⚠ Product with SKU {product_data.get('sku')} already exists (409 Conflict) ({elapsed:.2f}s)")
+                if response_text:
+                    logger.debug(f"    Response content: {response_text}")
+            else:
+                logger.error(f"  ✗ HTTP {e.response.status_code}: Unexpected status code ({elapsed:.2f}s)")
+                logger.error(f"    Response content: {response_text}")
+            return None
+        except requests.exceptions.Timeout:
+            elapsed = time.time() - start_time
+            logger.error(f"  ✗ Timeout creating product (exceeded 10s) ({elapsed:.2f}s)")
+            return None
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"  ✗ Error creating product: {str(e)[:200]} ({elapsed:.2f}s)")
+            return None
+
+
+class InventoryAPIClient:
+    """Client for Inventory Service API"""
+    
+    def __init__(self, base_url: str, auth_token: str):
+        self.base_url = base_url.rstrip('/')
+        self.auth_token = auth_token
+        self.headers = {
+            'Authorization': f'Bearer {auth_token}',
+            'Content-Type': 'application/json',
+        }
+    
+    def create_or_update_stock(self, product_id: str, sku: str, quantity: int, product_num: int = 0, total: int = 0) -> bool:
+        """Create or update inventory stock for a product"""
+        start_time = time.time()
+        try:
+            response = requests.put(
+                f'{self.base_url}/api/inventory/stock/{product_id}',
+                headers=self.headers,
+                json={
+                    'sku': sku,
+                    'quantity': quantity
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            elapsed = time.time() - start_time
+            
+            if total > 0:
+                logger.info(f"  ✓ Inventory created: quantity={quantity} ({elapsed:.2f}s)")
             return True
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 409:
-                logger.warning(f"Product with SKU {product_data.get('sku')} already exists")
-            else:
-                logger.error(f"Failed to create product {product_data.get('name')[:50]}: {e.response.text}")
+            elapsed = time.time() - start_time
+            response_text = ""
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    response_text = e.response.text
+                except:
+                    response_text = f"Could not read response text: {str(e)}"
+            
+            logger.warning(f"  ⚠ Failed to create inventory: HTTP {e.response.status_code if hasattr(e, 'response') and e.response else 'unknown'} ({elapsed:.2f}s)")
+            logger.warning(f"    Response content: {response_text}")
+            return False
+        except requests.exceptions.Timeout:
+            elapsed = time.time() - start_time
+            logger.warning(f"  ⚠ Timeout creating inventory (exceeded 10s) ({elapsed:.2f}s)")
             return False
         except Exception as e:
-            logger.error(f"Error creating product: {e}")
+            elapsed = time.time() - start_time
+            logger.warning(f"  ⚠ Error creating inventory: {str(e)[:200]} ({elapsed:.2f}s)")
             return False
 
 
@@ -481,25 +604,48 @@ def map_amazon_category_to_buyit(amazon_category_path: str, category_mapping: Di
 
 def load_csv(file_path: str) -> List[Dict[str, str]]:
     """Load CSV file and return list of rows"""
+    logger.info(f"Reading CSV file: {file_path}")
+    start_time = time.time()
     rows = []
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             # Try to detect delimiter
+            logger.debug("Detecting CSV delimiter...")
             sample = f.read(1024)
             f.seek(0)
             sniffer = csv.Sniffer()
             delimiter = sniffer.sniff(sample).delimiter
+            logger.debug(f"Detected delimiter: '{delimiter}'")
             
             reader = csv.DictReader(f, delimiter=delimiter)
+            logger.info("Reading CSV rows...")
+            
+            row_count = 0
             for row in reader:
                 # Clean row: strip strings, handle None
                 cleaned = {k: (v.strip() if v else '') for k, v in row.items()}
                 rows.append(cleaned)
+                row_count += 1
+                
+                # Log progress every 1000 rows
+                if row_count % 1000 == 0:
+                    logger.info(f"  Read {row_count:,} rows...")
+            
+            elapsed = time.time() - start_time
+            logger.info(f"✓ Loaded {len(rows):,} rows from CSV in {elapsed:.2f}s")
+            
+            # Log column names
+            if rows:
+                columns = list(rows[0].keys())
+                logger.info(f"  CSV columns ({len(columns)}): {', '.join(columns[:10])}{'...' if len(columns) > 10 else ''}")
+            
+    except FileNotFoundError:
+        logger.error(f"✗ CSV file not found: {file_path}")
+        raise
     except Exception as e:
-        logger.error(f"Failed to load CSV: {e}")
+        logger.error(f"✗ Failed to load CSV: {e}")
         raise
     
-    logger.info(f"Loaded {len(rows)} rows from CSV")
     return rows
 
 
@@ -520,100 +666,255 @@ Example:
     parser.add_argument('--csv', required=True, help='Path to Amazon CSV file')
     parser.add_argument('--token', required=True, help='Seller auth token (JWT)')
     parser.add_argument('--catalog-url', default='https://catalog.local', help='Catalog service URL')
+    parser.add_argument('--inventory-url', default='https://inventory.local', help='Inventory service URL')
     parser.add_argument('--count', type=int, default=500, help='Number of products to create')
     parser.add_argument('--seller-email', required=True, help='Seller email (for SKU prefix)')
     parser.add_argument('--delay', type=float, default=0.2, help='Delay between API calls (seconds)')
     parser.add_argument('--skip-images', action='store_true', help='Skip image uploads')
     parser.add_argument('--max-images', type=int, default=3, help='Maximum images per product')
+    parser.add_argument('--inventory-quantity', type=int, default=10, help='Inventory quantity to set for each product')
+    parser.add_argument('--skip-inventory', action='store_true', help='Skip inventory creation')
     
     args = parser.parse_args()
     
+    # Start timing
+    script_start_time = time.time()
+    logger.info("="*70)
+    logger.info("BUYIT PRODUCT SEEDING SCRIPT")
+    logger.info("="*70)
+    logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Configuration:")
+    logger.info(f"  CSV file: {args.csv}")
+    logger.info(f"  Catalog URL: {args.catalog_url}")
+    logger.info(f"  Inventory URL: {args.inventory_url}")
+    logger.info(f"  Seller email: {args.seller_email}")
+    logger.info(f"  Target count: {args.count}")
+    logger.info(f"  Delay between calls: {args.delay}s")
+    logger.info(f"  Skip images: {args.skip_images}")
+    logger.info(f"  Max images per product: {args.max_images}")
+    logger.info(f"  Inventory quantity: {args.inventory_quantity}")
+    logger.info(f"  Skip inventory: {args.skip_inventory}")
+    logger.info("="*70)
+    
     # Load CSV
-    logger.info(f"Loading CSV from {args.csv}")
+    logger.info("\n[STEP 1/5] Loading CSV file...")
     all_rows = load_csv(args.csv)
     
     if len(all_rows) == 0:
-        logger.error("CSV file is empty or could not be read")
+        logger.error("✗ CSV file is empty or could not be read")
         return
     
-    # Sample random rows
-    sample_size = min(args.count, len(all_rows))
-    sampled_rows = random.sample(all_rows, sample_size)
-    logger.info(f"Sampled {sample_size} products from {len(all_rows)} total rows")
+    # Shuffle and sample random rows to ensure category diversity
+    logger.info("\n[STEP 2/5] Sampling products...")
+    logger.info("  Shuffling dataset to ensure category diversity...")
     
+    # Create a copy to avoid modifying the original
+    shuffled_rows = all_rows.copy()
+
     # Initialize mapper
+    logger.info("\n[STEP 3/5] Initializing components...")
     mapper = ProductMapper()
-    logger.info("Product mapper initialized with Amazon CSV column structure")
+    logger.info("✓ Product mapper initialized")
     
-    # Initialize API client
-    client = CatalogAPIClient(args.catalog_url, args.token)
+    # Shuffle multiple times to ensure better randomization
+    # This helps break up any category clustering in the CSV
+    for shuffle_round in range(3):
+        random.shuffle(shuffled_rows)
+        logger.debug(f"  Shuffle round {shuffle_round + 1}/3 completed")
+    
+    # Now sample from the shuffled list
+    sample_size = min(args.count, len(shuffled_rows))
+    sampled_rows = random.sample(shuffled_rows, sample_size)
+    
+    # Log category distribution for verification
+    if sampled_rows:
+        category_column = mapper.amazon_columns.get('category', 'Category')
+        sampled_categories = {}
+        for row in sampled_rows:
+            category = row.get(category_column, '').strip()
+            if category:
+                # Get top-level category (first part before |)
+                top_level = category.split('|')[0].strip()
+                sampled_categories[top_level] = sampled_categories.get(top_level, 0) + 1
+        
+        logger.info(f"✓ Sampled {sample_size:,} products from {len(all_rows):,} total rows")
+        logger.info(f"  Category distribution: {len(sampled_categories)} unique top-level categories")
+        if len(sampled_categories) > 0:
+            top_categories = sorted(sampled_categories.items(), key=lambda x: x[1], reverse=True)[:5]
+            logger.info(f"  Top categories: {', '.join([f'{cat}({count})' for cat, count in top_categories])}")
+    else:
+        logger.info(f"✓ Sampled {sample_size:,} products from {len(all_rows):,} total rows")
+    
+    
+    
+    # Initialize API clients
+    catalog_client = CatalogAPIClient(args.catalog_url, args.token)
+    logger.info(f"✓ Catalog API client initialized for {args.catalog_url}")
+    
+    inventory_client = None
+    if not args.skip_inventory:
+        inventory_client = InventoryAPIClient(args.inventory_url, args.token)
+        logger.info(f"✓ Inventory API client initialized for {args.inventory_url}")
+    else:
+        logger.info("⚠ Inventory creation skipped (--skip-inventory flag)")
     
     # Load categories
-    logger.info("Loading BuyIt categories...")
-    category_mapping = client.get_categories()
+    logger.info("\n[STEP 4/5] Loading BuyIt categories...")
+    category_mapping = catalog_client.get_categories()
     
     if not category_mapping:
-        logger.warning("No categories loaded - products will be created without categories")
+        logger.warning("⚠ No categories loaded - products will be created without categories")
+    else:
+        logger.info(f"✓ Category mapping ready ({len(category_mapping)} mappings)")
     
     # Process products
+    logger.info("\n[STEP 5/5] Processing products...")
+    logger.info("="*70)
+    
     success_count = 0
     error_count = 0
     skipped_count = 0
+    total_images_uploaded = 0
+    total_images_failed = 0
+    categories_mapped = 0
+    categories_unmapped = 0
+    inventory_created = 0
+    inventory_failed = 0
     
-    logger.info(f"\nStarting product creation (delay: {args.delay}s between calls)...\n")
+    process_start_time = time.time()
     
     for i, row in enumerate(sampled_rows, 1):
         try:
+            # Progress header
+            progress_pct = (i / sample_size) * 100
+            elapsed = time.time() - process_start_time
+            avg_time_per_item = elapsed / i if i > 0 else 0
+            remaining = (sample_size - i) * avg_time_per_item
+            
+            logger.info(f"\n[{i}/{sample_size}] ({progress_pct:.1f}%) Processing product...")
+            logger.info(f"  ETA: {remaining/60:.1f} minutes | Avg: {avg_time_per_item:.2f}s/item")
+            
             # Map row to product data
+            logger.debug(f"  Mapping CSV row to product schema...")
             product_data = mapper.map_row(row, args.seller_email, i)
+            logger.info(f"  → Name: {product_data['name'][:60]}")
+            logger.info(f"  → SKU: {product_data['sku']}")
+            logger.info(f"  → Price: {product_data['price_cents']/100:.2f} {product_data['currency']}")
             
             # Map category
             category_path = product_data.pop('category_path')
             category_id = map_amazon_category_to_buyit(category_path, category_mapping)
             product_data['category_id'] = category_id
             
-            if not category_id:
-                logger.debug(f"[{i}/{sample_size}] No category mapped for: {category_path}")
+            if category_id:
+                categories_mapped += 1
+                logger.info(f"  → Category: {category_path[:60]} → Mapped")
+            else:
+                categories_unmapped += 1
+                if category_path:
+                    logger.warning(f"  → Category: {category_path[:60]} → No mapping found")
+                else:
+                    logger.debug(f"  → Category: (empty)")
             
             # Upload images
             image_urls = product_data.pop('image_urls', [])
             images = []
             
             if image_urls and not args.skip_images:
-                # Limit number of images
-                for img_url in image_urls[:args.max_images]:
-                    public_id = client.upload_image(img_url)
+                total_to_upload = min(len(image_urls), args.max_images)
+                logger.info(f"  → Images: Uploading {total_to_upload} of {len(image_urls)} available...")
+                
+                for img_idx, img_url in enumerate(image_urls[:args.max_images], 1):
+                    public_id = catalog_client.upload_image(img_url, img_idx, total_to_upload)
                     if public_id:
                         images.append(public_id)
+                        total_images_uploaded += 1
                         time.sleep(args.delay)  # Rate limiting for image uploads
                     else:
-                        logger.debug(f"  Skipped image: {img_url[:50]}...")
+                        total_images_failed += 1
+                
+                if images:
+                    logger.info(f"  ✓ Uploaded {len(images)}/{total_to_upload} images")
+                else:
+                    logger.warning(f"  ⚠ No images uploaded ({total_images_failed} failed)")
+            elif args.skip_images:
+                logger.info(f"  → Images: Skipped (--skip-images flag)")
+            else:
+                logger.info(f"  → Images: None available")
             
             product_data['images'] = images if images else None
             
             # Create product
-            if client.create_product(product_data):
+            logger.info(f"  Creating product via API...")
+            product_id = catalog_client.create_product(product_data, i, sample_size)
+            
+            if product_id:
                 success_count += 1
-                logger.info(f"[{i}/{sample_size}] ✓ Created: {product_data['name'][:60]}")
+                logger.info(f"  ✓ Product created successfully!")
+                
+                # Create inventory for the product
+                if inventory_client and not args.skip_inventory:
+                    logger.info(f"  Creating inventory (quantity={args.inventory_quantity})...")
+                    if inventory_client.create_or_update_stock(
+                        product_id=product_id,
+                        sku=product_data['sku'],
+                        quantity=args.inventory_quantity,
+                        product_num=i,
+                        total=sample_size
+                    ):
+                        inventory_created += 1
+                        logger.info(f"  ✓ Inventory created successfully!")
+                    else:
+                        inventory_failed += 1
+                        logger.warning(f"  ⚠ Inventory creation failed (product still created)")
+                    time.sleep(args.delay)  # Rate limiting for inventory creation
             else:
                 error_count += 1
-                logger.warning(f"[{i}/{sample_size}] ✗ Failed: {product_data['name'][:60]}")
+                logger.warning(f"  ✗ Product creation failed")
             
             time.sleep(args.delay)  # Rate limiting for product creation
             
+        except KeyboardInterrupt:
+            logger.warning(f"\n\n⚠ Interrupted by user at product {i}/{sample_size}")
+            break
         except Exception as e:
             error_count += 1
-            logger.error(f"[{i}/{sample_size}] Error processing row: {e}", exc_info=True)
+            logger.error(f"  ✗ Error processing row: {e}", exc_info=True)
     
     # Summary
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Summary")
-    logger.info(f"{'='*60}")
-    logger.info(f"Total processed: {sample_size}")
-    logger.info(f"Success: {success_count}")
-    logger.info(f"Errors: {error_count}")
-    logger.info(f"Success rate: {(success_count/sample_size*100):.1f}%")
-    logger.info(f"{'='*60}")
+    total_time = time.time() - script_start_time
+    process_time = time.time() - process_start_time
+    
+    logger.info(f"\n\n{'='*70}")
+    logger.info("SEEDING SUMMARY")
+    logger.info(f"{'='*70}")
+    logger.info(f"Total time: {total_time/60:.2f} minutes ({total_time:.1f}s)")
+    logger.info(f"Processing time: {process_time/60:.2f} minutes ({process_time:.1f}s)")
+    logger.info(f"")
+    logger.info(f"Products:")
+    logger.info(f"  Total processed: {sample_size:,}")
+    logger.info(f"  ✓ Success: {success_count:,}")
+    logger.info(f"  ✗ Errors: {error_count:,}")
+    logger.info(f"  Success rate: {(success_count/sample_size*100):.1f}%")
+    logger.info(f"")
+    logger.info(f"Categories:")
+    logger.info(f"  ✓ Mapped: {categories_mapped:,}")
+    logger.info(f"  ⚠ Unmapped: {categories_unmapped:,}")
+    logger.info(f"")
+    if not args.skip_images:
+        logger.info(f"Images:")
+        logger.info(f"  ✓ Uploaded: {total_images_uploaded:,}")
+        logger.info(f"  ✗ Failed: {total_images_failed:,}")
+        logger.info(f"")
+    if not args.skip_inventory:
+        logger.info(f"Inventory:")
+        logger.info(f"  ✓ Created: {inventory_created:,}")
+        logger.info(f"  ✗ Failed: {inventory_failed:,}")
+        logger.info(f"")
+    logger.info(f"Average time per product: {process_time/sample_size:.2f}s")
+    logger.info(f"{'='*70}")
+    logger.info(f"Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"{'='*70}\n")
 
 
 if __name__ == '__main__':

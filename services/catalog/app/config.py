@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     payments_service_url: str = "http://localhost:8080"
     payments_internal_api_token: Optional[str] = None
     
+    # Inventory Service (for stock information)
+    inventory_service_url: str = "http://localhost:8083"
+    inventory_internal_api_token: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

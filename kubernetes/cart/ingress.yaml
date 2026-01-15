@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cart-ingress
+  namespace: cart
+  annotations:
+    cert-manager.io/cluster-issuer: "ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - cart.local
+    secretName: cart-local-tls
+  rules:
+  - host: cart.local
+    http:
+      paths:
+      - path: /api/cart
+        pathType: Prefix
+        backend:
+          service:
+            name: cart-service
+            port:
+              number: 9002
+

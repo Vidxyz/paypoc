@@ -1,0 +1,264 @@
+# Routes
+# This file defines all application routes
+# https://www.playframework.com/documentation/latest/ScalaRouting
+
+# Root route - redirect to API docs
+GET     /                               controllers.ApiDocsController.swaggerUI
+
+###
+#  summary: Health check endpoint
+#  tags:
+#    - Health
+#  responses:
+#    200:
+#      description: Service is healthy
+#      content:
+#        application/json:
+#          schema:
+#            type: object
+#            properties:
+#              status:
+#                type: string
+#                example: healthy
+#              service:
+#                type: string
+#                example: cart-service
+###
+GET     /health                          controllers.HealthController.health
+
+###
+#  summary: Get current cart
+#  tags:
+#    - Cart
+#  description: Retrieves the current active cart for the authenticated buyer. Returns cart from Redis if active, otherwise creates a new cart.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#  responses:
+#    200:
+#      description: Cart retrieved successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.CartResponse'
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+###
+GET     /api/cart                        controllers.CartController.getCart
+
+###
+#  summary: Add item to cart
+#  tags:
+#    - Cart
+#  description: Adds a product to the cart. Creates soft reservation in Inventory Service. Extends cart TTL.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          $ref: '#/components/schemas/models.AddCartItemRequest'
+#  responses:
+#    200:
+#      description: Item added to cart successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.CartResponse'
+#    400:
+#      description: Invalid request data
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+###
+POST    /api/cart/items                  controllers.CartController.addItem
+
+###
+#  summary: Update item quantity in cart
+#  tags:
+#    - Cart
+#  description: Updates the quantity of an item in the cart. Updates soft reservation in Inventory Service. Extends cart TTL.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#    - name: itemId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Cart item UUID
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          type: object
+#          required:
+#            - quantity
+#          properties:
+#            quantity:
+#              type: integer
+#              minimum: 1
+#              description: New quantity for the item
+#  responses:
+#    200:
+#      description: Item quantity updated successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.CartResponse'
+#    400:
+#      description: Invalid request data
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+#    404:
+#      description: Cart item not found
+###
+PUT     /api/cart/items/:itemId          controllers.CartController.updateItem(itemId: java.util.UUID)
+
+###
+#  summary: Remove item from cart
+#  tags:
+#    - Cart
+#  description: Removes an item from the cart. Releases soft reservation in Inventory Service. Extends cart TTL.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#    - name: itemId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Cart item UUID
+#  responses:
+#    200:
+#      description: Item removed from cart successfully
+#      content:
+#        application/json:
+#          schema:
+#            $ref: '#/components/schemas/models.CartResponse'
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+#    404:
+#      description: Cart item not found
+###
+DELETE  /api/cart/items/:itemId          controllers.CartController.removeItem(itemId: java.util.UUID)
+
+###
+#  summary: Initiate checkout
+#  tags:
+#    - Cart
+#  description: Initiates checkout process. Moves cart from Redis to PostgreSQL, calls Order Service to create provisional order, allocates inventory, creates payment. Returns checkout URL.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#  responses:
+#    200:
+#      description: Checkout initiated successfully
+#      content:
+#        application/json:
+#          schema:
+#            type: object
+#            properties:
+#              orderId:
+#                type: string
+#                format: uuid
+#              paymentId:
+#                type: string
+#                format: uuid
+#              clientSecret:
+#                type: string
+#              checkoutUrl:
+#                type: string
+#    400:
+#      description: Invalid request (empty cart, etc.)
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+#    409:
+#      description: Conflict - inventory unavailable or other checkout failure
+###
+POST    /api/cart/checkout                controllers.CartController.checkout
+
+###
+#  summary: Get cart history
+#  tags:
+#    - Cart
+#  description: Retrieves cart history (completed, abandoned, expired carts) from PostgreSQL for the authenticated buyer.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#  responses:
+#    200:
+#      description: Cart history retrieved successfully
+#      content:
+#        application/json:
+#          schema:
+#            type: array
+#            items:
+#              $ref: '#/components/schemas/models.CartHistoryResponse'
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - token is valid but user is not BUYER or ADMIN
+###
+GET     /api/cart/history                controllers.CartController.getCartHistory
+
+# Swagger/OpenAPI Documentation  
+GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson
+GET     /api-docs                        controllers.ApiDocsController.swaggerUI
+
+# Favicon (prevent 404 errors)
+GET     /favicon.ico                     controllers.ApiDocsController.favicon
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file                    controllers.Assets.at(path="/public", file)
+

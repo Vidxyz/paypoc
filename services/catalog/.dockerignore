@@ -1,0 +1,24 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+# Note: .venv is created by uv sync in Docker, so we don't ignore it there
+# But we ignore it for local development
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.env
+.env.*
+!.env.test
+*.log
+.DS_Store
+alembic/versions/*.pyc
+tests/
+uv.lock
+

@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service
+  namespace: cart
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+      - name: cart-service
+        image: cart-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9002
+        env:
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: DB_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: REDIS_PASSWORD
+              optional: true
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: AUTH0_AUDIENCE
+        - name: PLAY_HTTP_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: PLAY_HTTP_SECRET_KEY
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: cart-config
+

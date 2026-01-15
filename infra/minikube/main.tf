@@ -107,3 +107,25 @@ module "postgres" {
   postgres_password = var.postgres_password
 }
 
+# Create namespace for Redis
+resource "kubernetes_namespace" "redis" {
+  metadata {
+    name = var.redis_namespace
+    labels = {
+      app = "redis"
+    }
+  }
+}
+
+# Module for Redis (deployed to redis namespace)
+module "redis" {
+  source = "./modules/redis"
+
+  namespace         = kubernetes_namespace.redis.metadata[0].name
+  chart_version     = var.redis_chart_version
+  redis_password    = var.redis_password
+  redis_replica_count = var.redis_replica_count
+  redis_memory_limit  = var.redis_memory_limit
+  redis_cpu_limit     = var.redis_cpu_limit
+}
+

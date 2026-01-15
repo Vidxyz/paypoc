@@ -2,9 +2,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { Box, Typography } from '@mui/material'
 import { useAuth0 } from './auth/Auth0Provider'
+import { CartProvider } from './context/CartContext'
 import Home from './pages/Home'
 import Checkout from './pages/Checkout'
 import Payments from './pages/Payments'
+import Profile from './pages/Profile'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
 import SuccessModal from './components/SuccessModal'
@@ -83,11 +85,12 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
-        {isAuthenticated && (
-          <Navbar onLogout={handleLogout} buyerId={userId} userEmail={userEmail} />
-        )}
+    <CartProvider>
+      <BrowserRouter>
+        <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
+          {isAuthenticated && (
+            <Navbar onLogout={handleLogout} buyerId={userId} userEmail={userEmail} />
+          )}
         
         <LoginModal
           isOpen={showLoginModal && !isAuthenticated && !showSignupModal}
@@ -147,9 +150,20 @@ function App() {
               )
             }
           />
+          <Route
+            path="/profile"
+            element={
+              isAuthenticated ? (
+                <Profile />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
         </Routes>
-      </Box>
-    </BrowserRouter>
+        </Box>
+      </BrowserRouter>
+    </CartProvider>
   )
 }
 

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-service-config
+  namespace: catalog
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  KAFKA_EVENTS_TOPIC: "catalog.events"
+  PAYMENTS_SERVICE_URL: "http://payments-service:8080"
+

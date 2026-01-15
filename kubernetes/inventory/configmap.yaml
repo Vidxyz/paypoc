@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-service-config
+  namespace: inventory
+data:
+  application.yml: |
+    spring:
+      datasource:
+        url: jdbc:postgresql://postgres-service.postgres.svc.cluster.local:5432/inventory_db
+        username: ${DB_USERNAME:inventory_user}
+        password: ${DB_PASSWORD:inventory_password}
+      kafka:
+        bootstrap-servers: kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+    
+    # Auth0 Configuration (for JWT validation)
+    auth0:
+      domain: ${AUTH0_DOMAIN:your-tenant.auth0.com}
+      audience: ${AUTH0_AUDIENCE:}
+    
+    # Internal API Configuration
+    inventory:
+      internal:
+        api:
+          token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
+    
+    # Kafka Topics Configuration
+    kafka:
+      topics:
+        events: inventory.events
+        commands: inventory.commands
+        catalog-events: catalog.events
+    
+    logging:
+      level:
+        com.payments.platform.inventory: INFO
+        org.springframework.web: WARN
+

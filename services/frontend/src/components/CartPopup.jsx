@@ -30,16 +30,18 @@ function CartPopup({ anchorEl, open, onClose }) {
     navigate('/checkout')
   }
 
-  const formatPrice = (cents, currency = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
+  const formatPrice = (cents, currency = 'CAD') => {
+    const currencyCode = currency
+    return new Intl.NumberFormat('en-CA', {
       style: 'currency',
-      currency: currency,
+      currency: currencyCode,
     }).format(cents / 100)
   }
 
   const totalItems = getTotalItems()
   const totalPrice = getTotalPrice()
-  const currency = cartItems.length > 0 ? cartItems[0].currency : 'USD'
+  // Use the first item's currency, or default to CAD
+  const currency = cartItems.length > 0 && cartItems[0].currency ? cartItems[0].currency : 'CAD'
 
   return (
     <Popover

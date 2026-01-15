@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Container,
   Card,
@@ -48,6 +48,46 @@ function AddProduct() {
   const [error, setError] = useState(null)
   const [categories, setCategories] = useState([])
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [productCategoryId, setProductCategoryId] = useState(null) // Store category ID from product
+  
+  // Organize categories for display: group subcategories under their parents
+  const organizedCategories = useMemo(() => {
+    if (!categories.length) return []
+    
+    const topLevel = []
+    const processedSubcategories = new Set()
+    
+    // Build hierarchy: top-level categories first, then their subcategories
+    categories.forEach(cat => {
+      // Check if it's a top-level category (no parent_id or parent_id is null/undefined)
+      const parentId = cat.parent_id ? String(cat.parent_id) : null
+      if (!parentId) {
+        // Top-level category
+        topLevel.push(cat)
+        const parentIdStr = String(cat.id)
+        
+        // Find and add its subcategories immediately after
+        const subcategories = categories.filter(c => {
+          const cParentId = c.parent_id ? String(c.parent_id) : null
+          return cParentId === parentIdStr && !processedSubcategories.has(String(c.id))
+        })
+        
+        subcategories.forEach(subcat => {
+          topLevel.push(subcat)
+          processedSubcategories.add(String(subcat.id))
+        })
+      }
+    })
+    
+    // Add any remaining subcategories that weren't processed (shouldn't happen, but safety check)
+    categories.forEach(cat => {
+      if (cat.parent_id && !processedSubcategories.has(String(cat.id))) {
+        topLevel.push(cat)
+      }
+    })
+    
+    return topLevel
+  }, [categories])
 
   // Load categories on mount
   useEffect(() => {
@@ -65,6 +105,17 @@ function AddProduct() {
     }
     loadCategories()
   }, [isAuthenticated, getAccessToken])
+  
+  // Sync selected category when both categories and productCategoryId are available
+  useEffect(() => {
+    if (productCategoryId && categories.length > 0) {
+      // Verify the category exists in the loaded categories
+      const categoryExists = categories.some(cat => String(cat.id) === productCategoryId)
+      if (categoryExists && selectedCategoryId !== productCategoryId) {
+        setSelectedCategoryId(productCategoryId)
+      }
+    }
+  }, [categories, productCategoryId, selectedCategoryId])
 
   // Load product data if in edit mode
   useEffect(() => {
@@ -82,7 +133,10 @@ function AddProduct() {
         setPriceCents(product.price_cents ? (product.price_cents / 100).toString() : '')
         setCurrency(product.currency || 'USD')
         setStatus(product.status || 'DRAFT')
-        setSelectedCategoryId(product.category_id || '')
+        // Store category_id to set after categories are loaded
+        if (product.category_id) {
+          setProductCategoryId(String(product.category_id))
+        }
         
         // Load images - API now returns URLs directly
         if (product.images && product.images.length > 0) {
@@ -210,7 +264,7 @@ function AddProduct() {
         sku: sku.trim(),
         name: name.trim(),
         description: description.trim() || null,
-        category_id: selectedCategoryId || null,
+        category_id: selectedCategoryId && selectedCategoryId !== '' ? selectedCategoryId : null,
         price_cents: Math.round(parseFloat(priceCents) * 100), // Convert to cents
         currency: currency,
         status: status,
@@ -239,12 +293,22 @@ function AddProduct() {
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 4 }}>
         <IconButton onClick={() => navigate('/products')} sx={{ mr: 2 }}>
           <ArrowBackIcon />
         </IconButton>
-        <Typography variant="h4" component="h1">
+        <Typography 
+          variant="h4" 
+          component="h1"
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #4a90e2 0%, #3a7bc8 100%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+          }}
+        >
           {isEditMode ? 'Edit Product' : 'Add New Product'}
         </Typography>
       </Box>
@@ -299,15 +363,28 @@ function AddProduct() {
                       fullWidth
                       select
                       label="Category"
-                      value={selectedCategoryId}
+                      value={selectedCategoryId || ''}
                       onChange={(e) => setSelectedCategoryId(e.target.value)}
                     >
                       <MenuItem value="">None</MenuItem>
-                      {categories.map((category) => (
-                        <MenuItem key={category.id} value={category.id}>
-                          {category.name}
-                        </MenuItem>
-                      ))}
+                      {organizedCategories.map((category, index) => {
+                        const isSubcategory = category.parent_id !== null && category.parent_id !== undefined
+                        // Ensure category.id is always a string for consistent comparison
+                        const categoryId = String(category.id)
+                        // Check if this is the first item after a top-level category (for visual separation)
+                        const prevCategory = index > 0 ? organizedCategories[index - 1] : null
+                        const isFirstSubcategory = isSubcategory && prevCategory && !prevCategory.parent_id
+                        
+                        return (
+                          <MenuItem 
+                            key={categoryId} 
+                            value={categoryId}
+                            sx={isSubcategory ? { pl: 4 } : {}}
+                          >
+                            {isSubcategory ? `└─ ${category.name}` : category.name}
+                          </MenuItem>
+                        )
+                      })}
                     </TextField>
                   </Grid>
                 </Grid>

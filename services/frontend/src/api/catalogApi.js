@@ -28,15 +28,17 @@ export const catalogApiClient = {
   /**
    * Browse products (public endpoint, no auth required)
    * @param {Object} params - Query parameters
-   * @param {string} params.category_id - Optional category UUID to filter by
+   * @param {string[]} params.category_ids - Optional array of category UUIDs to filter by (OR logic)
    * @param {number} params.page - Page number (1-indexed, default: 1)
    * @param {number} params.page_size - Items per page (default: 20, max: 100)
    * @returns {Promise<Object>} ProductListResponse with products, total, page, page_size, has_next
    */
   browseProducts: async (params = {}) => {
-    const { category_id, page = 1, page_size = 20 } = params
+    const { category_ids, page = 1, page_size = 20 } = params
     const queryParams = new URLSearchParams()
-    if (category_id) queryParams.append('category_id', category_id)
+    if (category_ids && category_ids.length > 0) {
+      category_ids.forEach(id => queryParams.append('category_ids', id))
+    }
     queryParams.append('page', page.toString())
     queryParams.append('page_size', page_size.toString())
     
@@ -55,7 +57,7 @@ export const catalogApiClient = {
   },
 
   /**
-   * Get all categories (requires auth)
+   * Get all categories (requires authentication)
    * @param {string} token - JWT access token
    * @returns {Promise<Array>} List of categories
    */

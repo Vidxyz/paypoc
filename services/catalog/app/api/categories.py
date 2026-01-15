@@ -27,13 +27,17 @@ def get_category_service(db: Session = Depends(get_db)) -> CategoryService:
     response_model=List[CategoryResponse],
     summary="List all categories",
     description="""
-    Get a list of all top-level categories (categories without a parent).
+    Get a list of all categories (top-level and subcategories), ordered hierarchically.
+    Categories are ordered by parent (top-level first) then by name.
     
     **Requirements:**
     - Authentication: Required (JWT token)
-    - Account Type: Any authenticated user
+    - Account Type: ADMIN, BUYER, or SELLER
     
-    **Note:** Currently returns only top-level categories. Hierarchical category support coming soon.
+    **Response:**
+    - Returns all categories with parent_id indicating hierarchy
+    - Top-level categories have parent_id = null
+    - Subcategories have parent_id pointing to their parent category
     """,
     dependencies=[Depends(security)],
     responses={
@@ -46,7 +50,7 @@ async def list_categories(
     current_user: dict = Depends(get_current_user),
     category_service: CategoryService = Depends(get_category_service)
 ):
-    """List all categories (requires authentication)"""
+    """List all categories (requires authentication - all account types)"""
     categories = category_service.list_categories()
     return categories
 
@@ -60,7 +64,7 @@ async def list_categories(
     
     **Requirements:**
     - Authentication: Required (JWT token)
-    - Account Type: Any authenticated user
+    - Account Type: ADMIN, BUYER, or SELLER
     """,
     dependencies=[Depends(security)],
     responses={
@@ -75,7 +79,7 @@ async def get_category(
     current_user: dict = Depends(get_current_user),
     category_service: CategoryService = Depends(get_category_service)
 ):
-    """Get category by ID (requires authentication)"""
+    """Get category by ID (requires authentication - all account types)"""
     try:
         category = category_service.get_category_by_id(category_id)
         return category

@@ -6,13 +6,21 @@ import {
   Typography,
   Button,
   Box,
-  Chip,
   Badge,
   IconButton,
+  Avatar,
+  Menu,
+  MenuItem,
+  Divider,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import PersonIcon from '@mui/icons-material/Person'
 import LogoutIcon from '@mui/icons-material/Logout'
+import AccountCircleIcon from '@mui/icons-material/AccountCircle'
+import HomeIcon from '@mui/icons-material/Home'
+import PaymentIcon from '@mui/icons-material/Payment'
 import { useCart } from '../context/CartContext'
 import CartPopup from './CartPopup'
 
@@ -21,7 +29,9 @@ function Navbar({ onLogout, buyerId, userEmail }) {
   const { getTotalItems } = useCart()
   const cartItemCount = getTotalItems()
   const [cartAnchorEl, setCartAnchorEl] = useState(null)
+  const [profileAnchorEl, setProfileAnchorEl] = useState(null)
   const cartPopupOpen = Boolean(cartAnchorEl)
+  const profileMenuOpen = Boolean(profileAnchorEl)
 
   const handleCartClick = (event) => {
     setCartAnchorEl(event.currentTarget)
@@ -31,32 +41,69 @@ function Navbar({ onLogout, buyerId, userEmail }) {
     setCartAnchorEl(null)
   }
 
+  const handleProfileClick = (event) => {
+    setProfileAnchorEl(event.currentTarget)
+  }
+
+  const handleProfileClose = () => {
+    setProfileAnchorEl(null)
+  }
+
+  const handleProfileMenuClick = (path) => {
+    setProfileAnchorEl(null)
+  }
+
+  // Get user initial for avatar
+  const userInitial = userEmail?.[0]?.toUpperCase() || 'U'
+
   return (
-    <AppBar position="static" elevation={2}>
-      <Toolbar>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexGrow: 1 }}>
-          <ShoppingCartIcon />
+    <AppBar position="static" elevation={0}>
+      <Toolbar sx={{ px: { xs: 2, sm: 3 }, py: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexGrow: 1 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 40,
+              height: 40,
+              borderRadius: 2,
+              bgcolor: 'rgba(255, 255, 255, 0.2)',
+            }}
+          >
+            <ShoppingCartIcon sx={{ fontSize: 24 }} />
+          </Box>
           <Typography
-            variant="h6"
+            variant="h5"
             component={Link}
             to="/"
             sx={{
               textDecoration: 'none',
               color: 'inherit',
-              fontWeight: 600,
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
             }}
           >
             BuyIt
           </Typography>
         </Box>
         
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mr: 3 }}>
+        <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mr: 2 }}>
           <Button
             component={Link}
             to="/"
             color="inherit"
-            variant={location.pathname === '/' ? 'outlined' : 'text'}
-            sx={{ minWidth: 'auto', px: 2 }}
+            startIcon={<HomeIcon />}
+            sx={{
+              minWidth: 'auto',
+              px: 2,
+              py: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
           >
             Home
           </Button>
@@ -64,10 +111,11 @@ function Navbar({ onLogout, buyerId, userEmail }) {
             onClick={handleCartClick}
             color="inherit"
             sx={{
-              border: location.pathname === '/checkout' ? 1 : 0,
-              borderColor: 'rgba(255, 255, 255, 0.5)',
-              borderRadius: 1,
-              px: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/checkout' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
             }}
           >
             <Badge badgeContent={cartItemCount} color="error" max={99}>
@@ -81,40 +129,83 @@ function Navbar({ onLogout, buyerId, userEmail }) {
           />
           <Button
             component={Link}
-            to="/checkout"
-            color="inherit"
-            variant={location.pathname === '/checkout' ? 'outlined' : 'text'}
-            sx={{ minWidth: 'auto', px: 2 }}
-          >
-            Checkout
-          </Button>
-          <Button
-            component={Link}
             to="/payments"
             color="inherit"
-            variant={location.pathname === '/payments' ? 'outlined' : 'text'}
-            sx={{ minWidth: 'auto', px: 2 }}
+            startIcon={<PaymentIcon />}
+            sx={{
+              minWidth: 'auto',
+              px: 2,
+              py: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/payments' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
           >
             Payments
           </Button>
         </Box>
         
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Chip
-            icon={<PersonIcon />}
-            label={userEmail || 'User'}
-            variant="outlined"
-            sx={{ borderColor: 'rgba(255, 255, 255, 0.5)', color: 'inherit' }}
-          />
-          <Button
-            onClick={onLogout}
-            color="inherit"
-            variant="outlined"
-            startIcon={<LogoutIcon />}
-            size="small"
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <IconButton
+            onClick={handleProfileClick}
+            sx={{
+              p: 0.5,
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
           >
-            Logout
-          </Button>
+            <Avatar
+              sx={{
+                width: 36,
+                height: 36,
+                bgcolor: 'rgba(255, 255, 255, 0.2)',
+                color: 'white',
+                fontWeight: 600,
+                border: '2px solid rgba(255, 255, 255, 0.3)',
+              }}
+            >
+              {userInitial}
+            </Avatar>
+          </IconButton>
+          <Menu
+            anchorEl={profileAnchorEl}
+            open={profileMenuOpen}
+            onClose={handleProfileClose}
+            onClick={handleProfileClose}
+            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+            PaperProps={{
+              sx: {
+                mt: 1.5,
+                minWidth: 200,
+                borderRadius: 2,
+                boxShadow: '0 8px 16px rgba(0, 0, 0, 0.15)',
+              },
+            }}
+          >
+            <MenuItem component={Link} to="/profile" onClick={handleProfileMenuClick}>
+              <ListItemIcon>
+                <AccountCircleIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>My Profile</ListItemText>
+            </MenuItem>
+            <Divider />
+            <Box sx={{ px: 2, py: 1 }}>
+              <Typography variant="caption" color="text.secondary" display="block">
+                {userEmail || 'User'}
+              </Typography>
+            </Box>
+            <Divider />
+            <MenuItem onClick={onLogout}>
+              <ListItemIcon>
+                <LogoutIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Logout</ListItemText>
+            </MenuItem>
+          </Menu>
         </Box>
       </Toolbar>
     </AppBar>

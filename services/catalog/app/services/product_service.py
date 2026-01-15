@@ -70,6 +70,13 @@ class ProductService:
         if existing:
             raise ValueError(f"Product with SKU '{product_data.sku}' already exists")
         
+        # Validate category_id if provided
+        if product_data.category_id:
+            from app.models.category import Category
+            category = self.db.query(Category).filter(Category.id == product_data.category_id).first()
+            if not category:
+                raise ValueError(f"Category not found: {product_data.category_id}")
+        
         # Create product
         product = Product(
             seller_id=seller_id,
@@ -181,6 +188,13 @@ class ProductService:
             if product.seller_id != seller_id:
                 raise PermissionError("You can only update your own products")
         
+        # Validate category_id if provided
+        if product_data.category_id is not None:
+            from app.models.category import Category
+            category = self.db.query(Category).filter(Category.id == product_data.category_id).first()
+            if not category:
+                raise ValueError(f"Category not found: {product_data.category_id}")
+        
         # Update fields
         update_data = product_data.dict(exclude_unset=True)
         for field, value in update_data.items():
@@ -244,18 +258,47 @@ class ProductService:
     
     def browse_products(
         self,
-        category_id: Optional[UUID] = None,
+        category_ids: Optional[List[UUID]] = None,
         page: int = 1,
         page_size: int = 20
     ) -> ProductListResponse:
-        """Browse products with pagination"""
+        """Browse products with pagination
+        
+        If category_ids is provided (list of category UUIDs):
+        - For each category: if it's a top-level category, includes products from that category and all its subcategories
+        - If it's a subcategory, includes only products from that subcategory
+        - Products matching ANY of the provided categories (OR logic) are returned
+        """
         query = self.db.query(Product).filter(
             Product.status == "ACTIVE",
             Product.deleted_at.is_(None)
         )
         
-        if category_id:
-            query = query.filter(Product.category_id == category_id)
+        if category_ids:
+            from app.models.category import Category
+            all_category_ids = set()
+            
+            # Process each category ID
+            for category_id in category_ids:
+                category = self.db.query(Category).filter(Category.id == category_id).first()
+                
+                if category:
+                    # Get all subcategory IDs for this category
+                    subcategories = self.db.query(Category).filter(
+                        Category.parent_id == category_id
+                    ).all()
+                    subcategory_ids = [subcat.id for subcat in subcategories]
+                    
+                    # Include the category itself and all its subcategories
+                    all_category_ids.add(category_id)
+                    all_category_ids.update(subcategory_ids)
+            
+            # Filter products that match ANY of the categories (OR logic)
+            if all_category_ids:
+                query = query.filter(Product.category_id.in_(list(all_category_ids)))
+            else:
+                # No valid categories found, return empty results
+                query = query.filter(Product.category_id == UUID('00000000-0000-0000-0000-000000000000'))
         
         total = query.count()
         products = query.order_by(Product.created_at.desc()).offset(

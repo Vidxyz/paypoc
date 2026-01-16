@@ -66,6 +66,8 @@ spec:
             secretKeyRef:
               name: cart-secrets
               key: PLAY_HTTP_SECRET_KEY
+        - name: JAVA_OPTS
+          value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED"
         volumeMounts:
         - name: config
           mountPath: /app/config

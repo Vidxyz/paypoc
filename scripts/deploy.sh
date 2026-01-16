@@ -228,6 +228,7 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -394,6 +395,9 @@ delete_deployments() {
                 ;;
             inventory)
                 kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
+                ;;
+            cart)
+                kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
                 ;;
         esac
     done
@@ -567,6 +571,12 @@ build_single_image() {
             (cd "$PROJECT_ROOT" && docker build -t inventory-service:latest -f services/inventory/Dockerfile services/inventory) || { log_error "Inventory image build failed"; exit 1; }
             minikube image load inventory-service:latest
             log_info "Inventory image built and loaded successfully"
+            ;;
+            cart)
+            log_info "Building cart-service image..."
+            (cd "$PROJECT_ROOT/services/cart" && docker build -t cart-service:latest .) || { log_error "Cart image build failed"; exit 1; }
+            minikube image load cart-service:latest
+            log_info "Cart image built and loaded successfully"
             ;;
         *)
             log_error "Unknown service: $service_name"
@@ -917,6 +927,7 @@ main() {
     deploy_user &
     deploy_catalog &
     deploy_inventory &
+    deploy_cart &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID

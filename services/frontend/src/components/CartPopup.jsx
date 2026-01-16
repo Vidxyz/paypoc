@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import {
   Popover,
   Box,
@@ -10,8 +9,8 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  Paper,
   CircularProgress,
+  Alert,
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
@@ -21,9 +20,8 @@ import { useCart } from '../context/CartContext'
 import { useNavigate } from 'react-router-dom'
 
 function CartPopup({ anchorEl, open, onClose }) {
-  const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems } = useCart()
+  const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems, loading, error } = useCart()
   const navigate = useNavigate()
-  const [loading, setLoading] = useState(false)
 
   const handleCheckout = () => {
     onClose()
@@ -76,10 +74,17 @@ function CartPopup({ anchorEl, open, onClose }) {
       </Box>
 
       <Box sx={{ flex: 1, overflow: 'auto', minHeight: 200, maxHeight: 400 }}>
+        {error && (
+          <Box sx={{ p: 2 }}>
+            <Alert severity="error" onClose={() => {}}>
+              {error}
+            </Alert>
+          </Box>
+        )}
         {cartItems.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary">
-              Your cart is empty
+              {loading ? 'Loading cart...' : 'Your cart is empty'}
             </Typography>
           </Box>
         ) : (

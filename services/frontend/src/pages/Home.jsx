@@ -50,6 +50,7 @@ function Home() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const searchTimeoutRef = useRef(null)
   const pageSize = 20
+  const LOW_STOCK_THRESHOLD = 10 // Products with <= 10 available are considered low stock
 
   // Apply category filter from navigation state
   useEffect(() => {
@@ -460,6 +461,20 @@ function Home() {
                             <Chip
                               label="Out of Stock"
                               color="error"
+                              size="small"
+                              sx={{
+                                position: 'absolute',
+                                top: 8,
+                                right: 8,
+                                fontWeight: 600,
+                              }}
+                            />
+                          )
+                        } else if (availableQty <= LOW_STOCK_THRESHOLD) {
+                          return (
+                            <Chip
+                              label={`Low Stock (${availableQty})`}
+                              color="warning"
                               size="small"
                               sx={{
                                 position: 'absolute',

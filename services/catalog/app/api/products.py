@@ -93,10 +93,10 @@ async def create_product(
 
 @router.get(
     "",
-    response_model=List[ProductResponse],
+    response_model=ProductListResponse,
     summary="List seller's products",
     description="""
-    Get a list of products for the authenticated seller.
+    Get a paginated list of products for the authenticated seller.
     
     **Requirements:**
     - Authentication: Required (JWT token)
@@ -107,35 +107,43 @@ async def create_product(
     - Deleted products are excluded from results
     - Returns only the authenticated user's products
     
+    **Pagination:**
+    - `page`: Page number (1-indexed, default: 1)
+    - `page_size`: Number of items per page (default: 20, max: 100)
+    
     **Note:** For ADMIN users, use `/api/catalog/products/by-seller/{seller_id}` to get products for a specific seller.
     """,
     dependencies=[Depends(security)],
     responses={
-        200: {"description": "List of products"},
+        200: {"description": "Paginated list of products"},
         401: {"description": "Authentication required"},
         403: {"description": "Requires SELLER or ADMIN account type"}
     }
 )
 async def list_seller_products(
     status: Optional[str] = Query(None, pattern="^(DRAFT|ACTIVE|INACTIVE)$", description="Filter by product status"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
     credentials: HTTPAuthorizationCredentials = Security(security),
     current_user: dict = Depends(require_seller_or_admin),
     product_service: ProductService = Depends(get_product_service)
 ):
-    """List seller's products (returns current user's products only)"""
+    """List seller's products with pagination (returns current user's products only)"""
     import logging
     logger = logging.getLogger(__name__)
     
     try:
-        logger.info(f"Listing products for user: {current_user.get('email')} (user_id: {current_user.get('user_id')})")
-        products = product_service.list_seller_products(
+        logger.info(f"Listing products for user: {current_user.get('email')} (user_id: {current_user.get('user_id')}), page: {page}, page_size: {page_size}")
+        # Note: auth_token is no longer needed - inventory service uses internal API token
+        result = await product_service.list_seller_products(
             user_id=current_user.get("user_id"),
             user_email=current_user.get("email"),
-            status_filter=status
+            status_filter=status,
+            page=page,
+            page_size=page_size
         )
-        logger.info(f"Found {len(products)} products for user {current_user.get('email')}")
-        # Convert products to response dicts with image URLs
-        return [product_service._product_to_response_dict(product) for product in products]
+        logger.info(f"Found {len(result.products)} products (total: {result.total}) for user {current_user.get('email')}")
+        return result
     except Exception as e:
         logger.error(f"Error listing products for user {current_user.get('email')}: {e}", exc_info=True)
         raise HTTPException(
@@ -219,17 +227,23 @@ async def browse_products(
     category_ids: Optional[List[UUID]] = Query(None, description="Filter by category UUIDs (multiple categories supported, OR logic)"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    sort_by: Optional[str] = Query("newest", description="Sort order: 'newest' (default) or 'availability' (in stock first)"),
     product_service: ProductService = Depends(get_product_service)
 ):
     """Browse products (public endpoint)
     
     Supports filtering by multiple categories. Products matching ANY of the provided categories (OR logic) are returned.
     If a top-level category is provided, products from that category and all its subcategories are included.
+    
+    Sorting options:
+    - 'newest': Sort by creation date (newest first, default)
+    - 'availability': Sort by availability (in stock first, then out of stock)
     """
-    return product_service.browse_products(
+    return await product_service.browse_products(
         category_ids=category_ids,
         page=page,
-        page_size=page_size
+        page_size=page_size,
+        sort_by=sort_by
     )
 
 
@@ -253,8 +267,8 @@ async def get_product(
 ):
     """Get product by ID (public endpoint)"""
     try:
-        product = product_service.get_product_by_id(product_id)
-        return product_service._product_to_response_dict(product)
+        product_dict = product_service.get_product_by_id(product_id)
+        return product_dict
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -365,4 +379,54 @@ async def delete_product(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e)
+        )
+
+
+@router.post(
+    "/sync-inventory",
+    status_code=status.HTTP_200_OK,
+    summary="Sync all inventory data (ADMIN only)",
+    description="""
+    Sync all inventory data from the inventory service to the catalog service's
+    denormalized product_inventory table. This endpoint is only available to ADMIN users.
+    
+    This performs a one-time sync of all active products' inventory information.
+    """,
+    dependencies=[Depends(security)],
+    responses={
+        200: {"description": "Inventory sync completed successfully"},
+        401: {"description": "Authentication required"},
+        403: {"description": "Requires ADMIN account type"},
+        500: {"description": "Internal server error during sync"}
+    }
+)
+async def sync_inventory(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    current_user: dict = Depends(get_current_user),
+    product_service: ProductService = Depends(get_product_service)
+):
+    """Sync all inventory data (ADMIN only)"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Only ADMIN can use this endpoint
+    if current_user.get("account_type") != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only available to ADMIN users"
+        )
+    
+    try:
+        result = await product_service.sync_all_inventory()
+        return {
+            "message": "Inventory sync completed successfully",
+            "synced_count": result["synced_count"],
+            "total_products": result["total_products"],
+            "products_without_inventory": result["products_without_inventory"]
+        }
+    except Exception as e:
+        logger.error(f"Error syncing inventory: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync inventory: {str(e)}"
         )

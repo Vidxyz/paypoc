@@ -13,7 +13,7 @@ class WebMvcConfig(
     override fun addInterceptors(registry: InterceptorRegistry) {
         registry.addInterceptor(authenticationInterceptor)
             .addPathPatterns("/api/inventory/**")
-            .excludePathPatterns("/health", "/healthz", "/api/docs/**", "/v3/api-docs/**")
+            .excludePathPatterns("/health", "/healthz", "/api/docs/**", "/v3/api-docs/**", "/internal/**")
     }
     
     override fun addCorsMappings(registry: CorsRegistry) {

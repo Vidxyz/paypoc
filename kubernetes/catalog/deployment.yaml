@@ -48,21 +48,16 @@ spec:
             configMapKeyRef:
               name: catalog-service-config
               key: KAFKA_EVENTS_TOPIC
-        - name: PAYMENTS_SERVICE_URL
+        - name: KAFKA_INVENTORY_EVENTS_TOPIC
           valueFrom:
             configMapKeyRef:
               name: catalog-service-config
-              key: PAYMENTS_SERVICE_URL
+              key: KAFKA_INVENTORY_EVENTS_TOPIC
         - name: INVENTORY_SERVICE_URL
           valueFrom:
             configMapKeyRef:
               name: catalog-service-config
               key: INVENTORY_SERVICE_URL
-        - name: PAYMENTS_INTERNAL_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: catalog-service-secret
-              key: PAYMENTS_INTERNAL_API_TOKEN
         - name: INVENTORY_INTERNAL_API_TOKEN
           valueFrom:
             secretKeyRef:

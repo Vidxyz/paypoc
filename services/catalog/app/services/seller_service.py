@@ -7,11 +7,11 @@ logger = logging.getLogger(__name__)
 
 
 class SellerService:
-    """Service to resolve seller ID from Payments Service"""
+    """Service to resolve seller ID (uses email directly as sellerId)"""
     
     def __init__(self):
-        self.payments_service_url = settings.payments_service_url
-        self.internal_api_token = settings.payments_internal_api_token
+        # Payments service URL not needed - sellerId = email
+        pass
     
     def get_seller_id(self, user_id: Optional[str], email: Optional[str]) -> str:
         """

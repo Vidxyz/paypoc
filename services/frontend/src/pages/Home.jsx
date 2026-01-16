@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
   Container,
@@ -23,7 +23,10 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  TextField,
+  InputAdornment,
 } from '@mui/material'
+import SearchIcon from '@mui/icons-material/Search'
 import { catalogApiClient } from '../api/catalogApi'
 import ProductModal from '../components/ProductModal'
 import { useAuth0 } from '../auth/Auth0Provider'
@@ -43,6 +46,9 @@ function Home() {
   const [selectedCategoryIds, setSelectedCategoryIds] = useState(new Set())
   const [categoriesLoading, setCategoriesLoading] = useState(true)
   const [sortBy, setSortBy] = useState('newest') // 'newest', 'availability'
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
+  const searchTimeoutRef = useRef(null)
   const pageSize = 20
 
   // Apply category filter from navigation state
@@ -107,13 +113,30 @@ function Home() {
     return topLevel
   }, [categories])
 
-  // Fetch products when page or categories change
+  // Debounce search query
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+    }, 500) // 500ms debounce delay
+    
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [searchQuery])
+
+  // Fetch products when page, categories, sort, or debounced search query change
   useEffect(() => {
     const categoryIdsArray = selectedCategoryIds.size > 0 ? Array.from(selectedCategoryIds) : null
-    fetchProducts(page, categoryIdsArray, sortBy)
-  }, [page, selectedCategoryIds, sortBy])
+    fetchProducts(page, categoryIdsArray, sortBy, debouncedSearchQuery)
+  }, [page, selectedCategoryIds, sortBy, debouncedSearchQuery])
 
-  const fetchProducts = async (currentPage, categoryIds = null, sortOption = 'newest') => {
+  const fetchProducts = async (currentPage, categoryIds = null, sortOption = 'newest', search = '') => {
     setLoading(true)
     setError(null)
     try {
@@ -122,6 +145,7 @@ function Home() {
         page: currentPage,
         page_size: pageSize,
         sort_by: sortOption,
+        search_query: search || undefined, // Only include if not empty
       })
       setProducts(response.products || [])
       setTotalProducts(response.total || 0)
@@ -151,7 +175,14 @@ function Home() {
 
   const handleClearFilter = () => {
     setSelectedCategoryIds(new Set())
+    setSearchQuery('')
     setPage(1)
+  }
+
+  const handleSearchChange = (event) => {
+    const value = event.target.value
+    setSearchQuery(value)
+    setPage(1) // Reset to first page when search changes
   }
 
   const handleProductClick = async (productId) => {
@@ -198,14 +229,41 @@ function Home() {
         >
           Discover Amazing Products
         </Typography>
+        
+        {/* Search Bar */}
+        <Box sx={{ mb: 3 }}>
+          <TextField
+            fullWidth
+            placeholder="Search products..."
+            value={searchQuery}
+            onChange={handleSearchChange}
+            variant="outlined"
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                backgroundColor: 'background.paper',
+              },
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon color="action" />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Box>
+
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
             {selectedCategories.length > 0
               ? `Showing ${totalProducts} product${totalProducts !== 1 ? 's' : ''} in ${selectedCategories.length} categor${selectedCategories.length !== 1 ? 'ies' : 'y'}`
+              : debouncedSearchQuery
+              ? `Found ${totalProducts} product${totalProducts !== 1 ? 's' : ''} for "${debouncedSearchQuery}"`
               : `Browse our collection of ${totalProducts} carefully curated products`
             }
           </Typography>
-          {selectedCategories.length > 0 && (
+          {(selectedCategories.length > 0 || debouncedSearchQuery) && (
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               {selectedCategories.map(category => (
                 <Chip
@@ -216,6 +274,14 @@ function Home() {
                   variant="outlined"
                 />
               ))}
+              {debouncedSearchQuery && (
+                <Chip
+                  label={`Search: ${debouncedSearchQuery}`}
+                  onDelete={() => setSearchQuery('')}
+                  color="secondary"
+                  variant="outlined"
+                />
+              )}
               <Chip
                 label="Clear All"
                 onClick={handleClearFilter}

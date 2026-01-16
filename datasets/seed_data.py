@@ -25,9 +25,10 @@ import requests
 import time
 import re
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urlparse
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -672,6 +673,7 @@ Example:
     parser.add_argument('--delay', type=float, default=0.2, help='Delay between API calls (seconds)')
     parser.add_argument('--skip-images', action='store_true', help='Skip image uploads')
     parser.add_argument('--max-images', type=int, default=3, help='Maximum images per product')
+    parser.add_argument('--max-parallel-images', type=int, default=5, help='Maximum parallel image uploads (default: 5)')
     parser.add_argument('--inventory-quantity', type=int, default=10, help='Inventory quantity to set for each product')
     parser.add_argument('--skip-inventory', action='store_true', help='Skip inventory creation')
     
@@ -692,6 +694,7 @@ Example:
     logger.info(f"  Delay between calls: {args.delay}s")
     logger.info(f"  Skip images: {args.skip_images}")
     logger.info(f"  Max images per product: {args.max_images}")
+    logger.info(f"  Max parallel image uploads: {args.max_parallel_images}")
     logger.info(f"  Inventory quantity: {args.inventory_quantity}")
     logger.info(f"  Skip inventory: {args.skip_inventory}")
     logger.info("="*70)
@@ -816,25 +819,43 @@ Example:
                 else:
                     logger.debug(f"  → Category: (empty)")
             
-            # Upload images
+            # Upload images in parallel
             image_urls = product_data.pop('image_urls', [])
             images = []
             
             if image_urls and not args.skip_images:
                 total_to_upload = min(len(image_urls), args.max_images)
-                logger.info(f"  → Images: Uploading {total_to_upload} of {len(image_urls)} available...")
+                images_to_upload = image_urls[:args.max_images]
+                logger.info(f"  → Images: Uploading {total_to_upload} of {len(image_urls)} available (parallel: {min(args.max_parallel_images, total_to_upload)})...")
                 
-                for img_idx, img_url in enumerate(image_urls[:args.max_images], 1):
-                    public_id = catalog_client.upload_image(img_url, img_idx, total_to_upload)
-                    if public_id:
-                        images.append(public_id)
-                        total_images_uploaded += 1
-                        time.sleep(args.delay)  # Rate limiting for image uploads
-                    else:
-                        total_images_failed += 1
+                upload_start_time = time.time()
+                
+                # Upload images in parallel using ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=min(args.max_parallel_images, total_to_upload)) as executor:
+                    # Submit all upload tasks
+                    future_to_image = {
+                        executor.submit(catalog_client.upload_image, img_url, img_idx + 1, total_to_upload): (img_idx, img_url)
+                        for img_idx, img_url in enumerate(images_to_upload)
+                    }
+                    
+                    # Collect results as they complete
+                    for future in as_completed(future_to_image):
+                        img_idx, img_url = future_to_image[future]
+                        try:
+                            public_id = future.result()
+                            if public_id:
+                                images.append(public_id)
+                                total_images_uploaded += 1
+                            else:
+                                total_images_failed += 1
+                        except Exception as e:
+                            total_images_failed += 1
+                            logger.warning(f"    ↳ Image {img_idx + 1}/{total_to_upload}: Exception during upload: {str(e)[:100]}")
+                
+                upload_elapsed = time.time() - upload_start_time
                 
                 if images:
-                    logger.info(f"  ✓ Uploaded {len(images)}/{total_to_upload} images")
+                    logger.info(f"  ✓ Uploaded {len(images)}/{total_to_upload} images in {upload_elapsed:.2f}s (parallel)")
                 else:
                     logger.warning(f"  ⚠ No images uploaded ({total_images_failed} failed)")
             elif args.skip_images:

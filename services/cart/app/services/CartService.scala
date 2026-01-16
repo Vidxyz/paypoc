@@ -21,7 +21,7 @@ class CartService @Inject()(
   
   private val logger = Logger(getClass)
   private val inventoryServiceUrl = config.getOptional[String]("inventory.service.url").getOrElse("http://inventory-service.inventory.svc.cluster.local:8083")
-  private val catalogServiceUrl = config.getOptional[String]("catalog.service.url").getOrElse("http://catalog-service.catalog.svc.cluster.local:8000")
+  private val catalogServiceUrl = config.getOptional[String]("catalog.service.url").getOrElse("http://catalog-service.catalog.svc.cluster.local:8082")
   
   // Get or create cart for buyer
   def getOrCreateCart(buyerId: String): Future[Cart] = {

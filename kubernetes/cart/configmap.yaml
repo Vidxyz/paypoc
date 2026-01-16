@@ -71,4 +71,18 @@ data:
         acceptAnyCertificate = true
       }
     }
+    
+    catalog {
+      service {
+        url = "http://catalog-service.catalog.svc.cluster.local:8082"
+        url = ${?CATALOG_SERVICE_URL}
+      }
+    }
+    
+    inventory {
+      service {
+        url = "http://inventory-service.inventory.svc.cluster.local:8083"
+        url = ${?INVENTORY_SERVICE_URL}
+      }
+    }
 

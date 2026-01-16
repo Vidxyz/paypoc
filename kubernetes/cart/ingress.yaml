@@ -16,7 +16,7 @@ spec:
   - host: cart.local
     http:
       paths:
-      - path: /api/cart
+      - path: /
         pathType: Prefix
         backend:
           service:

@@ -11,21 +11,51 @@ import {
   ListItemSecondaryAction,
   CircularProgress,
   Alert,
+  Tooltip,
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveIcon from '@mui/icons-material/Remove'
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout'
+import { useState } from 'react'
 import { useCart } from '../context/CartContext'
 import { useNavigate } from 'react-router-dom'
+import { catalogApiClient } from '../api/catalogApi'
+import ProductModal from './ProductModal'
 
 function CartPopup({ anchorEl, open, onClose }) {
   const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems, loading, error } = useCart()
   const navigate = useNavigate()
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [loadingProduct, setLoadingProduct] = useState(false)
 
   const handleCheckout = () => {
     onClose()
     navigate('/checkout')
+  }
+
+  const handleProductClick = async (productId, event) => {
+    // Don't open modal if clicking on quantity controls or delete button
+    if (event.target.closest('button') || event.target.closest('[role="button"]')) {
+      return
+    }
+
+    setLoadingProduct(true)
+    try {
+      const product = await catalogApiClient.getProduct(productId)
+      setSelectedProduct(product)
+      setModalOpen(true)
+    } catch (err) {
+      console.error('Error fetching product details:', err)
+    } finally {
+      setLoadingProduct(false)
+    }
+  }
+
+  const handleCloseModal = () => {
+    setModalOpen(false)
+    setSelectedProduct(null)
   }
 
   const formatPrice = (cents, currency = 'CAD') => {
@@ -95,7 +125,12 @@ function CartPopup({ anchorEl, open, onClose }) {
                   sx={{
                     py: 2,
                     px: 2,
+                    cursor: 'pointer',
+                    '&:hover': {
+                      backgroundColor: 'action.hover',
+                    },
                   }}
+                  onClick={(e) => handleProductClick(item.productId, e)}
                 >
                   {item.productImage && (
                     <Box
@@ -116,19 +151,34 @@ function CartPopup({ anchorEl, open, onClose }) {
                   )}
                   <ListItemText
                     primary={
-                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                        {item.productName}
-                      </Typography>
+                      <Tooltip title={item.productName} arrow placement="top">
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 'medium',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '200px',
+                            cursor: 'help',
+                          }}
+                        >
+                          {item.productName}
+                        </Typography>
+                      </Tooltip>
                     }
                     secondary={
                       <Box>
                         <Typography variant="caption" color="text.secondary">
                           {formatPrice(item.priceCents, item.currency)} each
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }} onClick={(e) => e.stopPropagation()}>
                           <IconButton
                             size="small"
-                            onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              updateQuantity(item.productId, item.quantity - 1)
+                            }}
                             disabled={loading}
                           >
                             <RemoveIcon fontSize="small" />
@@ -138,7 +188,10 @@ function CartPopup({ anchorEl, open, onClose }) {
                           </Typography>
                           <IconButton
                             size="small"
-                            onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              updateQuantity(item.productId, item.quantity + 1)
+                            }}
                             disabled={loading}
                           >
                             <AddIcon fontSize="small" />
@@ -147,7 +200,7 @@ function CartPopup({ anchorEl, open, onClose }) {
                       </Box>
                     }
                   />
-                  <ListItemSecondaryAction>
+                  <ListItemSecondaryAction onClick={(e) => e.stopPropagation()}>
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
                       <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
                         {formatPrice(item.priceCents * item.quantity, item.currency)}
@@ -155,7 +208,10 @@ function CartPopup({ anchorEl, open, onClose }) {
                       <IconButton
                         edge="end"
                         size="small"
-                        onClick={() => removeFromCart(item.productId)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeFromCart(item.productId)
+                        }}
                         disabled={loading}
                         color="error"
                       >
@@ -195,6 +251,7 @@ function CartPopup({ anchorEl, open, onClose }) {
           </Box>
         </>
       )}
+      <ProductModal open={modalOpen} onClose={handleCloseModal} product={selectedProduct} />
     </Popover>
   )
 }

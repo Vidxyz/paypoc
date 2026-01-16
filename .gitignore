@@ -78,6 +78,9 @@ Thumbs.db
 *.bak
 *.tmp
 
+# Ignore template files (files ending in .ignore)
+*.ignore
+
 # Editor directories and files
 .history/
 .bsp/

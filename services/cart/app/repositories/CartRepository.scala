@@ -33,6 +33,7 @@ class CartRepository @Inject()(
   }
   
   // Save active cart to Redis with TTL
+  // todo-vh: Expired carts cannot be recovered - consider increased TTL or persisting earlier. Consider publish events on cart expiry and tracking analytics/recovery via them. Can also persist expired carts in a separate table for analytics/recovery.
   def saveActiveCart(cart: Cart): Future[Boolean] = Future {
     val key = s"$REDIS_KEY_PREFIX${cart.buyerId}"
     val expiresAt = cart.expiresAt.getOrElse(Instant.now().plusSeconds(CART_TTL_SECONDS))

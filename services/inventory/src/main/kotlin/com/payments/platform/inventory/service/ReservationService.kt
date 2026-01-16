@@ -10,6 +10,7 @@ import com.payments.platform.inventory.kafka.ReservationCancelledEvent
 import com.payments.platform.inventory.kafka.ReservationConfirmedEvent
 import com.payments.platform.inventory.kafka.ReservationCreatedEvent
 import com.payments.platform.inventory.kafka.ReservationFulfilledEvent
+import com.payments.platform.inventory.kafka.StockUpdatedEvent
 import com.payments.platform.inventory.persistence.InventoryRepository
 import com.payments.platform.inventory.persistence.InventoryTransactionRepository
 import com.payments.platform.inventory.persistence.ReservationEntity
@@ -93,6 +94,16 @@ class ReservationService(
                 expiresAt = saved.expiresAt
             ))
             
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
+            ))
+            
             saved.toDomain()
         }
     }
@@ -153,6 +164,16 @@ class ReservationService(
                 orderId = cartId,
                 productId = inventory.productId,
                 quantity = saved.quantity
+            ))
+            
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
             ))
             
             saved.toDomain()
@@ -218,6 +239,16 @@ class ReservationService(
                 quantity = saved.quantity
             ))
             
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
+            ))
+            
             saved.toDomain()
         }
     }
@@ -265,6 +296,16 @@ class ReservationService(
                 orderId = saved.cartId,
                 productId = inventory.productId,
                 quantity = saved.quantity
+            ))
+            
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
             ))
             
             saved.toDomain()

@@ -21,7 +21,13 @@ class CartService @Inject()(
   
   private val logger = Logger(getClass)
   private val inventoryServiceUrl = config.getOptional[String]("inventory.service.url").getOrElse("http://inventory-service.inventory.svc.cluster.local:8083")
+  private val inventoryInternalApiToken = config.getOptional[String]("inventory.service.internal.api.token")
   private val catalogServiceUrl = config.getOptional[String]("catalog.service.url").getOrElse("http://catalog-service.catalog.svc.cluster.local:8082")
+  
+  // Helper to get internal API authorization header
+  private def getInternalAuthHeader: Option[(String, String)] = {
+    inventoryInternalApiToken.map(token => "Authorization" -> s"Bearer $token")
+  }
   
   // Get or create cart for buyer
   def getOrCreateCart(buyerId: String): Future[Cart] = {
@@ -50,8 +56,8 @@ class CartService @Inject()(
   
   // Add item to cart
   def addItem(buyerId: String, productId: UUID, quantity: Int, authToken: String): Future[Cart] = {
-    // Get product details from Catalog Service
-    getProductDetails(productId, authToken).flatMap { productOpt =>
+    // Get product details from Catalog Service (public endpoint, no auth needed)
+    getProductDetails(productId).flatMap { productOpt =>
       productOpt match {
         case None => Future.failed(new IllegalArgumentException(s"Product not found: $productId"))
         case Some(product) =>
@@ -69,8 +75,8 @@ class CartService @Inject()(
               val itemId = UUID.randomUUID()
               val cartId = cart.cartId
               
-              // Create soft reservation in Inventory Service
-              createSoftReservation(productId, cartId, quantity, authToken).flatMap { reservationIdOpt =>
+              // Create soft reservation in Inventory Service (using internal API)
+              createSoftReservation(productId, cartId, quantity).flatMap { reservationIdOpt =>
                 val item = CartItem(
                   itemId = itemId,
                   productId = productId,
@@ -111,9 +117,12 @@ class CartService @Inject()(
         // No change, just extend TTL
         cartRepository.extendCartTTL(cart.buyerId).map(_ => cart)
       } else {
-        // Update reservation in Inventory Service
-        updateReservation(item, quantityDiff, authToken).flatMap { _ =>
-          val updatedItem = item.copy(quantity = newQuantity)
+        // Update reservation in Inventory Service (using internal API)
+        updateReservation(item, newQuantity, cart.cartId).flatMap { newReservationIdOpt =>
+          val updatedItem = item.copy(
+            quantity = newQuantity,
+            reservationId = newReservationIdOpt.orElse(item.reservationId) // Keep old reservation if new one failed
+          )
           val updatedItems = cart.items.updated(itemIndex, updatedItem)
           val updatedCart = cart.copy(
             items = updatedItems,
@@ -136,19 +145,22 @@ class CartService @Inject()(
     } else {
       val item = cart.items(itemIndex)
       
-      // Release reservation in Inventory Service
-      item.reservationId.foreach { reservationId =>
-        releaseReservation(reservationId, authToken)
+      // Release reservation in Inventory Service (if exists, using internal API)
+      val releaseFuture = item.reservationId match {
+        case Some(reservationId) => releaseReservation(reservationId)
+        case None => Future.successful(())
       }
       
-      val updatedItems = cart.items.filterNot(_.itemId == itemId)
-      val updatedCart = cart.copy(
-        items = updatedItems,
-        updatedAt = Instant.now(),
-        expiresAt = Some(Instant.now().plusSeconds(15 * 60))
-      )
-      
-      cartRepository.saveActiveCart(updatedCart).map(_ => updatedCart)
+      releaseFuture.flatMap { _ =>
+        val updatedItems = cart.items.filterNot(_.itemId == itemId)
+        val updatedCart = cart.copy(
+          items = updatedItems,
+          updatedAt = Instant.now(),
+          expiresAt = Some(Instant.now().plusSeconds(15 * 60))
+        )
+        
+        cartRepository.saveActiveCart(updatedCart).map(_ => updatedCart)
+      }
     }
   }
   
@@ -189,10 +201,9 @@ class CartService @Inject()(
     cartRepository.getCartHistory(buyerId, limit)
   }
   
-  // Helper: Get product details from Catalog Service
-  private def getProductDetails(productId: UUID, authToken: String): Future[Option[JsValue]] = {
+  // Helper: Get product details from Catalog Service (public endpoint)
+  private def getProductDetails(productId: UUID): Future[Option[JsValue]] = {
     ws.url(s"$catalogServiceUrl/api/catalog/products/$productId")
-      .addHttpHeaders("Authorization" -> s"Bearer $authToken")
       .get()
       .map { response =>
         if (response.status == 200) {
@@ -208,28 +219,101 @@ class CartService @Inject()(
       }
   }
   
-  // Helper: Create soft reservation in Inventory Service
-  private def createSoftReservation(productId: UUID, cartId: UUID, quantity: Int, authToken: String): Future[Option[UUID]] = {
-    // TODO: Get inventory ID from product
-    // For now, we'll need to query Inventory Service to find inventory by productId
-    // This is a placeholder - actual implementation needs to find inventoryId first
-    Future.successful(None)  // Placeholder
+  // Helper: Get inventory ID from product ID (using internal API)
+  private def getInventoryIdByProductId(productId: UUID): Future[Option[UUID]] = {
+    val headers = getInternalAuthHeader.toSeq
+    ws.url(s"$inventoryServiceUrl/internal/stock/$productId")
+      .addHttpHeaders(headers: _*)
+      .get()
+      .map { response =>
+        if (response.status == 200) {
+          val inventory = response.json
+          (inventory \ "id").asOpt[String].map(UUID.fromString)
+        } else if (response.status == 404) {
+          logger.warn(s"Inventory not found for product $productId")
+          None
+        } else if (response.status == 401) {
+          logger.error(s"Unauthorized: Invalid or missing internal API token for inventory service")
+          None
+        } else {
+          logger.warn(s"Failed to get inventory for product $productId: ${response.status}")
+          None
+        }
+      }
+      .recover { case e =>
+        logger.error(s"Error getting inventory for product $productId from Inventory Service", e)
+        None
+      }
+  }
+
+  // Helper: Create soft reservation in Inventory Service (using internal API)
+  private def createSoftReservation(productId: UUID, cartId: UUID, quantity: Int): Future[Option[UUID]] = {
+    // First, get inventory ID from product ID
+    getInventoryIdByProductId(productId).flatMap {
+      case None =>
+        logger.warn(s"Cannot create reservation: inventory not found for product $productId")
+        Future.successful(None)
+      case Some(inventoryId) =>
+        // Create soft reservation using internal API
+        val headers = getInternalAuthHeader.toSeq
+        ws.url(s"$inventoryServiceUrl/internal/reservations")
+          .addHttpHeaders(headers: _*)
+          .post(Json.obj(
+            "inventoryId" -> inventoryId.toString,
+            "cartId" -> cartId.toString,
+            "quantity" -> quantity
+          ))
+          .map { response =>
+            if (response.status == 201) {
+              val reservation = response.json
+              (reservation \ "id").asOpt[String].map(UUID.fromString)
+            } else if (response.status == 401) {
+              logger.error(s"Unauthorized: Invalid or missing internal API token for inventory service")
+              None
+            } else {
+              logger.warn(s"Failed to create reservation for product $productId: ${response.status} - ${response.body}")
+              None
+            }
+          }
+          .recover { case e =>
+            logger.error(s"Error creating reservation for product $productId", e)
+            None
+          }
+    }
   }
   
   // Helper: Update reservation quantity
-  private def updateReservation(item: CartItem, quantityDiff: Int, authToken: String): Future[Unit] = {
-    // TODO: Implement reservation update
-    Future.successful(())
+  // Since there's no update endpoint, we release the old reservation and create a new one
+  private def updateReservation(item: CartItem, newQuantity: Int, cartId: UUID): Future[Option[UUID]] = {
+    // If there's an existing reservation, release it first
+    val releaseFuture = item.reservationId match {
+      case Some(reservationId) =>
+        releaseReservation(reservationId).map(_ => ())
+      case None =>
+        Future.successful(())
+    }
+    
+    // Then create a new reservation with the updated quantity
+    releaseFuture.flatMap { _ =>
+      createSoftReservation(item.productId, cartId, newQuantity)
+    }
   }
   
-  // Helper: Release reservation
-  private def releaseReservation(reservationId: UUID, authToken: String): Future[Unit] = {
-    ws.url(s"$inventoryServiceUrl/api/inventory/release")
-      .addHttpHeaders("Authorization" -> s"Bearer $authToken")
-      .post(Json.obj("reservation_id" -> reservationId.toString))
+  // Helper: Release reservation (using internal API)
+  private def releaseReservation(reservationId: UUID): Future[Unit] = {
+    val headers = getInternalAuthHeader.toSeq
+    ws.url(s"$inventoryServiceUrl/internal/reservations/$reservationId/release")
+      .addHttpHeaders(headers: _*)
+      .post(Json.obj())
       .map { response =>
-        if (response.status != 200) {
-          logger.warn(s"Failed to release reservation $reservationId: ${response.status}")
+        if (response.status == 200) {
+          logger.debug(s"Successfully released reservation $reservationId")
+        } else if (response.status == 401) {
+          logger.error(s"Unauthorized: Invalid or missing internal API token for inventory service")
+        } else if (response.status == 404) {
+          logger.warn(s"Reservation $reservationId not found (may have already been released)")
+        } else {
+          logger.warn(s"Failed to release reservation $reservationId: ${response.status} - ${response.body}")
         }
       }
       .recover { case e =>

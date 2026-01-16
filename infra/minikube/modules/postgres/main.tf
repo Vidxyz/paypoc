@@ -224,6 +224,14 @@ resource "null_resource" "init_databases" {
         echo "cart_db already exists"
       fi
       
+      DB_EXISTS=$(kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='order_db'" 2>/dev/null || echo "")
+      if [ -z "$DB_EXISTS" ]; then
+        echo "Creating order_db..."
+        kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "CREATE DATABASE order_db;" || echo "order_db may already exist"
+      else
+        echo "order_db already exists"
+      fi
+      
       # Create ledger_user (idempotent) - check first, then create
       echo "Creating ledger_user..."
       USER_EXISTS=$(kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='ledger_user'" 2>/dev/null || echo "")
@@ -320,6 +328,18 @@ resource "null_resource" "init_databases" {
         echo "cart_user already exists"
       fi
       
+      USER_EXISTS=$(kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='order_user'" 2>/dev/null || echo "")
+      if [ -z "$USER_EXISTS" ]; then
+        echo "Creating order_user..."
+        kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "CREATE USER order_user WITH PASSWORD 'order_pass';" || {
+          echo "ERROR: Failed to create order_user"
+          exit 1
+        }
+        echo "order_user created successfully"
+      else
+        echo "order_user already exists"
+      fi
+      
       # Verify users were created
       echo "Verifying users exist..."
       USER_EXISTS=$(kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='ledger_user'" 2>/dev/null || echo "")
@@ -357,6 +377,11 @@ resource "null_resource" "init_databases" {
         echo "ERROR: cart_user was not created successfully"
         exit 1
       fi
+      USER_EXISTS=$(kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='order_user'" 2>/dev/null || echo "")
+      if [ -z "$USER_EXISTS" ]; then
+        echo "ERROR: order_user was not created successfully"
+        exit 1
+      fi
       
       # Grant database privileges (only after users are confirmed to exist)
       echo "Granting database privileges..."
@@ -386,6 +411,10 @@ resource "null_resource" "init_databases" {
       }
       kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE cart_db TO cart_user;" || {
         echo "ERROR: Failed to grant privileges on cart_db to cart_user"
+        exit 1
+      }
+      kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE order_db TO order_user;" || {
+        echo "ERROR: Failed to grant privileges on order_db to order_user"
         exit 1
       }
       echo "Database privileges granted successfully"
@@ -446,9 +475,17 @@ resource "null_resource" "init_databases" {
         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO cart_user;
       EOSQL
       
+      # Grant schema permissions (connect to order_db)
+      echo "Granting schema permissions on order_db..."
+      kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d order_db <<-EOSQL
+        GRANT ALL ON SCHEMA public TO order_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO order_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO order_user;
+      EOSQL
+      
       # Verify the users were created
       echo "Verifying users exist..."
-      kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "\du" | grep -E "ledger_user|payments_user|users_user|auth_user|catalog_user|inventory_user|cart_user" || {
+      kubectl exec -n ${var.namespace} "$POD_NAME" -- env PGPASSWORD="$ADMIN_PASSWORD" psql -U "$ADMIN_USER" -d postgres -c "\du" | grep -E "ledger_user|payments_user|users_user|auth_user|catalog_user|inventory_user|cart_user|order_user" || {
         echo "ERROR: Failed to verify user creation"
         exit 1
       }

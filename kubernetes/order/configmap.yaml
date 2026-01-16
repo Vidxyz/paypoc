@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-config
+  namespace: order
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  KAFKA_EVENTS_TOPIC: "payment.events"
+  KAFKA_CONSUMER_GROUP_ID: "order-service"
+  INVENTORY_SERVICE_URL: "http://inventory-service.inventory.svc.cluster.local:8083"
+  PAYMENT_SERVICE_URL: "http://payments-service.payments-platform.svc.cluster.local:8080"
+  CART_SERVICE_URL: "http://cart-service.cart.svc.cluster.local:9002"
+  AUTH0_DOMAIN: "dev-bm52noc2kc3fce8w.us.auth0.com"
+  AUTH0_AUDIENCE: "https://buyit.local/api"

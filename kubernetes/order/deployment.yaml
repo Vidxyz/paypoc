@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: order
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+      - name: order-service
+        image: order-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8084
+          name: http
+        env:
+        - name: PORT
+          value: "8084"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: DATABASE_URL
+        - name: INVENTORY_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: INVENTORY_SERVICE_URL
+        - name: INVENTORY_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: INVENTORY_INTERNAL_API_TOKEN
+        - name: PAYMENT_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: PAYMENT_SERVICE_URL
+        - name: CART_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: CART_SERVICE_URL
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: KAFKA_EVENTS_TOPIC
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: KAFKA_EVENTS_TOPIC
+        - name: KAFKA_CONSUMER_GROUP_ID
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: KAFKA_CONSUMER_GROUP_ID
+        - name: INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: INTERNAL_API_TOKEN
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            configMapKeyRef:
+              name: order-service-config
+              key: AUTH0_AUDIENCE
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8084
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8084
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

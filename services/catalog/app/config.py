@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     cloudflare_account_id: Optional[str] = None
     cloudflare_api_token: Optional[str] = None
     
-    # Payments Service (for seller ID resolution)
-    payments_service_url: str = "http://localhost:8080"
-    payments_internal_api_token: Optional[str] = None
+    # Payments Service - not used (sellerId = email, no API call needed)
+    # payments_service_url: str = "http://localhost:8080"  # Removed - unused
+    # payments_internal_api_token: Optional[str] = None  # Removed - unused
     
     # Inventory Service (for stock information)
     inventory_service_url: str = "http://localhost:8083"

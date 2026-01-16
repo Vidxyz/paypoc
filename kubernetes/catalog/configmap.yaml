@@ -6,6 +6,6 @@ metadata:
 data:
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   KAFKA_EVENTS_TOPIC: "catalog.events"
-  PAYMENTS_SERVICE_URL: "http://payments-service:8080"
+  KAFKA_INVENTORY_EVENTS_TOPIC: "inventory.events"
   INVENTORY_SERVICE_URL: "http://inventory-service.inventory.svc.cluster.local:8083"
 

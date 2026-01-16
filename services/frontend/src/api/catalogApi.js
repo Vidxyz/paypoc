@@ -34,7 +34,7 @@ export const catalogApiClient = {
    * @returns {Promise<Object>} ProductListResponse with products, total, page, page_size, has_next
    */
   browseProducts: async (params = {}) => {
-    const { category_ids, page = 1, page_size = 20, sort_by } = params
+    const { category_ids, page = 1, page_size = 20, sort_by, search_query } = params
     const queryParams = new URLSearchParams()
     if (category_ids && category_ids.length > 0) {
       category_ids.forEach(id => queryParams.append('category_ids', id))
@@ -43,6 +43,9 @@ export const catalogApiClient = {
     queryParams.append('page_size', page_size.toString())
     if (sort_by) {
       queryParams.append('sort_by', sort_by)
+    }
+    if (search_query && search_query.trim()) {
+      queryParams.append('search_query', search_query.trim())
     }
     
     const response = await catalogApi.get(`/api/catalog/products/browse?${queryParams.toString()}`)

@@ -65,13 +65,16 @@ class InventoryService(
             
             val saved = inventoryRepository.save(entity)
             
-            // Record transaction
-            recordTransaction(
-                inventoryId = saved.id,
-                transactionType = if (delta >= 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
-                quantity = kotlin.math.abs(delta),
-                description = if (existing == null) "Initial stock" else "Stock adjustment (set to $quantity)"
-            )
+            // Record transaction only if there's an actual change (non-zero delta)
+            // This avoids violating the non_zero_quantity constraint when creating inventory with 0 quantity
+            if (delta != 0) {
+                recordTransaction(
+                    inventoryId = saved.id,
+                    transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
+                    quantity = kotlin.math.abs(delta),
+                    description = if (existing == null) "Initial stock" else "Stock adjustment (set to $quantity)"
+                )
+            }
             
             // Publish event
             if (existing == null) {
@@ -113,13 +116,16 @@ class InventoryService(
             updateEntity(entity, updated)
             val saved = inventoryRepository.save(entity)
             
-            // Record transaction
-            recordTransaction(
-                inventoryId = saved.id,
-                transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
-                quantity = delta,
-                description = "Stock adjustment"
-            )
+            // Record transaction only if there's an actual change (non-zero delta)
+            // This avoids violating the non_zero_quantity constraint
+            if (delta != 0) {
+                recordTransaction(
+                    inventoryId = saved.id,
+                    transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
+                    quantity = kotlin.math.abs(delta),
+                    description = "Stock adjustment"
+                )
+            }
             
             kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
                 stockId = saved.id,

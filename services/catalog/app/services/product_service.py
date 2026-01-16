@@ -203,9 +203,16 @@ class ProductService:
         
         return query.order_by(Product.created_at.desc()).all()
     
-    def get_product_by_id(self, product_id: UUID) -> Product:
-        """Get a product by ID"""
-        product = self.db.query(Product).filter(
+    def get_product_by_id(self, product_id: UUID) -> dict:
+        """Get a product by ID with inventory from denormalized table"""
+        from sqlalchemy.orm import joinedload
+        from app.models.product_inventory import ProductInventory
+        
+        # Query product with inventory cache joined
+        product = self.db.query(Product).outerjoin(
+            ProductInventory,
+            Product.id == ProductInventory.product_id
+        ).options(joinedload(Product.inventory_cache)).filter(
             Product.id == product_id,
             Product.deleted_at.is_(None)
         ).first()
@@ -213,7 +220,19 @@ class ProductService:
         if not product:
             raise ValueError("Product not found")
         
-        return product
+        # Get inventory from denormalized table (if available)
+        inventory_data = None
+        if product.inventory_cache:
+            inv = product.inventory_cache
+            inventory_data = {
+                "inventory_id": None,  # Not stored in cache
+                "available_quantity": inv.available_quantity,
+                "total_quantity": inv.total_quantity,
+                "reserved_quantity": inv.reserved_quantity,
+                "allocated_quantity": inv.allocated_quantity,
+            }
+        
+        return self._product_to_response_dict(product, inventory_data)
     
     def update_product(
         self,

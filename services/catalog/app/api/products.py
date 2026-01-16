@@ -267,8 +267,8 @@ async def get_product(
 ):
     """Get product by ID (public endpoint)"""
     try:
-        product = product_service.get_product_by_id(product_id)
-        return product_service._product_to_response_dict(product)
+        product_dict = product_service.get_product_by_id(product_id)
+        return product_dict
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

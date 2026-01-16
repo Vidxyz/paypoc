@@ -24,6 +24,7 @@ import { useCart } from '../context/CartContext'
 import { useNavigate } from 'react-router-dom'
 import { useAuth0 } from '../auth/Auth0Provider'
 import { catalogApiClient } from '../api/catalogApi'
+import { cacheProduct } from '../utils/productCache'
 
 function ProductModal({ open, onClose, product }) {
   const navigate = useNavigate()
@@ -81,6 +82,13 @@ function ProductModal({ open, onClose, product }) {
       loadCategoryBreadcrumbs()
     }
   }, [open, product?.category_id, product?.id, isAuthenticated, getAccessToken])
+
+  // Cache product info when modal opens
+  useEffect(() => {
+    if (product) {
+      cacheProduct(product)
+    }
+  }, [product])
 
   if (!product) return null
 

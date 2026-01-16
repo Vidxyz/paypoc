@@ -30,6 +30,7 @@ import SearchIcon from '@mui/icons-material/Search'
 import { catalogApiClient } from '../api/catalogApi'
 import ProductModal from '../components/ProductModal'
 import { useAuth0 } from '../auth/Auth0Provider'
+import { cacheProducts } from '../utils/productCache'
 
 function Home() {
   const { isAuthenticated, getAccessToken } = useAuth0()
@@ -148,11 +149,15 @@ function Home() {
         sort_by: sortOption,
         search_query: search || undefined, // Only include if not empty
       })
-      setProducts(response.products || [])
+      const products = response.products || []
+      setProducts(products)
       setTotalProducts(response.total || 0)
       // Calculate total pages
       const pages = Math.ceil((response.total || 0) / pageSize)
       setTotalPages(pages > 0 ? pages : 1)
+      
+      // Cache product info for cart use
+      cacheProducts(products)
     } catch (err) {
       console.error('Error fetching products:', err)
       setError(err.message || 'Failed to load products')
@@ -191,6 +196,8 @@ function Home() {
       const product = await catalogApiClient.getProduct(productId)
       setSelectedProduct(product)
       setModalOpen(true)
+      // Cache product info for cart use
+      cacheProducts([product])
     } catch (err) {
       console.error('Error fetching product details:', err)
       setError(err.message || 'Failed to load product details')

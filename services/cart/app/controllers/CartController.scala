@@ -4,7 +4,7 @@ import auth.JwtValidator
 import models.{AccountType, AddCartItemRequest, CartResponse, CheckoutResponse, UpdateCartItemRequest}
 import play.api.Logger
 import play.api.libs.json.Json
-import play.api.mvc.{AbstractController, Action, AnyContent, ControllerComponents, Request}
+import play.api.mvc.{AbstractController, Action, AnyContent, ControllerComponents, Request, Result}
 import services.CartService
 import scala.concurrent.{ExecutionContext, Future}
 import java.util.UUID

@@ -1,0 +1,39 @@
+openapi: 3.0.0
+info:
+  title: Cart Service API
+  version: 1.0.0
+  description: |
+    The Cart Service manages shopping carts for the payments platform.
+    
+    **Key Features:**
+    - Shopping cart management (add, update, remove items)
+    - Soft inventory reservations via Inventory Service
+    - Cart persistence in Redis with TTL
+    - Checkout initiation (creates orders and payments)
+    - Cart history tracking in PostgreSQL
+    
+    **Cart Lifecycle:**
+    1. **Active Cart**: Stored in Redis, expires after 15 minutes of inactivity
+    2. **Checkout**: Cart moved to PostgreSQL, inventory allocated, order created
+    3. **Completed**: Order fulfilled, cart marked as completed
+    4. **Abandoned**: Cart expired or abandoned by user
+    5. **Expired**: Cart TTL expired in Redis
+    
+    **Inventory Integration:**
+    - Adding items creates SOFT reservations in Inventory Service
+    - Updating quantities updates reservations
+    - Removing items releases reservations
+    - Checkout converts SOFT reservations to HARD allocations
+    
+    **Authentication:**
+    - All endpoints require JWT bearer token
+    - Only BUYER and ADMIN account types can access cart endpoints
+  contact:
+    name: Payments Platform Team
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:9000
+    description: Local development
+  - url: http://cart.local
+    description: Minikube

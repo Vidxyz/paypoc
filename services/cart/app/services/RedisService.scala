@@ -19,12 +19,18 @@ class RedisService @Inject()(config: Configuration) {
   private val timeout = config.get[Int]("redis.timeout")
   
   private lazy val redisClient: RedisClient = {
-    val client = password match {
-      case Some(pwd) => new RedisClient(host, port, secret = Some(pwd), database = database)
-      case None => new RedisClient(host, port, database = database)
+    try {
+      val client = password match {
+        case Some(pwd) => new RedisClient(host, port, secret = Some(pwd), database = database)
+        case None => new RedisClient(host, port, database = database)
+      }
+      logger.info(s"Redis client initialized: $host:$port (database: $database)")
+      client
+    } catch {
+      case e: Exception =>
+        logger.error(s"Failed to initialize Redis client: $host:$port", e)
+        throw e
     }
-    logger.info(s"Redis client initialized: $host:$port (database: $database)")
-    client
   }
   
   def get[T](key: String)(implicit reads: Reads[T]): Option[T] = {
@@ -57,7 +63,7 @@ class RedisService @Inject()(config: Configuration) {
   
   def delete(key: String): Boolean = {
     Try {
-      redisClient.del(key) > 0
+      redisClient.del(key).exists(_ > 0)
     } match {
       case Success(result) => result
       case Failure(e) =>

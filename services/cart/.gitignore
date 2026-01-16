@@ -1,0 +1,43 @@
+# Scala/Play Framework build artifacts
+target/
+project/target/
+project/project/
+dist/
+*.class
+*.cache
+
+# SBT
+.history/
+.bsp/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# Play Framework
+RUNNING_PID
+logs/
+application.log
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.swp
+*.swo
+*~
+*.bak

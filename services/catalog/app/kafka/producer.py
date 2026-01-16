@@ -19,11 +19,20 @@ class CatalogEventProducer:
         self.bootstrap_servers = settings.kafka_bootstrap_servers
         self.events_topic = settings.kafka_events_topic
         
+        logger.info("KAFKA PRODUCER: Initializing producer...")
+        logger.info(f"KAFKA PRODUCER: Bootstrap servers: {self.bootstrap_servers}")
+        logger.info(f"KAFKA PRODUCER: Events topic: {self.events_topic}")
+        
         # Create Kafka producer
-        self.producer = Producer({
-            'bootstrap.servers': self.bootstrap_servers,
-            'client.id': 'catalog-service',
-        })
+        try:
+            self.producer = Producer({
+                'bootstrap.servers': self.bootstrap_servers,
+                'client.id': 'catalog-service',
+            })
+            logger.info("KAFKA PRODUCER: Producer instance created successfully")
+        except Exception as e:
+            logger.error(f"KAFKA PRODUCER: Failed to create producer instance: {e}", exc_info=True)
+            raise
     
     def _publish_event(self, event_type: str, payload: Dict[str, Any], key: Optional[str] = None):
         """Internal method to publish event to Kafka"""
@@ -48,17 +57,17 @@ class CatalogEventProducer:
             # Trigger delivery callback
             self.producer.poll(0)
             
-            logger.info(f"Published {event_type} event to {self.events_topic}")
+            logger.info(f"KAFKA PRODUCER: Published {event_type} event to topic={self.events_topic}, key={kafka_key}")
         except Exception as e:
-            logger.error(f"Failed to publish {event_type} event: {e}", exc_info=True)
+            logger.error(f"KAFKA PRODUCER: Failed to publish {event_type} event: {e}", exc_info=True)
             raise
     
     def _delivery_callback(self, err, msg):
         """Callback for message delivery"""
         if err:
-            logger.error(f"Message delivery failed: {err}")
+            logger.error(f"KAFKA PRODUCER: Message delivery failed - topic={msg.topic() if msg else 'N/A'}, error={err}")
         else:
-            logger.debug(f"Message delivered to {msg.topic()} [{msg.partition()}]")
+            logger.info(f"KAFKA PRODUCER: Message delivered successfully - topic={msg.topic()}, partition={msg.partition()}, offset={msg.offset()}")
     
     def publish_product_created(self, product_id: str, seller_id: str, sku: str, name: str):
         """Publish ProductCreatedEvent"""
@@ -100,7 +109,13 @@ class CatalogEventProducer:
     
     def flush(self):
         """Flush pending messages"""
-        self.producer.flush()
+        try:
+            logger.info("KAFKA PRODUCER: Flushing pending messages...")
+            self.producer.flush()
+            logger.info("KAFKA PRODUCER: Flush completed")
+        except Exception as e:
+            logger.error(f"KAFKA PRODUCER: Error during flush: {e}", exc_info=True)
+            raise
 
 
 # Lazy initialization - only create producer when first used
@@ -130,10 +145,11 @@ def get_event_producer():
     
     if _event_producer_instance is None:
         try:
+            logger.info("KAFKA PRODUCER: Creating new producer instance (lazy initialization)...")
             _event_producer_instance = CatalogEventProducer()
-            logger.info(f"Initialized Kafka producer for {_event_producer_instance.bootstrap_servers}")
+            logger.info(f"KAFKA PRODUCER: Successfully initialized producer for bootstrap_servers={_event_producer_instance.bootstrap_servers}, topic={_event_producer_instance.events_topic}")
         except Exception as e:
-            logger.warning(f"Failed to initialize Kafka producer: {e}. Events will not be published.")
+            logger.error(f"KAFKA PRODUCER: Failed to initialize producer: {e}. Events will not be published.", exc_info=True)
             _producer_initialization_failed = True
             return None
     return _event_producer_instance
@@ -145,34 +161,45 @@ class EventProducerProxy:
         producer = get_event_producer()
         if producer:
             try:
+                logger.info(f"KAFKA PRODUCER: Attempting to publish PRODUCT_CREATED event with args={args}, kwargs={kwargs}")
                 producer.publish_product_created(*args, **kwargs)
             except Exception as e:
-                logger.warning(f"Failed to publish PRODUCT_CREATED event: {e}")
-        # Silently skip if producer unavailable
+                logger.error(f"KAFKA PRODUCER: Failed to publish PRODUCT_CREATED event: {e}", exc_info=True)
+        else:
+            logger.warning("KAFKA PRODUCER: Producer unavailable, skipping PRODUCT_CREATED event")
     
     def publish_product_updated(self, *args, **kwargs):
         producer = get_event_producer()
         if producer:
             try:
+                logger.info(f"KAFKA PRODUCER: Attempting to publish PRODUCT_UPDATED event with args={args}, kwargs={kwargs}")
                 producer.publish_product_updated(*args, **kwargs)
             except Exception as e:
-                logger.warning(f"Failed to publish PRODUCT_UPDATED event: {e}")
+                logger.error(f"KAFKA PRODUCER: Failed to publish PRODUCT_UPDATED event: {e}", exc_info=True)
+        else:
+            logger.warning("KAFKA PRODUCER: Producer unavailable, skipping PRODUCT_UPDATED event")
     
     def publish_product_deleted(self, *args, **kwargs):
         producer = get_event_producer()
         if producer:
             try:
+                logger.info(f"KAFKA PRODUCER: Attempting to publish PRODUCT_DELETED event with args={args}, kwargs={kwargs}")
                 producer.publish_product_deleted(*args, **kwargs)
             except Exception as e:
-                logger.warning(f"Failed to publish PRODUCT_DELETED event: {e}")
+                logger.error(f"KAFKA PRODUCER: Failed to publish PRODUCT_DELETED event: {e}", exc_info=True)
+        else:
+            logger.warning("KAFKA PRODUCER: Producer unavailable, skipping PRODUCT_DELETED event")
     
     def flush(self):
         producer = get_event_producer()
         if producer:
             try:
+                logger.info("KAFKA PRODUCER: Flushing producer via proxy...")
                 producer.flush()
             except Exception as e:
-                logger.warning(f"Failed to flush Kafka producer: {e}")
+                logger.error(f"KAFKA PRODUCER: Failed to flush producer: {e}", exc_info=True)
+        else:
+            logger.warning("KAFKA PRODUCER: Producer unavailable, cannot flush")
 
 event_producer = EventProducerProxy()
 

@@ -9,6 +9,8 @@ import traceback
 
 from app.db.database import init_db
 from app.api import products, categories, health, images
+from app.kafka.inventory_consumer import get_inventory_consumer
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -23,10 +25,94 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Catalog Service...")
     await init_db()
+    
+    # Start inventory event consumer in background thread
+    logger.info("=" * 80)
+    logger.info("CATALOG SERVICE: Initializing Kafka inventory event consumer...")
+    logger.info("=" * 80)
+    
+    try:
+        from app.config import settings
+        logger.info(f"CATALOG SERVICE: Kafka config - bootstrap_servers={settings.kafka_bootstrap_servers}")
+        logger.info(f"CATALOG SERVICE: Kafka config - inventory_events_topic={settings.kafka_inventory_events_topic}")
+        logger.info(f"CATALOG SERVICE: Kafka config - events_topic={settings.kafka_events_topic}")
+    except Exception as e:
+        logger.error(f"CATALOG SERVICE: Error reading Kafka config: {e}", exc_info=True)
+    
+    try:
+        inventory_consumer = get_inventory_consumer()
+        logger.info("CATALOG SERVICE: Consumer instance created successfully")
+    except Exception as e:
+        logger.error(f"CATALOG SERVICE: Failed to create consumer instance: {e}", exc_info=True)
+        raise
+    
+    logger.info("CATALOG SERVICE: Creating background thread for inventory event consumer...")
+    
+    def start_consumer_with_logging():
+        """Wrapper to start consumer with proper error handling and logging"""
+        import logging
+        import sys
+        
+        print("KAFKA CONSUMER THREAD: Thread function called", flush=True)
+        
+        # Ensure logging is configured for this thread with immediate flushing
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            stream=sys.stdout,
+            force=True  # Force reconfiguration
+        )
+        
+        print("KAFKA CONSUMER THREAD: Logging configured", flush=True)
+        
+        # Get the logger for this module and ensure it flushes
+        consumer_logger = logging.getLogger("app.kafka.inventory_consumer")
+        consumer_logger.setLevel(logging.INFO)
+        for handler in consumer_logger.handlers:
+            if hasattr(handler, 'stream'):
+                handler.stream = sys.stdout
+        
+        print("KAFKA CONSUMER THREAD: About to call inventory_consumer.start()", flush=True)
+        
+        try:
+            inventory_consumer.start()
+            print("KAFKA CONSUMER THREAD: consumer.start() returned (should not happen)", flush=True)
+        except Exception as e:
+            print(f"KAFKA CONSUMER THREAD: Fatal error in consumer: {e}", flush=True)
+            consumer_logger.error(f"KAFKA CONSUMER THREAD: Fatal error in consumer: {e}", exc_info=True)
+            sys.stdout.flush()
+            raise
+    
+    consumer_thread = threading.Thread(
+        target=start_consumer_with_logging,
+        daemon=True,
+        name="inventory-consumer"
+    )
+    
+    try:
+        consumer_thread.start()
+        logger.info("CATALOG SERVICE: Started inventory event consumer in background thread")
+        logger.info("CATALOG SERVICE: Thread ID: %s", consumer_thread.ident)
+        logger.info("CATALOG SERVICE: Thread name: %s", consumer_thread.name)
+        logger.info("CATALOG SERVICE: Thread is alive: %s", consumer_thread.is_alive())
+        logger.info("CATALOG SERVICE: Thread is daemon: %s", consumer_thread.daemon)
+        
+        # Give the thread a moment to start and log
+        import time
+        time.sleep(0.5)
+        logger.info("CATALOG SERVICE: Thread is still alive after 0.5s: %s", consumer_thread.is_alive())
+    except Exception as e:
+        logger.error(f"CATALOG SERVICE: Failed to start consumer thread: {e}", exc_info=True)
+        raise
+    
+    logger.info("=" * 80)
+    
     logger.info("Catalog Service started successfully")
     yield
     # Shutdown
     logger.info("Shutting down Catalog Service...")
+    inventory_consumer.stop()
+    logger.info("Stopped inventory event consumer")
 
 
 app = FastAPI(

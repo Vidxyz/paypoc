@@ -65,26 +65,35 @@ class InventoryService(
             
             val saved = inventoryRepository.save(entity)
             
-            // Record transaction
-            recordTransaction(
-                inventoryId = saved.id,
-                transactionType = if (delta >= 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
-                quantity = kotlin.math.abs(delta),
-                description = if (existing == null) "Initial stock" else "Stock adjustment (set to $quantity)"
-            )
+            // Record transaction only if there's an actual change (non-zero delta)
+            // This avoids violating the non_zero_quantity constraint when creating inventory with 0 quantity
+            if (delta != 0) {
+                recordTransaction(
+                    inventoryId = saved.id,
+                    transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
+                    quantity = kotlin.math.abs(delta),
+                    description = if (existing == null) "Initial stock" else "Stock adjustment (set to $quantity)"
+                )
+            }
             
             // Publish event
             if (existing == null) {
                 kafkaProducer.publishStockCreatedEvent(StockCreatedEvent(
                     stockId = saved.id,
                     productId = saved.productId,
-                    quantity = saved.totalQuantity
+                    availableQuantity = saved.availableQuantity,
+                    totalQuantity = saved.totalQuantity,
+                    reservedQuantity = saved.reservedQuantity,
+                    allocatedQuantity = saved.allocatedQuantity
                 ))
             } else {
                 kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
                     stockId = saved.id,
                     productId = saved.productId,
-                    newQuantity = saved.totalQuantity
+                    availableQuantity = saved.availableQuantity,
+                    totalQuantity = saved.totalQuantity,
+                    reservedQuantity = saved.reservedQuantity,
+                    allocatedQuantity = saved.allocatedQuantity
                 ))
             }
             
@@ -107,18 +116,24 @@ class InventoryService(
             updateEntity(entity, updated)
             val saved = inventoryRepository.save(entity)
             
-            // Record transaction
-            recordTransaction(
-                inventoryId = saved.id,
-                transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
-                quantity = delta,
-                description = "Stock adjustment"
-            )
+            // Record transaction only if there's an actual change (non-zero delta)
+            // This avoids violating the non_zero_quantity constraint
+            if (delta != 0) {
+                recordTransaction(
+                    inventoryId = saved.id,
+                    transactionType = if (delta > 0) TransactionType.STOCK_ADD else TransactionType.STOCK_REMOVE,
+                    quantity = kotlin.math.abs(delta),
+                    description = "Stock adjustment"
+                )
+            }
             
             kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
                 stockId = saved.id,
                 productId = saved.productId,
-                newQuantity = saved.totalQuantity
+                availableQuantity = saved.availableQuantity,
+                totalQuantity = saved.totalQuantity,
+                reservedQuantity = saved.reservedQuantity,
+                allocatedQuantity = saved.allocatedQuantity
             ))
             
             saved.toDomain()
@@ -138,6 +153,15 @@ class InventoryService(
     @Transactional(readOnly = true)
     fun getStockBySellerAndSku(sellerId: String, sku: String): Inventory? {
         return inventoryRepository.findBySellerIdAndSku(sellerId, sku)?.toDomain()
+    }
+    
+    @Transactional(readOnly = true)
+    fun getStockByProductIds(productIds: List<UUID>): Map<UUID, Inventory> {
+        if (productIds.isEmpty()) {
+            return emptyMap()
+        }
+        val entities = inventoryRepository.findByProductIdIn(productIds)
+        return entities.associate { it.productId to it.toDomain() }
     }
     
     @Transactional(readOnly = true)

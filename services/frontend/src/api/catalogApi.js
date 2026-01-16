@@ -34,13 +34,19 @@ export const catalogApiClient = {
    * @returns {Promise<Object>} ProductListResponse with products, total, page, page_size, has_next
    */
   browseProducts: async (params = {}) => {
-    const { category_ids, page = 1, page_size = 20 } = params
+    const { category_ids, page = 1, page_size = 20, sort_by, search_query } = params
     const queryParams = new URLSearchParams()
     if (category_ids && category_ids.length > 0) {
       category_ids.forEach(id => queryParams.append('category_ids', id))
     }
     queryParams.append('page', page.toString())
     queryParams.append('page_size', page_size.toString())
+    if (sort_by) {
+      queryParams.append('sort_by', sort_by)
+    }
+    if (search_query && search_query.trim()) {
+      queryParams.append('search_query', search_query.trim())
+    }
     
     const response = await catalogApi.get(`/api/catalog/products/browse?${queryParams.toString()}`)
     return response.data
@@ -63,6 +69,21 @@ export const catalogApiClient = {
    */
   getCategories: async (token) => {
     const response = await catalogApi.get('/api/catalog/categories', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    return response.data
+  },
+
+  /**
+   * Get category by ID (requires authentication)
+   * @param {string} categoryId - Category UUID
+   * @param {string} token - JWT access token
+   * @returns {Promise<Object>} CategoryResponse
+   */
+  getCategory: async (categoryId, token) => {
+    const response = await catalogApi.get(`/api/catalog/categories/${categoryId}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

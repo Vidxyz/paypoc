@@ -3,4 +3,5 @@
 # Used by alembic/env.py for migration autogenerate
 from app.models.product import Product
 from app.models.category import Category
+from app.models.product_inventory import ProductInventory
 

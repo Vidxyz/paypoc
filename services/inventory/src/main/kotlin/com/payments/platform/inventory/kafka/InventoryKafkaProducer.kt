@@ -56,13 +56,22 @@ class InventoryKafkaProducer(
     }
     
     private fun buildMessage(event: Any, eventType: String, key: String): Message<Any> {
+        // Convert event data class to map for JSON serialization
+        val eventMap = objectMapper.convertValue(event, Map::class.java) as Map<String, Any>
+        
+        // Create event payload with type, eventId, and createdAt in the payload (consistent with catalog service)
+        val eventPayload = mutableMapOf<String, Any>(
+            "type" to eventType,
+            "eventId" to UUID.randomUUID().toString(),
+            "createdAt" to Instant.now().toString()
+        )
+        // Add all event fields to payload
+        eventPayload.putAll(eventMap)
+        
         return MessageBuilder
-            .withPayload(event)
+            .withPayload(eventPayload as Any)
             .setHeader(KafkaHeaders.TOPIC, eventsTopic)
             .setHeader(KafkaHeaders.KEY, key)
-            .setHeader("type", eventType)
-            .setHeader("eventId", UUID.randomUUID().toString())  // Changed from "id" to "eventId" (id is read-only)
-            .setHeader("eventTimestamp", Instant.now().toString())  // Changed from "timestamp" to "eventTimestamp" (timestamp is read-only)
             .build()
     }
 }
@@ -71,13 +80,19 @@ class InventoryKafkaProducer(
 data class StockCreatedEvent(
     val stockId: UUID,
     val productId: UUID,
-    val quantity: Int
+    val availableQuantity: Int,
+    val totalQuantity: Int,
+    val reservedQuantity: Int,
+    val allocatedQuantity: Int
 )
 
 data class StockUpdatedEvent(
     val stockId: UUID,
     val productId: UUID,
-    val newQuantity: Int
+    val availableQuantity: Int,
+    val totalQuantity: Int,
+    val reservedQuantity: Int,
+    val allocatedQuantity: Int
 )
 
 data class ReservationCreatedEvent(

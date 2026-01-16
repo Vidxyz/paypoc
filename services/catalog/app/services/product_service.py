@@ -1,13 +1,16 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import case
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 import logging
+import asyncio
 
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductUpdate, ProductListResponse
 from app.services.seller_service import SellerService
 from app.services import get_image_provider
+from app.services.inventory_client import get_inventory_client
 from app.kafka.producer import event_producer
 
 logger = logging.getLogger(__name__)
@@ -32,8 +35,13 @@ class ProductService:
             # Return empty list if conversion fails
             return []
     
-    def _product_to_response_dict(self, product: Product) -> dict:
-        """Convert Product model to dict with image URLs instead of IDs"""
+    def _product_to_response_dict(self, product: Product, inventory: Optional[dict] = None) -> dict:
+        """Convert Product model to dict with image URLs instead of IDs
+        
+        Args:
+            product: Product model instance
+            inventory: Optional inventory information dict
+        """
         product_dict = {
             "id": product.id,
             "seller_id": product.seller_id,
@@ -49,6 +57,11 @@ class ProductService:
             "created_at": product.created_at,
             "updated_at": product.updated_at,
         }
+        
+        # Add inventory if provided
+        if inventory:
+            product_dict["inventory"] = inventory
+        
         return product_dict
     
     def create_product(
@@ -109,13 +122,16 @@ class ProductService:
         
         return product
     
-    def list_seller_products(
+    async def list_seller_products(
         self,
         user_id: str,
         user_email: str,
-        status_filter: Optional[str] = None
-    ) -> List[Product]:
-        """List products for a specific seller"""
+        status_filter: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+        auth_token: Optional[str] = None  # Deprecated: kept for backward compatibility, not used for inventory
+    ) -> ProductListResponse:
+        """List products for a specific seller with pagination and inventory information"""
         try:
             logger.info(f"Getting seller_id for user_id: {user_id}, email: {user_email}")
             seller_id = self.seller_service.get_seller_id(user_id, user_email)
@@ -130,9 +146,43 @@ class ProductService:
                 logger.debug(f"Filtering by status: {status_filter}")
                 query = query.filter(Product.status == status_filter)
             
-            products = query.order_by(Product.created_at.desc()).all()
-            logger.info(f"Found {len(products)} products for seller_id: {seller_id}")
-            return products
+            # Get total count
+            total = query.count()
+            
+            # Apply pagination
+            products = query.order_by(Product.created_at.desc()).offset(
+                (page - 1) * page_size
+            ).limit(page_size).all()
+            
+            logger.info(f"Found {len(products)} products (page {page}, total: {total}) for seller_id: {seller_id}")
+            
+            # Fetch inventory for all products in batch (using internal API token)
+            inventory_map = {}
+            if products:
+                try:
+                    inventory_client = get_inventory_client()
+                    product_ids = [p.id for p in products]
+                    logger.debug(f"Fetching inventory for {len(product_ids)} products: {product_ids}")
+                    inventory_map = await inventory_client.get_stock_batch(product_ids)
+                    inventory_count = len([v for v in inventory_map.values() if v is not None])
+                    logger.info(f"Successfully fetched inventory for {inventory_count} out of {len(product_ids)} products")
+                except Exception as e:
+                    logger.error(f"Failed to fetch inventory information: {e}", exc_info=True)
+                    # Continue without inventory - it's optional
+            
+            # Build product response dicts with inventory
+            product_dicts = []
+            for product in products:
+                inventory = inventory_map.get(product.id)
+                product_dicts.append(self._product_to_response_dict(product, inventory))
+            
+            return ProductListResponse(
+                products=product_dicts,
+                total=total,
+                page=page,
+                page_size=page_size,
+                has_next=(page * page_size) < total
+            )
         except Exception as e:
             logger.error(f"Error in list_seller_products for user {user_email}: {e}", exc_info=True)
             raise
@@ -153,9 +203,16 @@ class ProductService:
         
         return query.order_by(Product.created_at.desc()).all()
     
-    def get_product_by_id(self, product_id: UUID) -> Product:
-        """Get a product by ID"""
-        product = self.db.query(Product).filter(
+    def get_product_by_id(self, product_id: UUID) -> dict:
+        """Get a product by ID with inventory from denormalized table"""
+        from sqlalchemy.orm import joinedload
+        from app.models.product_inventory import ProductInventory
+        
+        # Query product with inventory cache joined
+        product = self.db.query(Product).outerjoin(
+            ProductInventory,
+            Product.id == ProductInventory.product_id
+        ).options(joinedload(Product.inventory_cache)).filter(
             Product.id == product_id,
             Product.deleted_at.is_(None)
         ).first()
@@ -163,7 +220,19 @@ class ProductService:
         if not product:
             raise ValueError("Product not found")
         
-        return product
+        # Get inventory from denormalized table (if available)
+        inventory_data = None
+        if product.inventory_cache:
+            inv = product.inventory_cache
+            inventory_data = {
+                "inventory_id": None,  # Not stored in cache
+                "available_quantity": inv.available_quantity,
+                "total_quantity": inv.total_quantity,
+                "reserved_quantity": inv.reserved_quantity,
+                "allocated_quantity": inv.allocated_quantity,
+            }
+        
+        return self._product_to_response_dict(product, inventory_data)
     
     def update_product(
         self,
@@ -256,13 +325,14 @@ class ProductService:
         except Exception as e:
             logger.error(f"Failed to publish ProductDeletedEvent: {e}", exc_info=True)
     
-    def browse_products(
+    async     def browse_products(
         self,
         category_ids: Optional[List[UUID]] = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        sort_by: str = "newest"
     ) -> ProductListResponse:
-        """Browse products with pagination
+        """Browse products with pagination and inventory information
         
         If category_ids is provided (list of category UUIDs):
         - For each category: if it's a top-level category, includes products from that category and all its subcategories
@@ -300,13 +370,55 @@ class ProductService:
                 # No valid categories found, return empty results
                 query = query.filter(Product.category_id == UUID('00000000-0000-0000-0000-000000000000'))
         
-        total = query.count()
-        products = query.order_by(Product.created_at.desc()).offset(
-            (page - 1) * page_size
-        ).limit(page_size).all()
+        # Join with product_inventory for availability sorting and to include inventory in response
+        from app.models.product_inventory import ProductInventory
+        from sqlalchemy.orm import joinedload
         
-        # Convert products to response dicts with image URLs
-        product_dicts = [self._product_to_response_dict(product) for product in products]
+        # Always join to get inventory data in response (LEFT OUTER JOIN)
+        query = query.outerjoin(
+            ProductInventory,
+            Product.id == ProductInventory.product_id
+        ).options(joinedload(Product.inventory_cache))
+        
+        total = query.count()
+        
+        # Apply sorting
+        if sort_by == "availability":
+            # Database-level sorting: in-stock first (available_quantity > 0), then by quantity descending, then by creation date
+            # Use CASE to prioritize in-stock items, then sort by available_quantity DESC
+            query = query.order_by(
+                # In-stock products first (available_quantity > 0 gets 0, out-of-stock/null gets 1)
+                case(
+                    (ProductInventory.available_quantity > 0, 0),
+                    else_=1
+                ).asc(),
+                # Then by available quantity descending (higher quantity first)
+                ProductInventory.available_quantity.desc().nulls_last(),
+                # Then by creation date (newer first)
+                Product.created_at.desc()
+            )
+        else:
+            # Default: newest first
+            query = query.order_by(Product.created_at.desc())
+        
+        # Apply pagination
+        products = query.offset((page - 1) * page_size).limit(page_size).all()
+        
+        # Convert products to response dicts with image URLs and inventory
+        product_dicts = []
+        for product in products:
+            # Get inventory from joined table (if available) or None
+            inventory_data = None
+            if product.inventory_cache:
+                inv = product.inventory_cache
+                inventory_data = {
+                    "inventory_id": None,  # Not stored in cache
+                    "available_quantity": inv.available_quantity,
+                    "total_quantity": inv.total_quantity,
+                    "reserved_quantity": inv.reserved_quantity,
+                    "allocated_quantity": inv.allocated_quantity,
+                }
+            product_dicts.append(self._product_to_response_dict(product, inventory_data))
         
         return ProductListResponse(
             products=product_dicts,
@@ -315,4 +427,63 @@ class ProductService:
             page_size=page_size,
             has_next=(page * page_size) < total
         )
+    
+    async def sync_all_inventory(self) -> dict:
+        """Sync all inventory data from inventory service to catalog database
+        
+        This method fetches all active products and syncs their inventory
+        data from the inventory service into the denormalized product_inventory table.
+        
+        Returns:
+            dict with sync statistics (synced_count, total_products, products_without_inventory)
+        """
+        from app.models.product_inventory import ProductInventory
+        
+        # Get all active products
+        products = self.db.query(Product).filter(
+            Product.status == "ACTIVE",
+            Product.deleted_at.is_(None)
+        ).all()
+        
+        if not products:
+            logger.info("No active products found to sync")
+            return {
+                "synced_count": 0,
+                "total_products": 0,
+                "products_without_inventory": 0
+            }
+        
+        product_ids = [p.id for p in products]
+        logger.info(f"Syncing inventory for {len(product_ids)} active products...")
+        
+        # Fetch all inventory in batch
+        inventory_client = get_inventory_client()
+        inventory_map = await inventory_client.get_stock_batch(product_ids)
+        
+        # Upsert into product_inventory table
+        synced_count = 0
+        for product_id, inventory in inventory_map.items():
+            if inventory:
+                # Use merge to handle both insert and update
+                self.db.merge(ProductInventory(
+                    product_id=product_id,
+                    available_quantity=inventory.get("available_quantity", 0),
+                    total_quantity=inventory.get("total_quantity", 0),
+                    reserved_quantity=inventory.get("reserved_quantity", 0),
+                    allocated_quantity=inventory.get("allocated_quantity", 0),
+                ))
+                synced_count += 1
+        
+        self.db.commit()
+        products_without_inventory = len(product_ids) - synced_count
+        
+        logger.info(f"Successfully synced inventory for {synced_count} out of {len(product_ids)} products")
+        if products_without_inventory > 0:
+            logger.info(f"Note: {products_without_inventory} products have no inventory (this is normal)")
+        
+        return {
+            "synced_count": synced_count,
+            "total_products": len(product_ids),
+            "products_without_inventory": products_without_inventory
+        }
 

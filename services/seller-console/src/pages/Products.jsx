@@ -24,6 +24,7 @@ import {
   DialogActions,
   TextField,
   MenuItem,
+  TablePagination,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -42,6 +43,10 @@ function Products() {
   const [error, setError] = useState(null)
   const [inventoryData, setInventoryData] = useState({}) // productId -> inventory info
   const [inventoryLoading, setInventoryLoading] = useState({})
+  const [categories, setCategories] = useState({}) // categoryId -> category object
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(20)
+  const [totalProducts, setTotalProducts] = useState(0)
   
   // Inventory update dialog state
   const [inventoryDialogOpen, setInventoryDialogOpen] = useState(false)
@@ -60,30 +65,41 @@ function Products() {
         setError(null)
 
         const catalogApi = createCatalogApiClient(getAccessToken)
-        const productsData = await catalogApi.getProducts()
-        setProducts(productsData)
-
-        // Fetch inventory for each product
-        const inventoryApi = createInventoryApiClient(getAccessToken)
-        const inventoryPromises = productsData.map(async (product) => {
-          try {
-            const stock = await inventoryApi.getStockByProductId(product.id)
-            return { productId: product.id, stock }
-          } catch (err) {
-            // Product might not have inventory yet
-            return { productId: product.id, stock: null }
+        
+        // Fetch categories first (only once)
+        if (Object.keys(categories).length === 0) {
+          const categoriesData = await catalogApi.getCategories()
+          const categoryMap = {}
+          if (Array.isArray(categoriesData)) {
+            categoriesData.forEach(cat => {
+              categoryMap[cat.id] = cat
+            })
           }
+          setCategories(categoryMap)
+        }
+        
+        // Fetch products with pagination (page is 0-indexed in UI, 1-indexed in API)
+        const productsResponse = await catalogApi.getProducts({
+          page: page + 1,
+          page_size: rowsPerPage
         })
         
-        const inventoryResults = await Promise.all(inventoryPromises)
+        setProducts(productsResponse.products || [])
+        setTotalProducts(productsResponse.total || 0)
+
+        // Extract inventory from product responses (catalog service now includes it)
         const inventoryMap = {}
-        inventoryResults.forEach(({ productId, stock }) => {
-          inventoryMap[productId] = stock
+        const productsList = Array.isArray(productsResponse.products) ? productsResponse.products : []
+        productsList.forEach((product) => {
+          // Use product.id as string key to ensure consistent lookup
+          const productId = String(product.id)
+          if (product.inventory) {
+            inventoryMap[productId] = product.inventory
+          }
         })
         setInventoryData(inventoryMap)
 
         catalogApi.cleanup()
-        inventoryApi.cleanup()
       } catch (err) {
         console.error('Failed to fetch products:', err)
         setError(err.message || 'Failed to load products')
@@ -93,7 +109,8 @@ function Products() {
     }
 
     fetchProducts()
-  }, [isAuthenticated, getAccessToken])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, page, rowsPerPage])
 
   const handleAddProduct = () => {
     navigate('/products/new')
@@ -112,8 +129,14 @@ function Products() {
       const catalogApi = createCatalogApiClient(getAccessToken)
       await catalogApi.deleteProduct(productId)
       
-      // Remove from local state
-      setProducts(products.filter(p => p.id !== productId))
+      // Refresh products list
+      const productsResponse = await catalogApi.getProducts({
+        page: page + 1,
+        page_size: rowsPerPage
+      })
+      setProducts(productsResponse.products || [])
+      setTotalProducts(productsResponse.total || 0)
+      
       catalogApi.cleanup()
     } catch (err) {
       console.error('Failed to delete product:', err)
@@ -121,10 +144,20 @@ function Products() {
     }
   }
 
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage)
+  }
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10))
+    setPage(0) // Reset to first page when changing page size
+  }
+
   const handleOpenInventoryDialog = (product) => {
     setSelectedProduct(product)
-      const existingStock = inventoryData[product.id]
-      setStockQuantity(existingStock?.total_quantity || existingStock?.totalQuantity || 0)
+    const productId = String(product.id)
+    const existingStock = inventoryData[productId] || product.inventory
+    setStockQuantity(existingStock?.total_quantity ?? existingStock?.totalQuantity ?? 0)
     setStockSku(product.sku)
     setInventoryDialogOpen(true)
   }
@@ -143,36 +176,47 @@ function Products() {
       setInventoryLoading({ [selectedProduct.id]: true })
       const inventoryApi = createInventoryApiClient(getAccessToken)
       
-      // Try to get existing inventory first
-      let existingStock
-      try {
-        existingStock = await inventoryApi.getStockByProductId(selectedProduct.id)
-      } catch (err) {
-        // Product doesn't have inventory yet
-        existingStock = null
-      }
+      // Use existing inventory data from products response (no need to fetch again)
+      const productId = String(selectedProduct.id)
+      const existingStock = inventoryData[productId] || selectedProduct.inventory
+      let updatedStock
 
-      if (existingStock) {
+      if (existingStock && existingStock.inventory_id) {
         // Update existing stock
-        const currentTotal = existingStock.total_quantity || existingStock.totalQuantity || 0
+        const inventoryId = existingStock.inventory_id
+        const currentTotal = existingStock.total_quantity || 0
         const delta = stockQuantity - currentTotal
         if (delta !== 0) {
-          await inventoryApi.adjustStock(existingStock.id, delta)
+          updatedStock = await inventoryApi.adjustStock(inventoryId, delta)
+        } else {
+          // No change needed, use existing stock
+          updatedStock = existingStock
         }
       } else {
         // Create new stock
-        await inventoryApi.createOrUpdateStock(selectedProduct.id, {
+        updatedStock = await inventoryApi.createOrUpdateStock(selectedProduct.id, {
           sku: stockSku,
           quantity: stockQuantity
         })
       }
 
-      // Refresh inventory data
-      const updatedStock = await inventoryApi.getStockByProductId(selectedProduct.id)
-      setInventoryData(prev => ({
-        ...prev,
-        [selectedProduct.id]: updatedStock
-      }))
+      // Update inventory data with the response from the update operation
+      // The update operations return the full inventory object (camelCase from Kotlin service)
+      if (updatedStock) {
+        // Normalize the response format to match catalog service format (snake_case)
+        const normalizedStock = {
+          inventory_id: updatedStock.id || updatedStock.inventory_id,
+          available_quantity: updatedStock.availableQuantity ?? updatedStock.available_quantity ?? 0,
+          reserved_quantity: updatedStock.reservedQuantity ?? updatedStock.reserved_quantity ?? 0,
+          allocated_quantity: updatedStock.allocatedQuantity ?? updatedStock.allocated_quantity ?? 0,
+          total_quantity: updatedStock.totalQuantity ?? updatedStock.total_quantity ?? 0,
+          low_stock_threshold: updatedStock.lowStockThreshold ?? updatedStock.low_stock_threshold ?? null
+        }
+        setInventoryData(prev => ({
+          ...prev,
+          [productId]: normalizedStock
+        }))
+      }
 
       inventoryApi.cleanup()
       handleCloseInventoryDialog()
@@ -264,136 +308,199 @@ function Products() {
           </CardContent>
         </Card>
       ) : (
-        <TableContainer component={Paper} variant="outlined">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Image</TableCell>
-                <TableCell>Name</TableCell>
-                <TableCell>SKU</TableCell>
-                <TableCell>Price</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Stock</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {products.map((product) => {
-                const stock = inventoryData[product.id]
-                // Images are now full Cloudinary URLs directly from the API
-                const imageUrl = product.images && Array.isArray(product.images) && product.images.length > 0 
-                  ? product.images[0] 
-                  : null
-                
-                return (
-                  <TableRow key={product.id}>
-                    <TableCell>
-                      <Box
-                        sx={{
-                          width: 60,
-                          height: 60,
-                          borderRadius: 1,
-                          overflow: 'hidden',
-                          bgcolor: 'grey.200',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        {imageUrl ? (
-                          <Box
-                            component="img"
-                            src={imageUrl}
-                            alt={product.name}
-                            sx={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover',
-                            }}
-                            onError={(e) => {
-                              // On error, hide the image - the placeholder background will show
-                              e.target.style.display = 'none'
-                            }}
-                          />
-                        ) : null}
-                        {!imageUrl && (
-                          <Typography variant="caption" color="text.secondary">
-                            No Image
+        <Paper variant="outlined">
+          <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)' }}>
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Image</TableCell>
+                  <TableCell>Name</TableCell>
+                  <TableCell>SKU</TableCell>
+                  <TableCell>Category</TableCell>
+                  <TableCell>Price</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Stock</TableCell>
+                  <TableCell>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {products.map((product) => {
+                  // Use string key for consistent lookup
+                  const productId = String(product.id)
+                  const stock = inventoryData[productId] || product.inventory
+                  // Images are now full Cloudinary URLs directly from the API
+                  const imageUrl = product.images && Array.isArray(product.images) && product.images.length > 0 
+                    ? product.images[0] 
+                    : null
+                  
+                  // Get category information
+                  const category = product.category_id ? categories[product.category_id] : null
+                  
+                  return (
+                    <TableRow 
+                      key={product.id}
+                      onClick={() => handleEditProduct(product.id)}
+                      sx={{
+                        cursor: 'pointer',
+                        '&:hover': {
+                          backgroundColor: 'action.hover',
+                        },
+                      }}
+                    >
+                      <TableCell>
+                        <Box
+                          sx={{
+                            width: 60,
+                            height: 60,
+                            borderRadius: 1,
+                            overflow: 'hidden',
+                            bgcolor: 'grey.200',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {imageUrl ? (
+                            <Box
+                              component="img"
+                              src={imageUrl}
+                              alt={product.name}
+                              sx={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                              }}
+                              onError={(e) => {
+                                // On error, hide the image - the placeholder background will show
+                                e.target.style.display = 'none'
+                              }}
+                            />
+                          ) : null}
+                          {!imageUrl && (
+                            <Typography variant="caption" color="text.secondary">
+                              No Image
+                            </Typography>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography 
+                          variant="body2" 
+                          sx={{ 
+                            fontWeight: 'medium',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '300px',
+                          }}
+                          title={product.name}
+                        >
+                          {product.name}
+                        </Typography>
+                        {product.description && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            {product.description.substring(0, 50)}
+                            {product.description.length > 50 ? '...' : ''}
                           </Typography>
                         )}
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
-                        {product.name}
-                      </Typography>
-                      {product.description && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                          {product.description.substring(0, 50)}
-                          {product.description.length > 50 ? '...' : ''}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {product.sku}
                         </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                        {product.sku}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {formatAmount(product.price_cents, product.currency)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={product.status}
-                        color={getStatusColor(product.status)}
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {stock ? (
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {category ? (
+                          <Chip
+                            label={category.name}
+                            size="small"
+                            color="primary"
+                            variant="outlined"
+                            sx={{ 
+                              fontSize: '0.75rem',
+                              height: '24px',
+                              '& .MuiChip-label': {
+                                px: 1,
+                              }
+                            }}
+                          />
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">
+                            No category
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <Typography variant="body2">
-                          {stock.available_quantity || stock.availableQuantity || 0} available
+                          {formatAmount(product.price_cents, product.currency)}
                         </Typography>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          Not set
-                        </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <IconButton
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={product.status}
+                          color={getStatusColor(product.status)}
                           size="small"
-                          onClick={() => handleOpenInventoryDialog(product)}
-                          title="Update Inventory"
-                        >
-                          <InventoryIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleEditProduct(product.id)}
-                          title="Edit Product"
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleDeleteProduct(product.id)}
-                          title="Delete Product"
-                          color="error"
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {stock && (stock.available_quantity !== undefined || stock.total_quantity !== undefined) ? (
+                          <Typography variant="body2">
+                            {stock.available_quantity ?? stock.availableQuantity ?? 0} available
+                            {stock.total_quantity !== undefined && (
+                              <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                Total: {stock.total_quantity ?? stock.totalQuantity ?? 0}
+                              </Typography>
+                            )}
+                          </Typography>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Not set
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleOpenInventoryDialog(product)}
+                            title="Update Inventory"
+                          >
+                            <InventoryIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleEditProduct(product.id)}
+                            title="Edit Product"
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleDeleteProduct(product.id)}
+                            title="Delete Product"
+                            color="error"
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <TablePagination
+            component="div"
+            count={totalProducts}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            rowsPerPageOptions={[10, 20, 50, 100]}
+            labelRowsPerPage="Rows per page:"
+          />
+        </Paper>
       )}
 
       {/* Inventory Update Dialog */}

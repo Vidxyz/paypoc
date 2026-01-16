@@ -59,11 +59,13 @@ export const createCatalogApiClient = (getAccessToken) => {
      * Get seller's products
      * @param {Object} options - Query options
      * @param {string} options.status - Filter by status (DRAFT, ACTIVE, INACTIVE)
-     * @returns {Promise<Array>} Array of products
+     * @param {number} options.page - Page number (1-indexed, default: 1)
+     * @param {number} options.page_size - Number of items per page (default: 20)
+     * @returns {Promise<Object>} Paginated response with products, total, page, page_size, has_next
      */
     getProducts: async (options = {}) => {
-      const { status } = options
-      const params = {}
+      const { status, page = 1, page_size = 20 } = options
+      const params = { page, page_size }
       if (status) {
         params.status = status
       }

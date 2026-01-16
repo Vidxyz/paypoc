@@ -10,18 +10,77 @@ import {
   Grid,
   Paper,
   Chip,
+  Breadcrumbs,
+  Link,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos'
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
-import { useState } from 'react'
+import NavigateNextIcon from '@mui/icons-material/NavigateNext'
+import HomeIcon from '@mui/icons-material/Home'
+import { useState, useEffect } from 'react'
 import { useCart } from '../context/CartContext'
+import { useNavigate } from 'react-router-dom'
+import { useAuth0 } from '../auth/Auth0Provider'
+import { catalogApiClient } from '../api/catalogApi'
 
 function ProductModal({ open, onClose, product }) {
+  const navigate = useNavigate()
+  const { isAuthenticated, getAccessToken } = useAuth0()
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [quantity, setQuantity] = useState(1)
+  const [categoryBreadcrumbs, setCategoryBreadcrumbs] = useState([])
+  const [loadingCategory, setLoadingCategory] = useState(false)
   const { addToCart, isInCart, getQuantity } = useCart()
+
+  // Load category breadcrumbs when product changes
+  useEffect(() => {
+    const loadCategoryBreadcrumbs = async () => {
+      if (!product?.category_id || !isAuthenticated) {
+        setCategoryBreadcrumbs([])
+        return
+      }
+
+      setLoadingCategory(true)
+      try {
+        const token = await getAccessToken()
+        const categories = await catalogApiClient.getCategories(token)
+        const categoryMap = new Map()
+        // Store all categories with string keys for consistent lookup
+        categories.forEach(cat => {
+          categoryMap.set(String(cat.id), cat)
+        })
+
+        // Build breadcrumb path
+        const breadcrumbs = []
+        let currentCategoryId = String(product.category_id)
+        let currentCategory = categoryMap.get(currentCategoryId)
+        
+        // Traverse up the hierarchy to build breadcrumbs
+        while (currentCategory) {
+          breadcrumbs.unshift(currentCategory) // Add to beginning
+          if (currentCategory.parent_id) {
+            currentCategoryId = String(currentCategory.parent_id)
+            currentCategory = categoryMap.get(currentCategoryId)
+          } else {
+            break
+          }
+        }
+
+        setCategoryBreadcrumbs(breadcrumbs)
+      } catch (err) {
+        console.warn('Failed to load category breadcrumbs:', err)
+        setCategoryBreadcrumbs([])
+      } finally {
+        setLoadingCategory(false)
+      }
+    }
+
+    if (open && product) {
+      loadCategoryBreadcrumbs()
+    }
+  }, [open, product?.category_id, product?.id, isAuthenticated, getAccessToken])
 
   if (!product) return null
 
@@ -30,6 +89,17 @@ function ProductModal({ open, onClose, product }) {
   const price = (product.price_cents / 100).toFixed(2)
   const inCart = isInCart(product.id)
   const cartQuantity = getQuantity(product.id)
+  // Check if product is out of stock (treat null inventory as 0)
+  const availableQty = product.inventory?.available_quantity ?? product.inventory?.availableQuantity ?? 0
+  const isOutOfStock = availableQty <= 0
+
+  const handleCategoryClick = (categoryId) => {
+    onClose()
+    // Navigate to home with category filter applied
+    // Convert to string to ensure consistency
+    const categoryIdStr = categoryId ? String(categoryId) : null
+    navigate('/', { state: { categoryId: categoryIdStr } })
+  }
 
   const handlePreviousImage = () => {
     setCurrentImageIndex((prev) => (prev === 0 ? images.length - 1 : prev - 1))
@@ -69,13 +139,65 @@ function ProductModal({ open, onClose, product }) {
         },
       }}
     >
-      <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h5" component="div">
-          {product.name}
-        </Typography>
-        <IconButton onClick={handleClose} size="small">
-          <CloseIcon />
-        </IconButton>
+      <DialogTitle>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+          <Box sx={{ flex: 1 }}>
+            {categoryBreadcrumbs.length > 0 && (
+              <Breadcrumbs
+                separator={<NavigateNextIcon fontSize="small" />}
+                sx={{ mb: 1 }}
+                aria-label="category breadcrumb"
+              >
+                <Link
+                  component="button"
+                  variant="body2"
+                  onClick={() => handleCategoryClick(null)}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                    color: 'text.secondary',
+                    textDecoration: 'none',
+                    '&:hover': {
+                      textDecoration: 'underline',
+                      color: 'primary.main',
+                    },
+                    cursor: 'pointer',
+                  }}
+                >
+                  <HomeIcon fontSize="small" />
+                  All Products
+                </Link>
+                {categoryBreadcrumbs.map((category, index) => (
+                  <Link
+                    key={category.id}
+                    component="button"
+                    variant="body2"
+                    onClick={() => handleCategoryClick(category.id)}
+                    sx={{
+                      color: index === categoryBreadcrumbs.length - 1 ? 'text.primary' : 'text.secondary',
+                      textDecoration: 'none',
+                      fontWeight: index === categoryBreadcrumbs.length - 1 ? 600 : 400,
+                      '&:hover': {
+                        textDecoration: 'underline',
+                        color: 'primary.main',
+                      },
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {category.name}
+                  </Link>
+                ))}
+              </Breadcrumbs>
+            )}
+            <Typography variant="h5" component="div">
+              {product.name}
+            </Typography>
+          </Box>
+          <IconButton onClick={handleClose} size="small" sx={{ ml: 2 }}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
       </DialogTitle>
 
       <DialogContent dividers>
@@ -247,30 +369,48 @@ function ProductModal({ open, onClose, product }) {
 
               {/* Add to Cart Section */}
               <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 2, mt: 'auto' }}>
-                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
-                  <TextField
-                    label="Quantity"
-                    type="number"
-                    value={quantity}
-                    onChange={handleQuantityChange}
-                    inputProps={{ min: 1 }}
-                    sx={{ width: 100 }}
-                    size="small"
-                  />
-                  <Button
-                    variant="contained"
-                    startIcon={<ShoppingCartIcon />}
-                    onClick={handleAddToCart}
-                    fullWidth
-                    size="large"
-                  >
-                    {inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart'}
-                  </Button>
-                </Box>
-                {inCart && (
-                  <Typography variant="body2" color="success.main" sx={{ textAlign: 'center' }}>
-                    ✓ {cartQuantity} item{cartQuantity > 1 ? 's' : ''} in your cart
-                  </Typography>
+                {isOutOfStock ? (
+                  <Box sx={{ textAlign: 'center', py: 2 }}>
+                    <Chip
+                      label="Out of Stock"
+                      color="error"
+                      sx={{ mb: 2, fontWeight: 600 }}
+                    />
+                    <Typography variant="body2" color="text.secondary">
+                      This product is currently unavailable
+                    </Typography>
+                  </Box>
+                ) : (
+                  <>
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+                      <TextField
+                        label="Quantity"
+                        type="number"
+                        value={quantity}
+                        onChange={handleQuantityChange}
+                        inputProps={{ min: 1, max: availableQty }}
+                        sx={{ width: 100 }}
+                        size="small"
+                        helperText={availableQty > 0 ? `${availableQty} available` : ''}
+                        disabled={isOutOfStock}
+                      />
+                      <Button
+                        variant="contained"
+                        startIcon={<ShoppingCartIcon />}
+                        onClick={handleAddToCart}
+                        fullWidth
+                        size="large"
+                        disabled={isOutOfStock || quantity > availableQty}
+                      >
+                        {inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart'}
+                      </Button>
+                    </Box>
+                    {inCart && (
+                      <Typography variant="body2" color="success.main" sx={{ textAlign: 'center', mt: 1 }}>
+                        ✓ {cartQuantity} item{cartQuantity > 1 ? 's' : ''} in your cart
+                      </Typography>
+                    )}
+                  </>
                 )}
               </Box>
             </Box>

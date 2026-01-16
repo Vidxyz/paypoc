@@ -170,5 +170,57 @@ export const getChargeback = async (chargebackId) => {
   return response.data
 }
 
+// Catalog service endpoints (for inventory sync)
+const CATALOG_API_BASE_URL = import.meta.env.VITE_CATALOG_API_BASE_URL || 'https://catalog.local'
+
+// Create a separate axios instance for catalog service with token handling
+const catalogApi = axios.create({
+  baseURL: CATALOG_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// Add request interceptor to include bearer token for catalog API
+catalogApi.interceptors.request.use(
+  async (config) => {
+    let token = localStorage.getItem('bearerToken')
+    
+    // If no token in localStorage and we have an Auth0 client, try to get a fresh token
+    if (!token && auth0ClientRef) {
+      try {
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
+        const tokenResponse = await auth0ClientRef.getTokenSilently({ 
+          detailedResponse: true,
+          authorizationParams: {
+            audience: audience
+          }
+        })
+        token = tokenResponse.access_token
+        if (!token) {
+          throw new Error('No access token received from Auth0')
+        }
+        localStorage.setItem('bearerToken', token)
+      } catch (error) {
+        console.error('Error getting access token from Auth0:', error)
+      }
+    }
+    
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// Sync inventory endpoint (ADMIN only)
+export const syncInventory = async () => {
+  const response = await catalogApi.post('/api/catalog/products/sync-inventory')
+  return response.data
+}
+
 export default adminApi
 

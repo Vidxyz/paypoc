@@ -1,30 +1,70 @@
-# Binaries
-order-service
+# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary
+# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Dependency directories
+# Dependency directories (remove the comment to also ignore vendor directories)
 vendor/
 
 # Go workspace file
 go.work
+go.work.sum
 
-# IDE
+# Build output
+/bin/
+/build/
+/dist/
+order-service
+order-service.exe
+
+# Go module cache (if using local cache)
+.cache/
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IDE - GoLand
 .idea/
-.vscode/
+
+# Editor backup files
 *.swp
 *.swo
 *~
+*.bak
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Air (live reload tool) tmp directory
+tmp/

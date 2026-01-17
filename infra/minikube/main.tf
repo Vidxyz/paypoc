@@ -129,3 +129,11 @@ module "redis" {
   redis_cpu_limit     = var.redis_cpu_limit
 }
 
+# Module for Prometheus monitoring stack
+module "prometheus" {
+  source = "./modules/prometheus"
+
+  namespace              = var.prometheus_namespace
+  chart_version          = var.prometheus_chart_version
+  grafana_admin_password = var.grafana_admin_password
+}

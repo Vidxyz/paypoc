@@ -94,6 +94,13 @@ infra/minikube/
 - Persistent storage (1Gi)
 - Resource limits appropriate for minikube
 
+### Prometheus Monitoring Stack
+- Installs kube-prometheus-stack via Helm (includes Prometheus, Grafana, node-exporter, kube-state-metrics)
+- Automatically scrapes pod metrics (CPU, memory) from all namespaces
+- Grafana exposed on NodePort 30000
+- Prometheus accessible via port-forward or service
+- Resource limits appropriate for minikube
+
 ## Accessing KOWL UI
 
 After deployment, access KOWL UI at:
@@ -105,6 +112,54 @@ Or manually:
 ```bash
 MINIKUBE_IP=$(minikube ip)
 echo "KOWL UI: http://$MINIKUBE_IP:30080"
+```
+
+## Accessing Prometheus and Grafana
+
+### Grafana (Monitoring Dashboards)
+Grafana is exposed on NodePort 30000:
+```bash
+http://$(minikube ip):30000
+```
+
+**Default credentials:**
+- Username: `admin`
+- Password: `admin` (or value from `grafana_admin_password` variable)
+
+**Viewing Pod Resource Usage:**
+1. Log into Grafana
+2. Go to **Dashboards** → **Browse**
+3. Use pre-built dashboards like:
+   - **Kubernetes / Compute Resources / Pod** - Shows CPU and memory usage per pod
+   - **Kubernetes / Compute Resources / Namespace** - Shows resource usage by namespace
+   - **Node Exporter / Nodes** - Shows node-level metrics
+
+Or create a custom dashboard:
+- Go to **Dashboards** → **New** → **Add visualization**
+- Use Prometheus queries like:
+  - CPU usage: `rate(container_cpu_usage_seconds_total{namespace="payments-platform"}[5m])`
+  - Memory usage: `container_memory_working_set_bytes{namespace="payments-platform"}`
+
+### Prometheus (Metrics Database)
+Access Prometheus UI via port-forward:
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+```
+
+Then open: http://localhost:9090
+
+**Useful Prometheus queries for pod resources:**
+- CPU usage per pod: `rate(container_cpu_usage_seconds_total{namespace="payments-platform"}[5m])`
+- Memory usage per pod: `container_memory_working_set_bytes{namespace="payments-platform"}`
+- CPU requests: `kube_pod_container_resource_requests{resource="cpu",namespace="payments-platform"}`
+- Memory requests: `kube_pod_container_resource_requests{resource="memory",namespace="payments-platform"}`
+- CPU limits: `kube_pod_container_resource_limits{resource="cpu",namespace="payments-platform"}`
+- Memory limits: `kube_pod_container_resource_limits{resource="memory",namespace="payments-platform"}`
+
+**Get Prometheus URL from Terraform:**
+```bash
+terraform output prometheus_service_url
+terraform output grafana_service_url
 ```
 
 ## Kafka Bootstrap Servers

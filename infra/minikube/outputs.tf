@@ -53,4 +53,24 @@ output "redis_namespace" {
   value       = kubernetes_namespace.redis.metadata[0].name
 }
 
+output "prometheus_namespace" {
+  description = "Kubernetes namespace where Prometheus is deployed"
+  value       = module.prometheus.namespace
+}
+
+output "prometheus_service_url" {
+  description = "Prometheus service URL"
+  value       = module.prometheus.prometheus_service_url
+}
+
+output "grafana_service_url" {
+  description = "Grafana service URL (NodePort on minikube)"
+  value       = module.prometheus.grafana_service_url
+}
+
+output "prometheus_ready" {
+  description = "Confirmation that Prometheus is ready"
+  value       = module.prometheus.prometheus_ready
+}
+
 

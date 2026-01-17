@@ -61,6 +61,11 @@ spec:
             secretKeyRef:
               name: payments-secrets
               key: AUTH0_AUDIENCE
+        - name: INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: payments-secrets
+              key: INTERNAL_API_TOKEN
         - name: SPRING_CONFIG_LOCATION
           value: "classpath:/application.yml,file:/config/application.yml"
         volumeMounts:
@@ -69,11 +74,11 @@ spec:
           readOnly: true
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "192Mi"
+            cpu: "150m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "384Mi"
+            cpu: "375m"
         livenessProbe:
           httpGet:
             path: /healthz

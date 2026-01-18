@@ -51,12 +51,26 @@ class PaymentCapturedEventConsumer(
         acknowledgment: Acknowledgment
     ) {
         logger.info("=== PaymentCapturedEventConsumer.handlePaymentCapturedEvent CALLED ===")
+        logger.info("Message keys: ${message.keys.joinToString(", ")}")
+        logger.info("Message contains sellerId: ${message.containsKey("sellerId")}")
+        logger.info("Message contains sellerBreakdown: ${message.containsKey("sellerBreakdown")}")
+        if (message.containsKey("sellerBreakdown")) {
+            logger.info("sellerBreakdown type: ${message["sellerBreakdown"]?.javaClass?.name}")
+            logger.info("sellerBreakdown value: ${message["sellerBreakdown"]}")
+        }
+        
+        // Remove any old sellerId field if present (from old message format)
+        val cleanedMessage = message.toMutableMap().apply {
+            remove("sellerId")  // Remove if present - we use sellerBreakdown now
+        }
         
         // Deserialize to PaymentCapturedEvent
         val event = try {
-            objectMapper.convertValue(message, PaymentCapturedEvent::class.java)
+            objectMapper.convertValue(cleanedMessage, PaymentCapturedEvent::class.java)
         } catch (e: Exception) {
             logger.error("Failed to deserialize PAYMENT_CAPTURED event: ${e.message}", e)
+            logger.error("Message content: $message")
+            logger.error("Cleaned message content: $cleanedMessage")
             // Don't acknowledge - message will be retried
             throw e
         }

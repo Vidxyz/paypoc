@@ -38,6 +38,7 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
 function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
   const stripe = useStripe()
   const elements = useElements()
+  const { user } = useAuth0()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [deliveryInfo, setDeliveryInfo] = useState({
@@ -69,10 +70,30 @@ function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
       return
     }
 
+    // Validate email - must be a valid email, not a UUID or other invalid value
+    const userEmail = user?.email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!userEmail || !emailRegex.test(userEmail)) {
+      console.error('Invalid email from Auth0 user:', userEmail, 'User object:', user)
+      setError('Valid email address is required for payment. Please ensure you are logged in with a valid email.')
+      setLoading(false)
+      return
+    }
+
     try {
       const cardElement = elements.getElement(CardElement)
       if (!cardElement) {
         throw new Error('Card element not found')
+      }
+
+      // Build minimal billing_details - only email is required
+      const billingDetails = {
+        email: userEmail,
+      }
+      
+      // Optionally include name if available
+      if (user?.name) {
+        billingDetails.name = user.name
       }
 
       const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
@@ -80,18 +101,7 @@ function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
         {
           payment_method: {
             card: cardElement,
-            billing_details: {
-              name: deliveryInfo.fullName || buyerId,
-              email: buyerId,
-              address: {
-                line1: deliveryInfo.address,
-                city: deliveryInfo.city,
-                state: deliveryInfo.province,
-                postal_code: deliveryInfo.postalCode,
-                country: deliveryInfo.country === 'Canada' ? 'CA' : deliveryInfo.country,
-              },
-              phone: deliveryInfo.phone || undefined,
-            },
+            billing_details: billingDetails,
           },
         }
       )

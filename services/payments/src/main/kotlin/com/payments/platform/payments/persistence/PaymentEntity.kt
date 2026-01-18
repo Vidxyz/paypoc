@@ -17,11 +17,11 @@ class PaymentEntity(
     @Column(name = "id")
     val id: UUID,
     
+    @Column(name = "order_id", nullable = false)
+    val orderId: UUID,
+    
     @Column(name = "buyer_id", nullable = false)
     val buyerId: String,
-    
-    @Column(name = "seller_id", nullable = false)
-    val sellerId: String,
     
     @Column(name = "gross_amount_cents", nullable = false)
     val grossAmountCents: Long,
@@ -34,6 +34,11 @@ class PaymentEntity(
     
     @Column(name = "currency", nullable = false)
     val currency: String,
+    
+    @Convert(converter = SellerBreakdownConverter::class)
+    @org.hibernate.annotations.ColumnTransformer(write = "?::jsonb")
+    @Column(name = "seller_breakdown", nullable = false, columnDefinition = "JSONB")
+    val sellerBreakdown: List<com.payments.platform.payments.domain.SellerBreakdown>,
     
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false)
@@ -60,12 +65,13 @@ class PaymentEntity(
     // JPA requires no-arg constructor
     constructor() : this(
         id = UUID.randomUUID(),
+        orderId = UUID.randomUUID(),
         buyerId = "",
-        sellerId = "",
         grossAmountCents = 0,
         platformFeeCents = 0,
         netSellerAmountCents = 0,
         currency = "",
+        sellerBreakdown = emptyList(),
         state = PaymentState.CREATED,
         stripePaymentIntentId = null,
         ledgerTransactionId = null,
@@ -78,12 +84,13 @@ class PaymentEntity(
     fun toDomain(): Payment {
         return Payment(
             id = id,
+            orderId = orderId,
             buyerId = buyerId,
-            sellerId = sellerId,
             grossAmountCents = grossAmountCents,
             platformFeeCents = platformFeeCents,
             netSellerAmountCents = netSellerAmountCents,
             currency = currency,
+            sellerBreakdown = sellerBreakdown,
             state = state,
             stripePaymentIntentId = stripePaymentIntentId,
             ledgerTransactionId = ledgerTransactionId,
@@ -98,12 +105,13 @@ class PaymentEntity(
         fun fromDomain(payment: Payment): PaymentEntity {
             return PaymentEntity(
                 id = payment.id,
+                orderId = payment.orderId,
                 buyerId = payment.buyerId,
-                sellerId = payment.sellerId,
                 grossAmountCents = payment.grossAmountCents,
                 platformFeeCents = payment.platformFeeCents,
                 netSellerAmountCents = payment.netSellerAmountCents,
                 currency = payment.currency,
+                sellerBreakdown = payment.sellerBreakdown,
                 state = payment.state,
                 stripePaymentIntentId = payment.stripePaymentIntentId,
                 ledgerTransactionId = payment.ledgerTransactionId,

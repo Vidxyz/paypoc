@@ -70,17 +70,26 @@ class PaymentCapturedEventConsumer(
             require(event.grossAmountCents == event.platformFeeCents + event.netSellerAmountCents) {
                 "Fee calculation error: grossAmount != platformFee + netSellerAmount"
             }
+            require(event.sellerBreakdown.isNotEmpty()) { "Seller breakdown cannot be empty" }
+            
+            // Validate seller breakdown sums match totals
+            val totalSellerGross = event.sellerBreakdown.sumOf { it.sellerGrossAmountCents }
+            val totalSellerPlatformFee = event.sellerBreakdown.sumOf { it.platformFeeCents }
+            val totalSellerNet = event.sellerBreakdown.sumOf { it.netSellerAmountCents }
+            require(totalSellerGross == event.grossAmountCents) {
+                "Seller breakdown gross sum ($totalSellerGross) must equal total gross (${event.grossAmountCents})"
+            }
+            require(totalSellerPlatformFee == event.platformFeeCents) {
+                "Seller breakdown platform fee sum ($totalSellerPlatformFee) must equal total platform fee (${event.platformFeeCents})"
+            }
+            require(totalSellerNet == event.netSellerAmountCents) {
+                "Seller breakdown net sum ($totalSellerNet) must equal total net (${event.netSellerAmountCents})"
+            }
             
             // Get or create accounts
             val stripeClearingAccount = getOrCreateAccount(
                 accountType = AccountType.STRIPE_CLEARING,
                 referenceId = null,
-                currency = event.currency
-            )
-            
-            val sellerPayableAccount = getOrCreateAccount(
-                accountType = AccountType.SELLER_PAYABLE,
-                referenceId = event.sellerId,
                 currency = event.currency
             )
             
@@ -90,27 +99,46 @@ class PaymentCapturedEventConsumer(
                 currency = event.currency
             )
             
+            // Get or create SELLER_PAYABLE account for each seller
+            val sellerPayableAccounts = event.sellerBreakdown.map { seller ->
+                seller.sellerId to getOrCreateAccount(
+                    accountType = AccountType.SELLER_PAYABLE,
+                    referenceId = seller.sellerId,
+                    currency = event.currency
+                )
+            }.toMap()
+            
             // Create double-entry transaction
-            // DR STRIPE_CLEARING (money received from Stripe)
-            // CR SELLER_PAYABLE (money owed to seller)
-            // CR BUYIT_REVENUE (platform commission)
-            val transactionRequest = CreateDoubleEntryTransactionRequest(
-                referenceId = event.stripePaymentIntentId,  // External reference (Stripe PaymentIntent ID)
-                idempotencyKey = event.idempotencyKey,
-                description = "Payment capture: ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId}",
-                entries = listOf(
+            // DR STRIPE_CLEARING (money received from Stripe - total gross)
+            // CR SELLER_PAYABLE per seller (money owed to each seller - their net amount)
+            // CR BUYIT_REVENUE (platform commission - total platform fee)
+            val entries = mutableListOf<EntryRequest>().apply {
+                // DEBIT: STRIPE_CLEARING (total gross)
+                add(
                     EntryRequest(
                         accountId = stripeClearingAccount.id,
                         direction = EntryDirection.DEBIT,
                         amountCents = event.grossAmountCents,
                         currency = event.currency
-                    ),
-                    EntryRequest(
-                        accountId = sellerPayableAccount.id,
-                        direction = EntryDirection.CREDIT,
-                        amountCents = event.netSellerAmountCents,
-                        currency = event.currency
-                    ),
+                    )
+                )
+                
+                // CREDIT: SELLER_PAYABLE for each seller
+                event.sellerBreakdown.forEach { seller ->
+                    val sellerAccount = sellerPayableAccounts[seller.sellerId]
+                        ?: throw IllegalStateException("Failed to get/create account for seller ${seller.sellerId}")
+                    add(
+                        EntryRequest(
+                            accountId = sellerAccount.id,
+                            direction = EntryDirection.CREDIT,
+                            amountCents = seller.netSellerAmountCents,
+                            currency = event.currency
+                        )
+                    )
+                }
+                
+                // CREDIT: BUYIT_REVENUE (total platform fee)
+                add(
                     EntryRequest(
                         accountId = buyitRevenueAccount.id,
                         direction = EntryDirection.CREDIT,
@@ -118,15 +146,26 @@ class PaymentCapturedEventConsumer(
                         currency = event.currency
                     )
                 )
+            }
+            
+            val sellerIds = event.sellerBreakdown.joinToString(", ") { it.sellerId }
+            val transactionRequest = CreateDoubleEntryTransactionRequest(
+                referenceId = event.stripePaymentIntentId,  // External reference (Stripe PaymentIntent ID)
+                idempotencyKey = event.idempotencyKey,
+                description = "Payment capture: ${event.paymentId} (order: ${event.orderId}) - Buyer: ${event.buyerId}, Sellers: $sellerIds",
+                entries = entries
             )
             
             // Create transaction (atomic, balanced, idempotent)
             val transaction = ledgerService.createDoubleEntryTransaction(transactionRequest)
             
+            val sellerCredits = event.sellerBreakdown.joinToString(", ") { 
+                "${it.sellerId}: ${it.netSellerAmountCents}" 
+            }
             logger.info(
-                "Created ledger transaction ${transaction.id} for payment ${event.paymentId}. " +
+                "Created ledger transaction ${transaction.id} for payment ${event.paymentId} (order: ${event.orderId}). " +
                 "DR STRIPE_CLEARING: ${event.grossAmountCents}, " +
-                "CR SELLER_PAYABLE: ${event.netSellerAmountCents}, " +
+                "CR SELLER_PAYABLE: [$sellerCredits], " +
                 "CR BUYIT_REVENUE: ${event.platformFeeCents}"
             )
             

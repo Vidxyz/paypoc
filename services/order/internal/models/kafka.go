@@ -35,3 +35,50 @@ type OrderConfirmedEvent struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	Type       string    `json:"type"`
 }
+
+// RefundCompletedEvent represents the Kafka event when a refund is completed
+type RefundCompletedEvent struct {
+	Type                   string                  `json:"type"`
+	RefundID               uuid.UUID               `json:"refundId"`
+	PaymentID              uuid.UUID               `json:"paymentId"`
+	OrderID                uuid.UUID               `json:"orderId"`
+	RefundAmountCents      int64                   `json:"refundAmountCents"`
+	PlatformFeeRefundCents int64                   `json:"platformFeeRefundCents"`
+	NetSellerRefundCents   int64                   `json:"netSellerRefundCents"`
+	Currency               string                  `json:"currency"`
+	StripeRefundID         string                  `json:"stripeRefundId"`
+	StripePaymentIntentID  string                  `json:"stripePaymentIntentId"`
+	IdempotencyKey         string                  `json:"idempotencyKey"`
+	BuyerID                string                  `json:"buyerId"`
+	SellerRefundBreakdown  []SellerRefundBreakdown `json:"sellerRefundBreakdown"`
+	OrderItemsRefunded     []OrderItemRefundInfo   `json:"orderItemsRefunded"`
+}
+
+// SellerRefundBreakdown represents a seller's refund breakdown
+type SellerRefundBreakdown struct {
+	SellerID               string `json:"sellerId"`
+	RefundAmountCents      int64  `json:"refundAmountCents"`
+	PlatformFeeRefundCents int64  `json:"platformFeeRefundCents"`
+	NetSellerRefundCents   int64  `json:"netSellerRefundCents"`
+}
+
+// OrderItemRefundInfo represents an order item that was refunded
+type OrderItemRefundInfo struct {
+	OrderItemID uuid.UUID `json:"orderItemId"`
+	Quantity    int       `json:"quantity"`
+	SellerID    string    `json:"sellerId"`
+	PriceCents  int64     `json:"priceCents"`
+}
+
+// RefundedOrderItem represents a refunded order item in the audit trail
+type RefundedOrderItem struct {
+	ID          uuid.UUID
+	RefundID    uuid.UUID
+	OrderID     uuid.UUID
+	OrderItemID uuid.UUID
+	Quantity    int
+	PriceCents  int64
+	SellerID    string
+	RefundedAt  time.Time
+	CreatedAt   time.Time
+}

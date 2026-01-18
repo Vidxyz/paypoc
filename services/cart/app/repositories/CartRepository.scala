@@ -74,12 +74,22 @@ class CartRepository @Inject()(
     db.withConnection { implicit conn =>
       val now = Instant.now()
       items.foreach { item =>
-        SQL"""
-          INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
-          VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
-                  ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
-                  ${item.reservationId.map(_.toString)}, $now)
-        """.execute()
+        item.reservationId match {
+          case Some(reservationId) =>
+            SQL"""
+              INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
+              VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
+                      ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
+                      CAST(${reservationId.toString} AS uuid), $now)
+            """.execute()
+          case None =>
+            SQL"""
+              INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
+              VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
+                      ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
+                      NULL, $now)
+            """.execute()
+        }
       }
     }
   }

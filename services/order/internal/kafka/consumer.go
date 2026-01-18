@@ -63,12 +63,19 @@ func (c *KafkaConsumer) processMessage(ctx context.Context, data []byte) error {
 		return fmt.Errorf("failed to parse event type: %w", err)
 	}
 
-	// Only process PaymentCapturedEvent
-	if eventType.Type != "PAYMENT_CAPTURED" {
+	// Route to appropriate handler based on event type
+	switch eventType.Type {
+	case "PAYMENT_CAPTURED":
+		return c.handlePaymentCaptured(ctx, data)
+	case "REFUND_COMPLETED":
+		return c.handleRefundCompleted(ctx, data)
+	default:
 		log.Printf("Skipping event type: %s", eventType.Type)
 		return nil
 	}
+}
 
+func (c *KafkaConsumer) handlePaymentCaptured(ctx context.Context, data []byte) error {
 	// Parse PaymentCapturedEvent
 	var event models.PaymentCapturedEvent
 	if err := json.Unmarshal(data, &event); err != nil {
@@ -83,6 +90,24 @@ func (c *KafkaConsumer) processMessage(ctx context.Context, data []byte) error {
 	}
 
 	log.Printf("Successfully confirmed order for payment %s", event.PaymentID)
+	return nil
+}
+
+func (c *KafkaConsumer) handleRefundCompleted(ctx context.Context, data []byte) error {
+	// Parse RefundCompletedEvent
+	var event models.RefundCompletedEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return fmt.Errorf("failed to parse RefundCompletedEvent: %w", err)
+	}
+
+	log.Printf("Processing RefundCompletedEvent for refund %s (order: %s)", event.RefundID, event.OrderID)
+
+	// Process refund
+	if err := c.orderService.ProcessRefund(ctx, event); err != nil {
+		return fmt.Errorf("failed to process refund: %w", err)
+	}
+
+	log.Printf("Successfully processed refund %s for order %s", event.RefundID, event.OrderID)
 	return nil
 }
 

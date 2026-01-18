@@ -6,7 +6,7 @@ import javax.inject.Inject
 import models.{AccountType, Cart, CartEntity, CartItem, CartItemEntity, CartStatus}
 import play.api.Configuration
 import play.api.Logger
-import play.api.libs.json.{Json, JsValue}
+import play.api.libs.json.{Json, JsNull, JsValue}
 import play.api.libs.ws.WSClient
 import repositories.CartRepository
 import scala.concurrent.{ExecutionContext, Future}
@@ -23,10 +23,17 @@ class CartService @Inject()(
   private val inventoryServiceUrl = config.getOptional[String]("inventory.service.url").getOrElse("http://inventory-service.inventory.svc.cluster.local:8083")
   private val inventoryInternalApiToken = config.getOptional[String]("inventory.service.internal.api.token")
   private val catalogServiceUrl = config.getOptional[String]("catalog.service.url").getOrElse("http://catalog-service.catalog.svc.cluster.local:8082")
+  private val orderServiceUrl = config.getOptional[String]("order.service.url").getOrElse("http://order-service.order.svc.cluster.local:8084")
+  private val orderInternalApiToken = config.getOptional[String]("order.service.internal.api.token")
   
-  // Helper to get internal API authorization header
+  // Helper to get internal API authorization header for inventory service
   private def getInternalAuthHeader: Option[(String, String)] = {
     inventoryInternalApiToken.map(token => "Authorization" -> s"Bearer $token")
+  }
+  
+  // Helper to get internal API authorization header for order service
+  private def getOrderInternalAuthHeader: Option[(String, String)] = {
+    orderInternalApiToken.map(token => "Authorization" -> s"Bearer $token")
   }
   
   // Get or create cart for buyer
@@ -176,19 +183,60 @@ class CartService @Inject()(
             // Delete from Redis
             cartRepository.deleteActiveCart(buyerId).flatMap { _ =>
               // Call Order Service to create provisional order
-              // TODO: Implement Order Service call
-              // For now, return a placeholder response
-              val orderId = UUID.randomUUID()
-              val paymentId = UUID.randomUUID()
+              val orderRequest = Json.obj(
+                "cart_id" -> cart.cartId.toString,
+                "buyer_id" -> buyerId,
+                "items" -> Json.toJson(cart.items.map { item =>
+                  Json.obj(
+                    "item_id" -> item.itemId.toString,
+                    "product_id" -> item.productId.toString,
+                    "sku" -> item.sku,
+                    "seller_id" -> item.sellerId,
+                    "quantity" -> item.quantity,
+                    "price_cents" -> item.priceCents,
+                    "currency" -> item.currency,
+                    "reservation_id" -> item.reservationId.map(id => Json.toJsFieldJsValueWrapper(id.toString)).getOrElse(Json.toJsFieldJsValueWrapper(JsNull))
+                  )
+                })
+              )
               
-              cartEventProducer.publishCartCheckoutInitiatedEvent(cart, orderId)
-              
-              Future.successful(models.CheckoutResponse(
-                orderId = orderId,
-                paymentId = paymentId,
-                clientSecret = "placeholder_client_secret",
-                checkoutUrl = s"https://buyit.local/checkout?orderId=$orderId"
-              ))
+              val headers = getOrderInternalAuthHeader.toSeq
+              if (headers.isEmpty) {
+                logger.error("Order service internal API token not configured")
+                Future.failed(new IllegalStateException("Order service internal API token not configured"))
+              } else {
+                ws.url(s"$orderServiceUrl/internal/orders")
+                  .addHttpHeaders(headers: _*)
+                  .post(orderRequest)
+                  .map { response =>
+                    if (response.status == 201) {
+                      val orderResponse = response.json
+                      val orderId = UUID.fromString((orderResponse \ "order_id").as[String])
+                      val paymentId = UUID.fromString((orderResponse \ "payment_id").as[String])
+                      val clientSecret = (orderResponse \ "client_secret").as[String]
+                      val checkoutUrl = (orderResponse \ "checkout_url").asOpt[String].getOrElse(s"https://buyit.local/checkout?orderId=$orderId")
+                      
+                      cartEventProducer.publishCartCheckoutInitiatedEvent(cart, orderId)
+                      
+                      models.CheckoutResponse(
+                        orderId = orderId,
+                        paymentId = paymentId,
+                        clientSecret = clientSecret,
+                        checkoutUrl = checkoutUrl
+                      )
+                    } else if (response.status == 401) {
+                      logger.error(s"Unauthorized: Invalid or missing internal API token for order service")
+                      throw new IllegalStateException("Unauthorized: Invalid internal API token")
+                    } else {
+                      logger.error(s"Failed to create order: ${response.status} - ${response.body}")
+                      throw new IllegalStateException(s"Failed to create order: ${response.status} - ${response.body}")
+                    }
+                  }
+                  .recoverWith { case e =>
+                    logger.error("Error calling Order Service to create order", e)
+                    Future.failed(new IllegalStateException(s"Failed to create order: ${e.getMessage}", e))
+                  }
+              }
             }
           }
         }

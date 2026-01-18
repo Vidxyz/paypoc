@@ -33,7 +33,7 @@ class RefundService(
     private val chargebackRepository: ChargebackRepository
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
-    
+    private val PLATFORM_FEE_PERCENTAGE = 0.10  // 10% platform fee
     /**
      * Creates a full refund for a payment.
      * 
@@ -134,7 +134,18 @@ class RefundService(
             throw RefundCreationException("Failed to create Stripe Refund: ${e.message}", e)
         }
         
+        // Create seller refund breakdown from payment's seller breakdown (full refund)
+        val sellerRefundBreakdown = payment.sellerBreakdown.map { seller ->
+            com.payments.platform.payments.domain.SellerRefundBreakdown(
+                sellerId = seller.sellerId,
+                refundAmountCents = seller.sellerGrossAmountCents,
+                platformFeeRefundCents = seller.platformFeeCents,
+                netSellerRefundCents = seller.netSellerAmountCents
+            )
+        }
+        
         // Persist refund with Stripe Refund ID (NO ledger write - money hasn't moved yet)
+        // For full refunds, orderItemsRefunded is null (order service will treat null as full refund)
         val refund = Refund(
             id = refundId,
             paymentId = paymentId,
@@ -142,6 +153,8 @@ class RefundService(
             platformFeeRefundCents = platformFeeRefundCents,
             netSellerRefundCents = netSellerRefundCents,
             currency = payment.currency,
+            sellerRefundBreakdown = sellerRefundBreakdown,
+            orderItemsRefunded = null,  // Full refund - order service will get all items
             state = RefundState.REFUNDING,
             stripeRefundId = stripeRefund.id,
             ledgerTransactionId = null,  // NULL until refund confirmed (ledger write happens after Stripe confirms)
@@ -165,6 +178,199 @@ class RefundService(
         logger.info(
             "Created refund ${refund.id} for payment $paymentId " +
             "(Stripe Refund ID: ${stripeRefund.id}, amount: $refundAmountCents ${payment.currency})"
+        )
+        
+        return saved.toDomain()
+    }
+    
+    /**
+     * Creates a partial refund for a payment with multiple sellers.
+     * 
+     * Order of operations:
+     * 1. Validate payment exists and is CAPTURED
+     * 2. Validate refund amounts don't exceed original seller amounts
+     * 3. Generate refund IDs and idempotency key
+     * 4. Calculate per-seller platform fee refunds (10% of each seller's refund)
+     * 5. Calculate total platform fee refund and total net seller refund
+     * 6. Create Stripe Refund (partial refund)
+     * 7. Persist refund with seller refund breakdown (state = REFUNDING, ledger_transaction_id = NULL)
+     * 8. Return refund
+     * 
+     * NO ledger write at this stage - money hasn't moved yet.
+     * 
+     * The payment is looked up by orderId internally.
+     * 
+     * @param orderId Order ID to refund (payment is looked up by this)
+     * @param request Partial refund request with order items to refund
+     * @return Created refund
+     * @throws RefundCreationException if refund creation fails
+     */
+    @Transactional
+    fun createPartialRefund(
+        orderId: UUID,
+        request: com.payments.platform.payments.api.internal.CreatePartialRefundRequest
+    ): Refund {
+        // Find payment by orderId
+        val payment = try {
+            paymentService.getPaymentByOrderId(orderId)
+        } catch (e: IllegalArgumentException) {
+            throw RefundCreationException("Payment not found for order: $orderId")
+        }
+        
+        // Validate payment state
+        if (payment.state != PaymentState.CAPTURED) {
+            throw RefundCreationException(
+                "Payment for order $orderId cannot be refunded. Current state: ${payment.state}. " +
+                "Only CAPTURED payments can be refunded."
+            )
+        }
+        
+        // Validate order items to refund
+        require(request.orderItemsToRefund.isNotEmpty()) {
+            "Order items to refund cannot be empty"
+        }
+        
+        // Validate quantities are positive
+        for (itemRefund in request.orderItemsToRefund) {
+            require(itemRefund.quantity > 0) {
+                "Refund quantity must be positive for order item ${itemRefund.orderItemId}"
+            }
+            require(itemRefund.priceCents > 0) {
+                "Price per item must be positive for order item ${itemRefund.orderItemId}"
+            }
+        }
+        
+        // Calculate seller refund amounts from order items
+        // Group items by seller and sum up refund amounts
+        val sellerRefundAmounts = request.orderItemsToRefund
+            .groupBy { it.sellerId }
+            .mapValues { (_, items) ->
+                items.sumOf { it.priceCents * it.quantity }
+            }
+        
+        // Validate sellers exist in original payment
+        val sellerAmountsMap = payment.sellerBreakdown.associateBy { it.sellerId }
+        for ((sellerId, refundAmount) in sellerRefundAmounts) {
+            val originalSeller = sellerAmountsMap[sellerId]
+                ?: throw RefundCreationException(
+                    "Seller $sellerId not found in original payment. " +
+                    "Cannot refund items from seller that wasn't part of the original order."
+                )
+            require(refundAmount <= originalSeller.sellerGrossAmountCents) {
+                "Refund amount for seller $sellerId ($refundAmount) " +
+                "exceeds original amount (${originalSeller.sellerGrossAmountCents})"
+            }
+        }
+        
+        // Calculate per-seller refund breakdowns (platform fee and net amounts)
+        val sellerRefundBreakdowns = sellerRefundAmounts.map { (sellerId, sellerRefundAmount) ->
+            val sellerPlatformFeeRefund = (sellerRefundAmount * PLATFORM_FEE_PERCENTAGE).toLong()
+            val sellerNetRefund = sellerRefundAmount - sellerPlatformFeeRefund
+            
+            require(sellerPlatformFeeRefund >= 0) { "Platform fee refund cannot be negative for seller $sellerId" }
+            require(sellerNetRefund > 0) { "Net seller refund must be positive for seller $sellerId" }
+            
+            sellerId to Triple(sellerRefundAmount, sellerPlatformFeeRefund, sellerNetRefund)
+        }.toMap()
+        
+        // Calculate total refund amount (sum of all item refunds)
+        val totalRefundAmount = request.orderItemsToRefund.sumOf { it.priceCents * it.quantity }
+        
+        // Calculate totals
+        val totalPlatformFeeRefund = sellerRefundBreakdowns.values.sumOf { it.second }
+        val totalNetSellerRefund = sellerRefundBreakdowns.values.sumOf { it.third }
+        
+        // Validate totals
+        require(totalPlatformFeeRefund >= 0) { "Total platform fee refund cannot be negative" }
+        require(totalNetSellerRefund > 0) { "Total net seller refund must be positive" }
+        require(totalPlatformFeeRefund + totalNetSellerRefund == totalRefundAmount) {
+            "Refund calculation error: totalPlatformFeeRefund + totalNetSellerRefund must equal totalRefundAmount"
+        }
+        
+        // Validate payment has Stripe PaymentIntent ID
+        val stripePaymentIntentId = payment.stripePaymentIntentId
+            ?: throw RefundCreationException("Payment ${payment.id} (order: $orderId) has no Stripe PaymentIntent ID")
+        
+        // Generate refund ID and idempotency key
+        val refundId = UUID.randomUUID()
+        val idempotencyKey = "partial_refund_${refundId}_${System.currentTimeMillis()}"
+        
+        // Check idempotency (if refund already exists, return it)
+        val existingRefund = refundRepository.findByIdempotencyKey(idempotencyKey)
+        if (existingRefund != null) {
+            logger.info("Refund with idempotency key $idempotencyKey already exists, returning existing refund")
+            return existingRefund.toDomain()
+        }
+        
+        // Create Stripe Refund (partial refund)
+        val stripeRefund = try {
+            stripeService.createRefund(
+                paymentIntentId = stripePaymentIntentId,
+                amountCents = totalRefundAmount  // Partial refund amount (calculated from items)
+            )
+        } catch (e: StripeServiceException) {
+            throw RefundCreationException("Failed to create Stripe Refund: ${e.message}", e)
+        }
+        
+        // Create seller refund breakdown from calculated breakdowns
+        val sellerRefundBreakdown = sellerRefundBreakdowns.map { (sellerId, breakdown) ->
+            com.payments.platform.payments.domain.SellerRefundBreakdown(
+                sellerId = sellerId,
+                refundAmountCents = breakdown.first,
+                platformFeeRefundCents = breakdown.second,
+                netSellerRefundCents = breakdown.third
+            )
+        }
+        
+        // Create order items refunded snapshot
+        val orderItemsRefunded = request.orderItemsToRefund.map { item ->
+            com.payments.platform.payments.domain.OrderItemRefundSnapshot(
+                orderItemId = item.orderItemId,
+                quantity = item.quantity,
+                sellerId = item.sellerId,
+                priceCents = item.priceCents
+            )
+        }
+        
+        // Persist refund with Stripe Refund ID (NO ledger write - money hasn't moved yet)
+        val refund = Refund(
+            id = refundId,
+            paymentId = payment.id,
+            refundAmountCents = totalRefundAmount,
+            platformFeeRefundCents = totalPlatformFeeRefund,
+            netSellerRefundCents = totalNetSellerRefund,
+            currency = payment.currency,
+            sellerRefundBreakdown = sellerRefundBreakdown,
+            orderItemsRefunded = orderItemsRefunded,
+            state = RefundState.REFUNDING,
+            stripeRefundId = stripeRefund.id,
+            ledgerTransactionId = null,  // NULL until refund confirmed (ledger write happens after Stripe confirms)
+            idempotencyKey = idempotencyKey,
+            createdAt = Instant.now(),
+            updatedAt = Instant.now()
+        )
+        
+        val entity = RefundEntity.fromDomain(refund)
+        val saved = refundRepository.save(entity)
+        
+        // Transition payment from CAPTURED to REFUNDING (if this is the first refund)
+        // Note: For partial refunds, payment might remain CAPTURED if not fully refunded
+        // For now, we'll transition to REFUNDING to indicate a refund is in progress
+        try {
+            if (payment.state == PaymentState.CAPTURED) {
+                paymentService.transitionPayment(payment.id, PaymentState.REFUNDING)
+                logger.info("Payment ${payment.id} (order: $orderId) transitioned to REFUNDING state")
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to transition payment ${payment.id} (order: $orderId) to REFUNDING state", e)
+            // Don't fail the refund creation - refund is created, payment state can be corrected later
+        }
+        
+        val sellerIds = sellerRefundAmounts.keys.joinToString(", ")
+        logger.info(
+            "Created partial refund ${refund.id} for payment ${payment.id} (order: $orderId) " +
+            "(Stripe Refund ID: ${stripeRefund.id}, amount: $totalRefundAmount ${payment.currency}, " +
+            "items: ${request.orderItemsToRefund.size}, sellers: $sellerIds)"
         )
         
         return saved.toDomain()

@@ -13,6 +13,7 @@ import com.payments.platform.payments.kafka.ChargebackWonEvent
 import com.payments.platform.payments.kafka.PaymentKafkaProducer
 import com.payments.platform.payments.kafka.PayoutCompletedEvent
 import com.payments.platform.payments.kafka.RefundCompletedEvent
+import com.payments.platform.payments.kafka.SellerRefundBreakdownEvent
 import com.payments.platform.payments.persistence.PaymentRepository
 import com.payments.platform.payments.persistence.RefundRepository
 import com.payments.platform.payments.service.ChargebackService
@@ -340,11 +341,47 @@ class StripeWebhookController(
                 // Don't fail the refund processing - refund is complete, payment state can be corrected
             }
             
+            // Get seller refund breakdown from refund entity (stored when refund was created)
+            // This ensures accurate breakdown based on actual order items refunded, not proportional
+            val sellerRefundBreakdown = if (refund.sellerRefundBreakdown != null && refund.sellerRefundBreakdown.isNotEmpty()) {
+                // Use stored breakdown (accurate for partial refunds based on order items)
+                refund.sellerRefundBreakdown.map { seller ->
+                    SellerRefundBreakdownEvent(
+                        sellerId = seller.sellerId,
+                        refundAmountCents = seller.refundAmountCents,
+                        platformFeeRefundCents = seller.platformFeeRefundCents,
+                        netSellerRefundCents = seller.netSellerRefundCents
+                    )
+                }
+            } else {
+                // Fallback: use original seller breakdown (should only happen for old refunds without breakdown)
+                // This is a fallback for refunds created before sellerRefundBreakdown was added
+                payment.sellerBreakdown.map { seller ->
+                    SellerRefundBreakdownEvent(
+                        sellerId = seller.sellerId,
+                        refundAmountCents = seller.sellerGrossAmountCents,
+                        platformFeeRefundCents = seller.platformFeeCents,
+                        netSellerRefundCents = seller.netSellerAmountCents
+                    )
+                }
+            }
+            
+            // Convert orderItemsRefunded from domain to event format
+            val orderItemsRefunded = refund.orderItemsRefunded?.map { item ->
+                com.payments.platform.payments.kafka.OrderItemRefundInfo(
+                    orderItemId = item.orderItemId,
+                    quantity = item.quantity,
+                    sellerId = item.sellerId,
+                    priceCents = item.priceCents
+                )
+            }
+            
             // Publish RefundCompletedEvent to Kafka
-            // This will trigger the ledger write
+            // This will trigger the ledger write and order service refund tracking
             val refundCompletedEvent = RefundCompletedEvent(
                 refundId = refund.id,
                 paymentId = refund.paymentId,
+                orderId = payment.orderId,
                 refundAmountCents = refund.refundAmountCents,
                 platformFeeRefundCents = refund.platformFeeRefundCents,
                 netSellerRefundCents = refund.netSellerRefundCents,
@@ -353,7 +390,8 @@ class StripeWebhookController(
                 stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                 idempotencyKey = refund.idempotencyKey,
                 buyerId = payment.buyerId,
-                sellerId = payment.sellerId
+                sellerRefundBreakdown = sellerRefundBreakdown,
+                orderItemsRefunded = orderItemsRefunded
             )
             kafkaProducer.publishRefundCompletedEvent(refundCompletedEvent)
             
@@ -691,6 +729,16 @@ class StripeWebhookController(
             }
         }
         
+        // Convert payment seller breakdown to chargeback breakdown
+        val sellerBreakdown = payment.sellerBreakdown.map { seller ->
+            com.payments.platform.payments.kafka.SellerChargebackBreakdown(
+                sellerId = seller.sellerId,
+                sellerGrossAmountCents = seller.sellerGrossAmountCents,
+                platformFeeCents = seller.platformFeeCents,
+                netSellerAmountCents = seller.netSellerAmountCents
+            )
+        }
+        
         // Publish ChargebackCreatedEvent to Kafka
         // This will trigger the ledger write (money is debited immediately)
         val chargebackCreatedEvent = ChargebackCreatedEvent(
@@ -704,7 +752,7 @@ class StripeWebhookController(
             stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
             reason = chargeback.reason,
             buyerId = payment.buyerId,
-            sellerId = payment.sellerId,
+            sellerBreakdown = sellerBreakdown,
             idempotencyKey = chargeback.idempotencyKey
         )
         kafkaProducer.publishChargebackCreatedEvent(chargebackCreatedEvent)
@@ -838,6 +886,53 @@ class StripeWebhookController(
             chargebackService.transitionChargeback(chargeback.id, targetState)
             logger.info("Chargeback ${chargeback.id} transitioned to $targetState (outcome: $outcome)")
             
+            // Convert payment seller breakdown to chargeback breakdown
+            val sellerBreakdown = payment.sellerBreakdown.map { seller ->
+                com.payments.platform.payments.kafka.SellerChargebackBreakdown(
+                    sellerId = seller.sellerId,
+                    sellerGrossAmountCents = seller.sellerGrossAmountCents,
+                    platformFeeCents = seller.platformFeeCents,
+                    netSellerAmountCents = seller.netSellerAmountCents
+                )
+            }
+            
+            // For LOST chargebacks, calculate proportional chargeback breakdown per seller
+            val chargebackSellerBreakdown = if (outcome == ChargebackOutcome.LOST) {
+                // Calculate proportional chargeback for each seller based on their portion of the original payment
+                val totalGrossAmount = payment.grossAmountCents
+                if (totalGrossAmount > 0 && chargeback.chargebackAmountCents > 0) {
+                    payment.sellerBreakdown.map { seller ->
+                        // Calculate this seller's proportion of the original payment
+                        val sellerProportion = seller.sellerGrossAmountCents.toDouble() / totalGrossAmount
+                        
+                        // Apply the same proportion to the chargeback
+                        // The chargeback breakdown should match the original payment breakdown proportionally
+                        val sellerChargebackGrossCents = (chargeback.chargebackAmountCents * sellerProportion).toLong()
+                        
+                        // Platform fee and net amount are also proportional
+                        // Maintain the same fee percentage as the original payment
+                        val feePercentage = if (seller.sellerGrossAmountCents > 0) {
+                            seller.platformFeeCents.toDouble() / seller.sellerGrossAmountCents
+                        } else {
+                            0.0
+                        }
+                        val sellerChargebackPlatformFeeCents = (sellerChargebackGrossCents * feePercentage).toLong()
+                        val sellerChargebackNetCents = sellerChargebackGrossCents - sellerChargebackPlatformFeeCents
+                        
+                        com.payments.platform.payments.kafka.SellerChargebackBreakdown(
+                            sellerId = seller.sellerId,
+                            sellerGrossAmountCents = sellerChargebackGrossCents,
+                            platformFeeCents = sellerChargebackPlatformFeeCents,
+                            netSellerAmountCents = sellerChargebackNetCents
+                        )
+                    }
+                } else {
+                    sellerBreakdown
+                }
+            } else {
+                sellerBreakdown
+            }
+            
             // Publish appropriate event based on outcome
             when (outcome) {
                 ChargebackOutcome.WON -> {
@@ -850,7 +945,7 @@ class StripeWebhookController(
                         stripeDisputeId = stripeDisputeId,
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
-                        sellerId = payment.sellerId,
+                        sellerBreakdown = sellerBreakdown,
                         idempotencyKey = chargeback.idempotencyKey
                     )
                     kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
@@ -868,14 +963,14 @@ class StripeWebhookController(
                         stripeDisputeId = stripeDisputeId,
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
-                        sellerId = payment.sellerId,
+                        sellerBreakdown = sellerBreakdown,
                         idempotencyKey = chargeback.idempotencyKey
                     )
                     kafkaProducer.publishChargebackWarningClosedEvent(chargebackWarningClosedEvent)
                     logger.info("Published ChargebackWarningClosedEvent for chargeback ${chargeback.id} (warning_closed) - amount and fee returned")
                 }
                 ChargebackOutcome.LOST -> {
-                    // Money is permanently debited, reduce seller liability
+                    // Money is permanently debited, reduce seller liability proportionally
                     val chargebackLostEvent = ChargebackLostEvent(
                         chargebackId = chargeback.id,
                         paymentId = payment.id,
@@ -886,11 +981,11 @@ class StripeWebhookController(
                         stripeDisputeId = stripeDisputeId,
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
-                        sellerId = payment.sellerId,
+                        sellerBreakdown = chargebackSellerBreakdown,
                         idempotencyKey = chargeback.idempotencyKey
                     )
                     kafkaProducer.publishChargebackLostEvent(chargebackLostEvent)
-                    logger.info("Published ChargebackLostEvent for chargeback ${chargeback.id} - money permanently debited")
+                    logger.info("Published ChargebackLostEvent for chargeback ${chargeback.id} - money permanently debited (distributed across ${chargebackSellerBreakdown.size} sellers)")
                 }
                 ChargebackOutcome.WITHDRAWN -> {
                     // Buyer withdrew dispute - money is returned (similar to won)
@@ -902,7 +997,7 @@ class StripeWebhookController(
                         stripeDisputeId = stripeDisputeId,
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
-                        sellerId = payment.sellerId,
+                        sellerBreakdown = sellerBreakdown,
                         idempotencyKey = chargeback.idempotencyKey
                     )
                     kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)

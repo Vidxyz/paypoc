@@ -45,11 +45,11 @@ data class PaymentResponseDto(
     @Schema(description = "Unique payment ID", example = "660e8400-e29b-41d4-a716-446655440000")
     val id: UUID? = null,
     
+    @Schema(description = "Order ID", example = "550e8400-e29b-41d4-a716-446655440000")
+    val orderId: UUID? = null,
+    
     @Schema(description = "Buyer ID", example = "buyer_123")
     val buyerId: String? = null,
-    
-    @Schema(description = "Seller ID", example = "seller_456")
-    val sellerId: String? = null,
     
     @Schema(description = "Total payment amount in cents (gross)", example = "10000")
     val grossAmountCents: Long? = null,
@@ -78,6 +78,9 @@ data class PaymentResponseDto(
     @Schema(description = "Idempotency key for this payment", example = "payment_660e8400_1234567890")
     val idempotencyKey: String? = null,
     
+    @Schema(description = "Seller breakdown (per-seller amounts) - optional in response", required = false)
+    val sellerBreakdown: List<SellerBreakdownDto>? = null,
+    
     @Schema(description = "Payment creation timestamp (ISO 8601)", example = "2024-01-15T10:30:00Z")
     val createdAt: String? = null,
     
@@ -103,12 +106,13 @@ data class PaymentResponseDto(
         fun fromDomain(
             payment: Payment, 
             clientSecret: String? = null,
-            chargebackInfo: ChargebackInfo? = null
+            chargebackInfo: ChargebackInfo? = null,
+            includeSellerBreakdown: Boolean = false  // Optional: include seller breakdown in response
         ): PaymentResponseDto {
             return PaymentResponseDto(
                 id = payment.id,
+                orderId = payment.orderId,
                 buyerId = payment.buyerId,
-                sellerId = payment.sellerId,
                 grossAmountCents = payment.grossAmountCents,
                 platformFeeCents = payment.platformFeeCents,
                 netSellerAmountCents = payment.netSellerAmountCents,
@@ -118,6 +122,16 @@ data class PaymentResponseDto(
                 clientSecret = clientSecret,
                 ledgerTransactionId = payment.ledgerTransactionId,
                 idempotencyKey = payment.idempotencyKey,
+                sellerBreakdown = if (includeSellerBreakdown) {
+                    payment.sellerBreakdown.map { 
+                        SellerBreakdownDto(
+                            sellerId = it.sellerId,
+                            sellerGrossAmountCents = it.sellerGrossAmountCents,
+                            platformFeeCents = it.platformFeeCents,
+                            netSellerAmountCents = it.netSellerAmountCents
+                        )
+                    }
+                } else null,
                 createdAt = payment.createdAt.toString(),
                 updatedAt = payment.updatedAt.toString(),
                 hasChargeback = chargebackInfo?.hasChargeback ?: false,
@@ -128,6 +142,24 @@ data class PaymentResponseDto(
         }
     }
 }
+
+/**
+ * Seller breakdown DTO for payment responses.
+ */
+@Schema(description = "Seller breakdown - one seller's portion of the payment")
+data class SellerBreakdownDto(
+    @Schema(description = "Seller ID", example = "seller_456")
+    val sellerId: String,
+    
+    @Schema(description = "This seller's gross amount in cents", example = "5000")
+    val sellerGrossAmountCents: Long,
+    
+    @Schema(description = "This seller's platform fee in cents", example = "500")
+    val platformFeeCents: Long,
+    
+    @Schema(description = "This seller's net amount in cents", example = "4500")
+    val netSellerAmountCents: Long
+)
 
 /**
  * Chargeback summary information for a payment.

@@ -28,6 +28,14 @@ class RefundEntity(
     @Column(name = "currency", nullable = false)
     val currency: String,
     
+    @Convert(converter = SellerRefundBreakdownConverter::class)
+    @Column(name = "seller_refund_breakdown", columnDefinition = "JSONB")
+    val sellerRefundBreakdown: List<com.payments.platform.payments.domain.SellerRefundBreakdown>?,
+    
+    @Convert(converter = OrderItemRefundSnapshotConverter::class)
+    @Column(name = "order_items_refunded", columnDefinition = "JSONB")
+    val orderItemsRefunded: List<com.payments.platform.payments.domain.OrderItemRefundSnapshot>?,
+    
     @Column(name = "state", nullable = false)
     @Enumerated(EnumType.STRING)
     var state: RefundState,
@@ -47,6 +55,24 @@ class RefundEntity(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant
 ) {
+    // JPA requires no-arg constructor
+    constructor() : this(
+        id = UUID.randomUUID(),
+        paymentId = UUID.randomUUID(),
+        refundAmountCents = 0,
+        platformFeeRefundCents = 0,
+        netSellerRefundCents = 0,
+        currency = "",
+        sellerRefundBreakdown = null,
+        orderItemsRefunded = null,
+        state = RefundState.REFUNDING,
+        stripeRefundId = null,
+        ledgerTransactionId = null,
+        idempotencyKey = "",
+        createdAt = Instant.now(),
+        updatedAt = Instant.now()
+    )
+    
     companion object {
         fun fromDomain(refund: Refund): RefundEntity {
             return RefundEntity(
@@ -56,6 +82,8 @@ class RefundEntity(
                 platformFeeRefundCents = refund.platformFeeRefundCents,
                 netSellerRefundCents = refund.netSellerRefundCents,
                 currency = refund.currency,
+                sellerRefundBreakdown = refund.sellerRefundBreakdown,
+                orderItemsRefunded = refund.orderItemsRefunded,
                 state = refund.state,
                 stripeRefundId = refund.stripeRefundId,
                 ledgerTransactionId = refund.ledgerTransactionId,
@@ -74,6 +102,8 @@ class RefundEntity(
             platformFeeRefundCents = platformFeeRefundCents,
             netSellerRefundCents = netSellerRefundCents,
             currency = currency,
+            sellerRefundBreakdown = sellerRefundBreakdown,
+            orderItemsRefunded = orderItemsRefunded,
             state = state,
             stripeRefundId = stripeRefundId,
             ledgerTransactionId = ledgerTransactionId,

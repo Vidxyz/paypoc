@@ -94,22 +94,10 @@ class ChargebackLostEventConsumer(
                 "Chargeback calculation error: chargebackAmount != platformFee + netSellerAmount"
             }
             
-            // Calculate chargeback split (proportional to original payment split)
-            // If chargeback is partial, we need to calculate the proportional split
-            // For now, assume full chargeback matches original payment split
-            val platformFeeChargebackCents = event.platformFeeCents
-            val netSellerChargebackCents = event.netSellerAmountCents
-            
             // Get accounts
             val chargebackClearingAccount = getOrCreateAccount(
                 accountType = AccountType.CHARGEBACK_CLEARING,
                 referenceId = null,
-                currency = event.currency
-            )
-            
-            val sellerPayableAccount = getOrCreateAccount(
-                accountType = AccountType.SELLER_PAYABLE,
-                referenceId = event.sellerId,
                 currency = event.currency
             )
             
@@ -119,26 +107,41 @@ class ChargebackLostEventConsumer(
                 currency = event.currency
             )
             
+            // Create ledger entries for each seller
+            val sellerEntries = event.sellerBreakdown.map { seller ->
+                val sellerPayableAccount = getOrCreateAccount(
+                    accountType = AccountType.SELLER_PAYABLE,
+                    referenceId = seller.sellerId,
+                    currency = event.currency
+                )
+                
+                // Each seller's portion of the chargeback
+                EntryRequest(
+                    accountId = sellerPayableAccount.id,
+                    direction = EntryDirection.DEBIT,
+                    amountCents = seller.netSellerAmountCents,
+                    currency = event.currency
+                )
+            }
+            
+            // Platform fee entries (one per seller)
+            val platformFeeEntries = event.sellerBreakdown.map { seller ->
+                EntryRequest(
+                    accountId = buyitRevenueAccount.id,
+                    direction = EntryDirection.DEBIT,
+                    amountCents = seller.platformFeeCents,
+                    currency = event.currency
+                )
+            }
+            
             // Create double-entry transaction
-            // Money is permanently debited - reduce seller liability and platform revenue
+            // Money is permanently debited - reduce seller liability and platform revenue for each seller
             // Dispute fee stays in CHARGEBACK_CLEARING as expense
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
                 idempotencyKey = event.idempotencyKey,
-                description = "Chargeback lost: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId}",
-                entries = listOf(
-                    EntryRequest(
-                        accountId = sellerPayableAccount.id,
-                        direction = EntryDirection.DEBIT,
-                        amountCents = netSellerChargebackCents,
-                        currency = event.currency
-                    ),
-                    EntryRequest(
-                        accountId = buyitRevenueAccount.id,
-                        direction = EntryDirection.DEBIT,
-                        amountCents = platformFeeChargebackCents,
-                        currency = event.currency
-                    ),
+                description = "Chargeback lost: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s)",
+                entries = sellerEntries + platformFeeEntries + listOf(
                     EntryRequest(
                         accountId = chargebackClearingAccount.id,
                         direction = EntryDirection.CREDIT,
@@ -151,10 +154,12 @@ class ChargebackLostEventConsumer(
             // Create transaction (atomic, balanced, idempotent)
             val transaction = ledgerService.createDoubleEntryTransaction(transactionRequest)
             
+            val totalSellerDebit = event.sellerBreakdown.sumOf { it.netSellerAmountCents }
+            val totalPlatformFeeDebit = event.sellerBreakdown.sumOf { it.platformFeeCents }
             logger.info(
                 "Created ledger transaction ${transaction.id} for chargeback lost ${event.chargebackId}. " +
-                "DR SELLER_PAYABLE: $netSellerChargebackCents (reduce seller liability), " +
-                "DR BUYIT_REVENUE: $platformFeeChargebackCents (reduce platform revenue), " +
+                "DR SELLER_PAYABLE (${event.sellerBreakdown.size} sellers): $totalSellerDebit (reduce seller liability), " +
+                "DR BUYIT_REVENUE: $totalPlatformFeeDebit (reduce platform revenue), " +
                 "CR CHARGEBACK_CLEARING: ${event.chargebackAmountCents} (dispute fee remains as expense)"
             )
             
@@ -224,6 +229,7 @@ data class ChargebackLostEvent(
     val stripePaymentIntentId: String,
     val idempotencyKey: String,
     val buyerId: String,
-    val sellerId: String
+    val sellerBreakdown: List<SellerChargebackBreakdown>
 )
+
 

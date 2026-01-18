@@ -29,10 +29,12 @@ class RefundEntity(
     val currency: String,
     
     @Convert(converter = SellerRefundBreakdownConverter::class)
+    @org.hibernate.annotations.ColumnTransformer(write = "?::jsonb")
     @Column(name = "seller_refund_breakdown", columnDefinition = "JSONB")
     val sellerRefundBreakdown: List<com.payments.platform.payments.domain.SellerRefundBreakdown>?,
     
     @Convert(converter = OrderItemRefundSnapshotConverter::class)
+    @org.hibernate.annotations.ColumnTransformer(write = "?::jsonb")
     @Column(name = "order_items_refunded", columnDefinition = "JSONB")
     val orderItemsRefunded: List<com.payments.platform.payments.domain.OrderItemRefundSnapshot>?,
     

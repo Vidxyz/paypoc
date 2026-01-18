@@ -134,12 +134,27 @@ func (s *OrderService) CreateProvisionalOrder(ctx context.Context, req models.Cr
 		}
 	}
 
-	// Create payment
-	paymentResp, err := s.paymentClient.CreatePayment(ctx, CreatePaymentRequest{
+	// Calculate seller breakdowns (one per seller)
+	sellerBreakdown := make([]SellerPaymentBreakdown, 0, len(sellerItems))
+	for sellerID, items := range sellerItems {
+		sellerGrossAmountCents := int64(0)
+		for _, item := range items {
+			sellerGrossAmountCents += item.PriceCents * int64(item.Quantity)
+		}
+		sellerBreakdown = append(sellerBreakdown, SellerPaymentBreakdown{
+			SellerID:               sellerID,
+			SellerGrossAmountCents: sellerGrossAmountCents,
+		})
+	}
+
+	// Create single payment for entire order (one payment per order, multiple sellers)
+	paymentResp, err := s.paymentClient.CreateOrderPayment(ctx, CreateOrderPaymentRequest{
+		OrderID:          orderID,
 		BuyerID:          req.BuyerID,
 		GrossAmountCents: totalCents,
 		Currency:         currency,
-		OrderID:          &orderID,
+		SellerBreakdown:  sellerBreakdown,
+		Description:      fmt.Sprintf("Payment for order %s", orderID),
 	})
 	if err != nil {
 		// Rollback: cancel order and release inventory
@@ -335,6 +350,202 @@ func (s *OrderService) GetOrderForInvoice(ctx context.Context, orderID uuid.UUID
 type OrderForInvoice struct {
 	Order *models.Order
 	Items []models.OrderItem
+}
+
+// ProcessRefund handles RefundCompletedEvent from payments service
+// Updates order items with refunded quantities and creates audit trail
+// All operations are wrapped in a transaction for atomicity
+func (s *OrderService) ProcessRefund(ctx context.Context, event models.RefundCompletedEvent) error {
+	// Begin transaction - all operations must succeed or all will be rolled back
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // Always rollback on error, commit will happen at the end
+
+	// Check idempotency - if this refund was already processed, skip
+	exists, err := s.repo.CheckRefundExistsTx(ctx, tx, event.RefundID)
+	if err != nil {
+		return fmt.Errorf("failed to check refund existence: %w", err)
+	}
+	if exists {
+		log.Printf("Refund %s already processed, skipping (idempotency)", event.RefundID)
+		// Transaction will be rolled back by defer, which is fine since we're not making changes
+		return nil
+	}
+
+	// Validate order exists and matches event (read-only, can use regular method)
+	order, err := s.repo.GetByID(ctx, event.OrderID)
+	if err != nil {
+		return fmt.Errorf("failed to get order %s: %w", event.OrderID, err)
+	}
+
+	if order.PaymentID == nil || *order.PaymentID != event.PaymentID {
+		return fmt.Errorf("order %s payment ID mismatch: expected %s, got %v", event.OrderID, event.PaymentID, order.PaymentID)
+	}
+
+	var allItems []models.OrderItem // Store items for status calculation (fixes point 10)
+
+	// If no order items specified, this might be a full refund
+	// For full refunds, we need to get all order items
+	if len(event.OrderItemsRefunded) == 0 {
+		log.Printf("Refund %s has no order items specified, treating as full refund", event.RefundID)
+		// Get all order items and mark them as fully refunded
+		allItems, err = s.repo.GetItemsByOrderIDTx(ctx, tx, event.OrderID)
+		if err != nil {
+			return fmt.Errorf("failed to get order items for full refund: %w", err)
+		}
+
+		// Process each item as fully refunded
+		for i := range allItems {
+			item := &allItems[i]
+			refundedItem := models.RefundedOrderItem{
+				ID:          uuid.New(),
+				RefundID:    event.RefundID,
+				OrderID:     event.OrderID,
+				OrderItemID: item.ID,
+				Quantity:    item.Quantity - item.RefundedQuantity, // Only refund what hasn't been refunded yet
+				PriceCents:  item.PriceCents,
+				SellerID:    item.SellerID,
+				RefundedAt:  time.Now(),
+				CreatedAt:   time.Now(),
+			}
+
+			// Only process if there's something to refund
+			if refundedItem.Quantity > 0 {
+				// Validate refunded quantity doesn't exceed original quantity (point 11)
+				newRefundedQuantity := item.RefundedQuantity + refundedItem.Quantity
+				if newRefundedQuantity > item.Quantity {
+					return fmt.Errorf("refunded quantity %d would exceed original quantity %d for order item %s", newRefundedQuantity, item.Quantity, item.ID)
+				}
+
+				// Update refunded quantity
+				if err := s.repo.UpdateItemRefundedQuantityTx(ctx, tx, item.ID, newRefundedQuantity); err != nil {
+					return fmt.Errorf("failed to update refunded quantity for item %s: %w", item.ID, err)
+				}
+
+				// Create audit record
+				if err := s.repo.CreateRefundedOrderItemTx(ctx, tx, &refundedItem); err != nil {
+					return fmt.Errorf("failed to create refunded order item record: %w", err)
+				}
+
+				// Update the item in our local slice for status calculation
+				item.RefundedQuantity = newRefundedQuantity
+			}
+		}
+	} else {
+		// Process partial refund - update specific items
+		// First, get all items for this order to calculate status later (fixes point 10)
+		allItems, err = s.repo.GetItemsByOrderIDTx(ctx, tx, event.OrderID)
+		if err != nil {
+			return fmt.Errorf("failed to get order items: %w", err)
+		}
+
+		// Create a map for quick lookup
+		itemsMap := make(map[uuid.UUID]models.OrderItem)
+		for _, item := range allItems {
+			itemsMap[item.ID] = item
+		}
+
+		// Process each refunded item
+		for _, itemRefund := range event.OrderItemsRefunded {
+			item, exists := itemsMap[itemRefund.OrderItemID]
+			if !exists {
+				return fmt.Errorf("order item %s not found", itemRefund.OrderItemID)
+			}
+
+			// Validate item belongs to this order
+			if item.OrderID != event.OrderID {
+				return fmt.Errorf("order item %s does not belong to order %s", itemRefund.OrderItemID, event.OrderID)
+			}
+
+			// Validate seller matches
+			if item.SellerID != itemRefund.SellerID {
+				return fmt.Errorf("seller mismatch for order item %s: expected %s, got %s", itemRefund.OrderItemID, item.SellerID, itemRefund.SellerID)
+			}
+
+			// Validate price matches
+			if item.PriceCents != itemRefund.PriceCents {
+				return fmt.Errorf("price mismatch for order item %s: expected %d, got %d", itemRefund.OrderItemID, item.PriceCents, itemRefund.PriceCents)
+			}
+
+			// Validate refund quantity doesn't exceed available quantity
+			availableQuantity := item.Quantity - item.RefundedQuantity
+			if itemRefund.Quantity > availableQuantity {
+				return fmt.Errorf("refund quantity %d exceeds available quantity %d for order item %s", itemRefund.Quantity, availableQuantity, itemRefund.OrderItemID)
+			}
+
+			// Validate refunded quantity doesn't exceed original quantity (point 11)
+			newRefundedQuantity := item.RefundedQuantity + itemRefund.Quantity
+			if newRefundedQuantity > item.Quantity {
+				return fmt.Errorf("refunded quantity %d would exceed original quantity %d for order item %s", newRefundedQuantity, item.Quantity, item.ID)
+			}
+
+			// Update refunded quantity
+			if err := s.repo.UpdateItemRefundedQuantityTx(ctx, tx, item.ID, newRefundedQuantity); err != nil {
+				return fmt.Errorf("failed to update refunded quantity for item %s: %w", item.ID, err)
+			}
+
+			// Create audit record
+			refundedItem := models.RefundedOrderItem{
+				ID:          uuid.New(),
+				RefundID:    event.RefundID,
+				OrderID:     event.OrderID,
+				OrderItemID: item.ID,
+				Quantity:    itemRefund.Quantity,
+				PriceCents:  itemRefund.PriceCents,
+				SellerID:    itemRefund.SellerID,
+				RefundedAt:  time.Now(),
+				CreatedAt:   time.Now(),
+			}
+
+			if err := s.repo.CreateRefundedOrderItemTx(ctx, tx, &refundedItem); err != nil {
+				return fmt.Errorf("failed to create refunded order item record: %w", err)
+			}
+
+			// Update the item in our local slice for status calculation
+			item.RefundedQuantity = newRefundedQuantity
+			itemsMap[item.ID] = item
+		}
+
+		// Update allItems with the modified items
+		for i := range allItems {
+			if updatedItem, ok := itemsMap[allItems[i].ID]; ok {
+				allItems[i] = updatedItem
+			}
+		}
+	}
+
+	// Calculate and update order refund status (point 7 - within transaction)
+	// Use allItems we already have (fixes point 10 - no duplicate query)
+	refundStatus := "NONE"
+	totalItems := 0
+	totalRefunded := 0
+	for _, item := range allItems {
+		totalItems += item.Quantity
+		totalRefunded += item.RefundedQuantity
+	}
+
+	if totalRefunded == 0 {
+		refundStatus = "NONE"
+	} else if totalRefunded >= totalItems {
+		refundStatus = "FULL"
+	} else {
+		refundStatus = "PARTIAL"
+	}
+
+	// Update refund status within transaction (point 7)
+	if err := s.repo.UpdateOrderRefundStatusTx(ctx, tx, event.OrderID, refundStatus); err != nil {
+		return fmt.Errorf("failed to update order refund status: %w", err)
+	}
+
+	// Commit transaction - all operations succeeded
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Successfully processed refund %s for order %s (status: %s)", event.RefundID, event.OrderID, refundStatus)
+	return nil
 }
 
 // CreatePaymentRequest represents a request to create a payment

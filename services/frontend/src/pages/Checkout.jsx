@@ -10,139 +10,51 @@ import {
   Button,
   Box,
   Alert,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Chip,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
   IconButton,
-  Snackbar,
+  Divider,
+  CircularProgress,
+  Collapse,
+  Grid,
 } from '@mui/material'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
-import CloseIcon from '@mui/icons-material/Close'
+import DeleteIcon from '@mui/icons-material/Delete'
+import AddIcon from '@mui/icons-material/Add'
+import RemoveIcon from '@mui/icons-material/Remove'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import paymentsApi from '../api/paymentsApi'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
+import { useCart } from '../context/CartContext'
+import { useAuth0 } from '../auth/Auth0Provider'
+import { cartApiClient } from '../api/cartApi'
+import { useNavigate } from 'react-router-dom'
+import ProductModal from '../components/ProductModal'
+import { catalogApiClient } from '../api/catalogApi'
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'missing_stripe_publishable_key')
 
-function CheckoutForm({ buyerId }) {
+function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
   const stripe = useStripe()
   const elements = useElements()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
-  const [paymentId, setPaymentId] = useState(null)
-  const [copySuccess, setCopySuccess] = useState({})
-  
-  // Sanitization and validation utilities (defined before useState to use in initial state)
-  const sanitizeString = (str, maxLength = 1000) => {
-    if (typeof str !== 'string') return ''
-    // Trim whitespace
-    let sanitized = str.trim()
-    // Remove null bytes and control characters (except newlines and tabs for description)
-    sanitized = sanitized.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
-    // Limit length
-    if (sanitized.length > maxLength) {
-      sanitized = sanitized.substring(0, maxLength)
-    }
-    return sanitized
-  }
-
-  const sanitizeSellerId = (sellerId) => {
-    // Seller ID is expected to be an email address
-    let sanitized = sanitizeString(sellerId, 255) // Email max length is 255
-    // Remove null bytes and control characters, but keep email-valid characters
-    // Allow: letters, numbers, @, ., -, _, + (for email addresses)
-    sanitized = sanitized.replace(/[^\w@.+_-]/g, '')
-    return sanitized
-  }
-
-  const validateEmail = (email) => {
-    // Basic email validation regex
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
-  }
-
-  const sanitizeDescription = (description) => {
-    // Description can have more characters, allow letters, numbers, spaces, basic punctuation
-    let sanitized = sanitizeString(description, 500)
-    // Remove potentially dangerous characters but keep basic punctuation
-    sanitized = sanitized.replace(/[<>{}[\]\\]/g, '')
-    return sanitized
-  }
-
-  const validateAmount = (amount) => {
-    // Must be a positive integer
-    const num = parseInt(amount)
-    if (isNaN(num) || num < 1) {
-      return { valid: false, value: 0 }
-    }
-    // Cap at reasonable maximum (1 million dollars = 100,000,000 cents)
-    const maxCents = 100000000
-    const validAmount = Math.min(num, maxCents)
-    return { valid: true, value: validAmount }
-  }
-
-  const validateCurrency = (currency) => {
-    // Only allow CAD for now (as per recent changes)
-    const allowedCurrencies = ['CAD']
-    return allowedCurrencies.includes(currency) ? currency : 'CAD'
-  }
-
-  const [formData, setFormData] = useState({
-    sellerId: sanitizeSellerId('seller@example.com'),
-    grossAmountCents: 10000,
-    currency: validateCurrency('CAD'),
-    description: sanitizeDescription('Test payment from BuyIt frontend')
+  const [deliveryInfo, setDeliveryInfo] = useState({
+    fullName: '',
+    address: '',
+    city: '',
+    province: '',
+    postalCode: '',
+    country: 'Canada',
+    phone: '',
   })
 
-  const testCardPresets = [
-    { id: 'chargeback', name: 'Chargeback', cardNumber: '4000 0000 0000 0259', expiry: '12/28', cvc: '123', zip: '12345', description: 'Payment succeeds, then triggers a chargeback/dispute' },
-    { id: 'success', name: 'Success', cardNumber: '4242 4242 4242 4242', expiry: '12/28', cvc: '123', zip: '12345', description: 'Payment succeeds' },
-    { id: 'decline', name: 'Decline', cardNumber: '4000 0000 0000 0002', expiry: '12/28', cvc: '123', zip: '12345', description: 'Card is declined' },
-    { id: 'insufficient_funds', name: 'Insufficient Funds', cardNumber: '4000 0000 0000 9995', expiry: '12/28', cvc: '123', zip: '12345', description: 'Insufficient funds' },
-    { id: 'lost_card', name: 'Lost Card', cardNumber: '4000 0000 0000 9987', expiry: '12/28', cvc: '123', zip: '12345', description: 'Lost card' },
-    { id: 'stolen_card', name: 'Stolen Card', cardNumber: '4000 0000 0000 9979', expiry: '12/28', cvc: '123', zip: '12345', description: 'Stolen card' },
-    { id: 'requires_authentication', name: '3D Secure', cardNumber: '4000 0025 0000 3155', expiry: '12/28', cvc: '123', zip: '12345', description: 'Requires 3D Secure authentication' },
-    { id: 'requires_payment_method', name: 'Requires Payment Method', cardNumber: '4000 0000 0000 0341', expiry: '12/28', cvc: '123', zip: '12345', description: 'Requires payment method' },
-    { id: 'processing_error', name: 'Processing Error', cardNumber: '4000 0000 0000 0119', expiry: '12/28', cvc: '123', zip: '12345', description: 'Processing error' },
-  ]
-  
-  const [selectedTestCard, setSelectedTestCard] = useState(null)
-
-  const copyToClipboard = async (text, field) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopySuccess({ [field]: true })
-      setTimeout(() => setCopySuccess({ ...copySuccess, [field]: false }), 2000)
-    } catch (err) {
-      console.error('Failed to copy:', err)
-    }
-  }
-
-  const handleInputChange = (e) => {
+  const handleDeliveryInfoChange = (e) => {
     const { name, value } = e.target
-    let sanitizedValue = value
-
-    if (name === 'sellerId') {
-      sanitizedValue = sanitizeSellerId(value)
-    } else if (name === 'grossAmountCents') {
-      const validation = validateAmount(value)
-      sanitizedValue = validation.value
-      if (!validation.valid && value !== '') {
-        // Show error for invalid amount
-        setError('Amount must be a positive number')
-        return
-      }
-    } else if (name === 'currency') {
-      sanitizedValue = validateCurrency(value)
-    } else if (name === 'description') {
-      sanitizedValue = sanitizeDescription(value)
-    }
-
-    setFormData(prev => ({
+    setDeliveryInfo((prev) => ({
       ...prev,
-      [name]: name === 'grossAmountCents' ? sanitizedValue : sanitizedValue
+      [name]: value,
     }))
   }
 
@@ -158,68 +70,27 @@ function CheckoutForm({ buyerId }) {
     }
 
     try {
-      // Sanitize and validate all fields before submission
-      const sanitizedSellerId = sanitizeSellerId(formData.sellerId)
-      const amountValidation = validateAmount(formData.grossAmountCents)
-      const sanitizedCurrency = validateCurrency(formData.currency)
-      const sanitizedDescription = sanitizeDescription(formData.description || '')
-
-      // Validate required fields
-      if (!sanitizedSellerId || sanitizedSellerId.length === 0) {
-        setError('Seller email is required')
-        setLoading(false)
-        return
-      }
-
-      // Validate email format
-      if (!validateEmail(sanitizedSellerId)) {
-        setError('Seller email must be a valid email address')
-        setLoading(false)
-        return
-      }
-
-      if (!amountValidation.valid || amountValidation.value < 1) {
-        setError('Amount must be a positive number')
-        setLoading(false)
-        return
-      }
-
-      if (!sanitizedCurrency) {
-        setError('Currency is required')
-        setLoading(false)
-        return
-      }
-
-      // buyerId is now extracted from the authenticated user's JWT token on the backend
-      const paymentResponse = await paymentsApi.createPayment({
-        sellerId: sanitizedSellerId,
-        grossAmountCents: amountValidation.value,
-        currency: sanitizedCurrency,
-        description: sanitizedDescription
-      })
-
-      if (paymentResponse.error) {
-        throw new Error(paymentResponse.error)
-      }
-
-      if (!paymentResponse.clientSecret) {
-        throw new Error('No client secret received from payment creation')
-      }
-
-      setPaymentId(paymentResponse.id)
-
       const cardElement = elements.getElement(CardElement)
       if (!cardElement) {
         throw new Error('Card element not found')
       }
 
       const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
-        paymentResponse.clientSecret,
+        clientSecret,
         {
           payment_method: {
             card: cardElement,
             billing_details: {
-              name: buyerId,
+              name: deliveryInfo.fullName || buyerId,
+              email: buyerId,
+              address: {
+                line1: deliveryInfo.address,
+                city: deliveryInfo.city,
+                state: deliveryInfo.province,
+                postal_code: deliveryInfo.postalCode,
+                country: deliveryInfo.country === 'Canada' ? 'CA' : deliveryInfo.country,
+              },
+              phone: deliveryInfo.phone || undefined,
             },
           },
         }
@@ -232,7 +103,7 @@ function CheckoutForm({ buyerId }) {
       }
 
       if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'requires_capture') {
-        setSuccess(true)
+        onSuccess(paymentIntent, orderId, paymentId)
       } else {
         setError(`Payment status: ${paymentIntent.status}`)
       }
@@ -241,6 +112,243 @@ function CheckoutForm({ buyerId }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  return (
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
+          Delivery Information
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          This information is not persisted and is optional. It will be used for billing details only.
+        </Typography>
+
+        <Grid container spacing={2} sx={{ mb: 3 }}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              label="Full Name"
+              name="fullName"
+              value={deliveryInfo.fullName}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              label="Address"
+              name="address"
+              value={deliveryInfo.address}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="City"
+              name="city"
+              value={deliveryInfo.city}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="Province/State"
+              name="province"
+              value={deliveryInfo.province}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="Postal Code"
+              name="postalCode"
+              value={deliveryInfo.postalCode}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="Country"
+              name="country"
+              value={deliveryInfo.country}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              label="Phone (optional)"
+              name="phone"
+              value={deliveryInfo.phone}
+              onChange={handleDeliveryInfoChange}
+              margin="normal"
+            />
+          </Grid>
+        </Grid>
+
+        <Divider sx={{ my: 3 }} />
+
+        <Typography variant="h6" gutterBottom sx={{ mb: 2 }}>
+          Payment Details
+        </Typography>
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+        )}
+
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Card Details
+          </Typography>
+          <Box
+            sx={{
+              p: 2,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              bgcolor: 'background.paper',
+            }}
+          >
+            <CardElement
+              options={{
+                style: {
+                  base: {
+                    fontSize: '16px',
+                    color: '#424770',
+                    '::placeholder': {
+                      color: '#aab7c4',
+                    },
+                  },
+                  invalid: {
+                    color: '#9e2146',
+                  },
+                },
+              }}
+            />
+          </Box>
+        </Box>
+
+        <Button
+          type="submit"
+          fullWidth
+          variant="contained"
+          size="large"
+          disabled={loading || !stripe || !elements}
+          onClick={handleSubmit}
+        >
+          {loading ? 'Processing Payment...' : 'Complete Payment'}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CheckoutForm({ buyerId }) {
+  const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems, loading: cartLoading } = useCart()
+  const { getAccessToken } = useAuth0()
+  const navigate = useNavigate()
+  const [showPayment, setShowPayment] = useState(false)
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [checkoutError, setCheckoutError] = useState('')
+  const [clientSecret, setClientSecret] = useState(null)
+  const [orderId, setOrderId] = useState(null)
+  const [paymentId, setPaymentId] = useState(null)
+  const [success, setSuccess] = useState(false)
+  const [paymentIntent, setPaymentIntent] = useState(null)
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [loadingProduct, setLoadingProduct] = useState(false)
+
+  const formatPrice = (cents, currency = 'CAD') => {
+    return new Intl.NumberFormat('en-CA', {
+      style: 'currency',
+      currency: currency,
+    }).format(cents / 100)
+  }
+
+  const totalItems = getTotalItems()
+  const totalPrice = getTotalPrice()
+  const currency = cartItems.length > 0 && cartItems[0].currency ? cartItems[0].currency : 'CAD'
+
+  const handleProceedToPayment = async () => {
+    if (cartItems.length === 0) {
+      setCheckoutError('Your cart is empty')
+      return
+    }
+
+    setCheckoutLoading(true)
+    setCheckoutError('')
+
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        throw new Error('No access token available. Please log in.')
+      }
+
+      const checkoutResponse = await cartApiClient.checkout(token)
+
+      if (checkoutResponse.error) {
+        throw new Error(checkoutResponse.error)
+      }
+
+      if (!checkoutResponse.clientSecret) {
+        throw new Error('No client secret received from checkout')
+      }
+
+      setClientSecret(checkoutResponse.clientSecret)
+      setOrderId(checkoutResponse.orderId)
+      setPaymentId(checkoutResponse.paymentId)
+      setShowPayment(true)
+    } catch (err) {
+      setCheckoutError(err.message || 'Failed to initiate checkout')
+    } finally {
+      setCheckoutLoading(false)
+    }
+  }
+
+  const handlePaymentSuccess = (intent, orderId, paymentId) => {
+    setPaymentIntent(intent)
+    setSuccess(true)
+  }
+
+  const handleBackToCart = () => {
+    navigate('/')
+  }
+
+  const handleProductClick = async (productId, event) => {
+    // Don't open modal if clicking on quantity controls or delete button
+    if (event.target.closest('button') || event.target.closest('[role="button"]')) {
+      return
+    }
+
+    setLoadingProduct(true)
+    try {
+      const product = await catalogApiClient.getProduct(productId)
+      setSelectedProduct(product)
+      setModalOpen(true)
+    } catch (err) {
+      console.error('Error fetching product details:', err)
+    } finally {
+      setLoadingProduct(false)
+    }
+  }
+
+  const handleCloseModal = () => {
+    setModalOpen(false)
+    setSelectedProduct(null)
   }
 
   if (success) {
@@ -252,24 +360,20 @@ function CheckoutForm({ buyerId }) {
             Payment Successful!
           </Typography>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-            Your payment has been processed successfully.
+            Your order has been confirmed and payment has been processed successfully.
           </Typography>
+          {orderId && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Order ID: {orderId}
+            </Typography>
+          )}
           {paymentId && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
               Payment ID: {paymentId}
             </Typography>
           )}
-          <Button
-            onClick={() => {
-              setSuccess(false)
-              setPaymentId(null)
-              setError('')
-              setSelectedTestCard(null)
-            }}
-            variant="contained"
-            size="large"
-          >
-            Make Another Payment
+          <Button onClick={handleBackToCart} variant="contained" size="large" sx={{ mr: 2 }}>
+            Continue Shopping
           </Button>
         </CardContent>
       </Card>
@@ -279,11 +383,11 @@ function CheckoutForm({ buyerId }) {
   return (
     <Card>
       <CardContent>
-        <Typography 
-          variant="h4" 
-          component="h2" 
+        <Typography
+          variant="h4"
+          component="h2"
           gutterBottom
-          sx={{ 
+          sx={{
             fontWeight: 700,
             background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
             backgroundClip: 'text',
@@ -294,205 +398,179 @@ function CheckoutForm({ buyerId }) {
         >
           Checkout
         </Typography>
-        
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
+
+        {checkoutError && (
+          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setCheckoutError('')}>
+            {checkoutError}
           </Alert>
         )}
-        
-        <form onSubmit={handleSubmit}>
-          <TextField
-            fullWidth
-            label="Seller Email"
-            name="sellerId"
-            type="email"
-            value={formData.sellerId}
-            onChange={handleInputChange}
-            required
-            margin="normal"
-            inputProps={{
-              maxLength: 255,
-            }}
-            helperText="Enter the seller's email address"
-          />
 
-          <TextField
-            fullWidth
-            label="Amount (cents)"
-            name="grossAmountCents"
-            type="number"
-            value={formData.grossAmountCents}
-            onChange={handleInputChange}
-            min="1"
-            max="100000000"
-            required
-            margin="normal"
-            inputProps={{
-              step: 1,
-            }}
-            helperText={`$${(formData.grossAmountCents / 100).toFixed(2)} ${formData.currency} (Max: $1,000,000.00)`}
-          />
-
-          <FormControl fullWidth margin="normal">
-            <InputLabel>Currency</InputLabel>
-            <Select
-              name="currency"
-              value={formData.currency}
-              onChange={handleInputChange}
-              label="Currency"
-            >
-              <MenuItem value="CAD">CAD</MenuItem>
-              <MenuItem value="EUR" disabled>EUR (Coming soon)</MenuItem>
-              <MenuItem value="GBP" disabled>GBP (Coming soon)</MenuItem>
-              <MenuItem value="USD" disabled>USD (Coming soon)</MenuItem>
-            </Select>
-          </FormControl>
-
-          <TextField
-            fullWidth
-            label="Description"
-            name="description"
-            value={formData.description}
-            onChange={handleInputChange}
-            multiline
-            rows={3}
-            margin="normal"
-            inputProps={{
-              maxLength: 500,
-            }}
-            helperText={`${formData.description?.length || 0}/500 characters`}
-          />
-
-          <Box sx={{ mt: 3, mb: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Test Card Presets
+        {/* Cart Items Section */}
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Review Your Order ({totalItems} {totalItems === 1 ? 'item' : 'items'})
             </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-              {testCardPresets.map((preset) => (
-                <Chip
-                  key={preset.id}
-                  label={preset.name}
-                  onClick={() => setSelectedTestCard(preset)}
-                  color={selectedTestCard?.id === preset.id ? 'primary' : 'default'}
-                  variant={selectedTestCard?.id === preset.id ? 'filled' : 'outlined'}
-                />
-              ))}
-            </Box>
-            
-            {selectedTestCard && (
-              <Alert
-                severity="info"
-                action={
-                  <IconButton
-                    size="small"
-                    onClick={() => setSelectedTestCard(null)}
-                  >
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
-                }
-                sx={{ mb: 2 }}
-              >
-                <Typography variant="subtitle2" gutterBottom>
-                  {selectedTestCard.name}
-                </Typography>
-                <Typography variant="caption" display="block">
-                  {selectedTestCard.description}
-                </Typography>
-                <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                  Copy and paste these details into the Stripe card element below:
-                </Typography>
-              </Alert>
-            )}
 
-            {selectedTestCard && (
-              <Box sx={{ 
-                p: 2, 
-                bgcolor: 'grey.50', 
-                borderRadius: 1, 
-                border: '1px solid',
-                borderColor: 'divider',
-                mb: 2
-              }}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 2 }}>
-                  {[
-                    { label: 'Card Number', value: selectedTestCard.cardNumber, field: 'card' },
-                    { label: 'Expiry', value: selectedTestCard.expiry, field: 'expiry' },
-                    { label: 'CVC', value: selectedTestCard.cvc, field: 'cvc' },
-                    { label: 'ZIP Code', value: selectedTestCard.zip, field: 'zip' },
-                  ].map(({ label, value, field }) => (
-                    <Box key={field}>
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                        {label}
-                      </Typography>
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <TextField
-                          value={value}
-                          size="small"
-                          fullWidth
-                          InputProps={{
-                            readOnly: true,
-                            sx: { fontFamily: 'monospace', fontSize: '0.875rem' }
-                          }}
+            {cartItems.length === 0 ? (
+              <Box sx={{ p: 4, textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">
+                  {cartLoading ? 'Loading cart...' : 'Your cart is empty'}
+                </Typography>
+                <Button variant="contained" sx={{ mt: 2 }} onClick={handleBackToCart}>
+                  Continue Shopping
+                </Button>
+              </Box>
+            ) : (
+              <>
+                <List sx={{ p: 0 }}>
+                  {cartItems.map((item, index) => (
+                    <Box key={item.productId || item.itemId}>
+                      <ListItem
+                        sx={{
+                          py: 2,
+                          px: 0,
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover',
+                          },
+                        }}
+                        onClick={(e) => handleProductClick(item.productId, e)}
+                      >
+                        {item.productImage && (
+                          <Box
+                            component="img"
+                            src={item.productImage}
+                            alt={item.productName}
+                            sx={{
+                              width: 60,
+                              height: 60,
+                              objectFit: 'cover',
+                              borderRadius: 1,
+                              mr: 2,
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none'
+                            }}
+                          />
+                        )}
+                        <ListItemText
+                          primary={
+                            <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                              {item.productName || `Product ${item.sku || item.productId}`}
+                            </Typography>
+                          }
+                          secondary={
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">
+                                {formatPrice(item.priceCents, item.currency)} each
+                              </Typography>
+                              <Box
+                                sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    updateQuantity(item.productId, item.quantity - 1)
+                                  }}
+                                  disabled={cartLoading || showPayment}
+                                >
+                                  <RemoveIcon fontSize="small" />
+                                </IconButton>
+                                <Typography variant="body2" sx={{ minWidth: 30, textAlign: 'center' }}>
+                                  {item.quantity}
+                                </Typography>
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    updateQuantity(item.productId, item.quantity + 1)
+                                  }}
+                                  disabled={cartLoading || showPayment}
+                                >
+                                  <AddIcon fontSize="small" />
+                                </IconButton>
+                              </Box>
+                            </Box>
+                          }
                         />
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<ContentCopyIcon />}
-                          onClick={() => copyToClipboard(field === 'card' ? value.replace(/\s/g, '') : value, field)}
-                          color={copySuccess[field] ? 'success' : 'primary'}
-                        >
-                          {copySuccess[field] ? 'Copied!' : 'Copy'}
-                        </Button>
-                      </Box>
+                        <ListItemSecondaryAction onClick={(e) => e.stopPropagation()}>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                            <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                              {formatPrice(item.priceCents * item.quantity, item.currency)}
+                            </Typography>
+                            <IconButton
+                              edge="end"
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeFromCart(item.productId)
+                              }}
+                              disabled={cartLoading || showPayment}
+                              color="error"
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Box>
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                      {index < cartItems.length - 1 && <Divider />}
                     </Box>
                   ))}
+                </List>
+
+                <Divider sx={{ my: 2 }} />
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6">Total</Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                    {formatPrice(totalPrice, currency)}
+                  </Typography>
                 </Box>
-              </Box>
+              </>
             )}
-          </Box>
+          </CardContent>
+        </Card>
 
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Card Details
-            </Typography>
-            <Box sx={{ 
-              p: 2, 
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 1,
-              bgcolor: 'background.paper'
-            }}>
-              <CardElement
-                options={{
-                  style: {
-                    base: {
-                      fontSize: '16px',
-                      color: '#424770',
-                      '::placeholder': {
-                        color: '#aab7c4',
-                      },
-                    },
-                    invalid: {
-                      color: '#9e2146',
-                    },
-                  },
-                }}
-              />
-            </Box>
-          </Box>
-
+        {/* Proceed to Payment Button */}
+        {!showPayment && cartItems.length > 0 && (
           <Button
-            type="submit"
-            fullWidth
             variant="contained"
+            fullWidth
             size="large"
-            disabled={loading || !stripe || !elements}
+            onClick={handleProceedToPayment}
+            disabled={checkoutLoading || cartLoading}
+            sx={{ py: 1.5, mb: 3 }}
           >
-            {loading ? 'Processing...' : `Pay $${(formData.grossAmountCents / 100).toFixed(2)}`}
+            {checkoutLoading ? (
+              <>
+                <CircularProgress size={20} color="inherit" sx={{ mr: 1 }} />
+                Processing...
+              </>
+            ) : (
+              'Proceed to Payment'
+            )}
           </Button>
-        </form>
+        )}
+
+        {/* Payment Form - Only shown after checkout is initiated */}
+        <Collapse in={showPayment}>
+          {clientSecret && (
+            <Elements stripe={stripePromise}>
+              <PaymentForm
+                buyerId={buyerId}
+                clientSecret={clientSecret}
+                orderId={orderId}
+                paymentId={paymentId}
+                onSuccess={handlePaymentSuccess}
+              />
+            </Elements>
+          )}
+        </Collapse>
       </CardContent>
+      <ProductModal open={modalOpen} onClose={handleCloseModal} product={selectedProduct} />
     </Card>
   )
 }
@@ -500,9 +578,7 @@ function CheckoutForm({ buyerId }) {
 function Checkout({ buyerId }) {
   return (
     <Container maxWidth="md" sx={{ py: { xs: 3, sm: 4, md: 5 } }}>
-      <Elements stripe={stripePromise}>
-        <CheckoutForm buyerId={buyerId} />
-      </Elements>
+      <CheckoutForm buyerId={buyerId} />
     </Container>
   )
 }

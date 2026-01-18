@@ -71,6 +71,11 @@ spec:
             secretKeyRef:
               name: cart-secrets
               key: INVENTORY_INTERNAL_API_TOKEN
+        - name: ORDER_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cart-secrets
+              key: ORDER_INTERNAL_API_TOKEN
         - name: JAVA_OPTS
           value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED"
         volumeMounts:

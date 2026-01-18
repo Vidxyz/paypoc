@@ -39,28 +39,33 @@ class PaymentService(
     private val PLATFORM_FEE_PERCENTAGE = 0.10  // 10% platform fee
     
     /**
-     * Creates a payment and Stripe PaymentIntent WITHOUT writing to ledger.
+     * Creates a payment for an order with multiple sellers.
+     * 
+     * One payment per order - buyer pays once to BuyIt platform.
+     * Platform receives payment in Stripe, ledger splits across sellers.
      * 
      * Order of operations:
      * 1. Generate IDs (paymentId, idempotencyKey)
-     * 2. Calculate platform fee (10% of gross)
-     * 3. Calculate net seller amount (90% of gross)
-     * 4. Create Stripe PaymentIntent with marketplace split
-     * 5. Persist payment (state = CREATED, ledger_transaction_id = NULL)
-     * 6. Publish AuthorizePayment command to Kafka
-     * 7. Return payment with client_secret
+     * 2. Calculate per-seller platform fees (10% of each seller's gross)
+     * 3. Calculate per-seller net amounts (90% of each seller's gross)
+     * 4. Calculate total platform fee and total net seller amounts
+     * 5. Validate seller breakdown sums match total gross
+     * 6. Create Stripe PaymentIntent (money goes to platform account)
+     * 7. Persist payment with seller breakdown (state = CREATED, ledger_transaction_id = NULL)
+     * 8. Publish AuthorizePayment command to Kafka
+     * 9. Return payment with client_secret
      * 
      * NO ledger write at this stage - money hasn't moved yet.
      * 
-     * @param request Payment creation request
+     * @param request Order payment creation request with seller breakdowns
      * @return Created payment with Stripe PaymentIntent ID and client secret
      * @throws StripeServiceException if Stripe PaymentIntent creation fails
      */
     @Transactional
-    fun createPayment(request: CreatePaymentRequest): CreatePaymentResponse {
+    fun createOrderPayment(request: CreateOrderPaymentRequest): CreatePaymentResponse {
         // Generate IDs
         val paymentId = UUID.randomUUID()
-        val idempotencyKey = "payment_${paymentId}_${System.currentTimeMillis()}"
+        val idempotencyKey = "order_payment_${request.orderId}_${System.currentTimeMillis()}"
         
         // Check idempotency (if payment already exists, return it with client secret)
         val existingPayment = paymentRepository.findByIdempotencyKey(idempotencyKey)
@@ -74,40 +79,53 @@ class PaymentService(
             )
         }
         
-        // Calculate platform fee and net seller amount
-        val platformFeeCents = (request.grossAmountCents * PLATFORM_FEE_PERCENTAGE).toLong()
-        val netSellerAmountCents = request.grossAmountCents - platformFeeCents
-        
-        // Validate fee calculation
-        require(platformFeeCents >= 0) { "Platform fee cannot be negative" }
-        require(netSellerAmountCents > 0) { "Net seller amount must be positive" }
-        require(platformFeeCents + netSellerAmountCents == request.grossAmountCents) {
-            "Fee calculation error: platform_fee + net_seller_amount must equal gross_amount"
+        // Validate seller breakdown sums match total gross
+        val totalSellerGross = request.sellerBreakdown.sumOf { it.sellerGrossAmountCents }
+        require(totalSellerGross == request.grossAmountCents) {
+            "Seller breakdown sum (${totalSellerGross}) must equal gross amount (${request.grossAmountCents})"
+        }
+        require(request.sellerBreakdown.isNotEmpty()) {
+            "Seller breakdown cannot be empty"
         }
         
-        // Lookup seller's Stripe account from database
-        val sellerStripeAccount = sellerStripeAccountRepository
-            .findBySellerIdAndCurrency(request.sellerId, request.currency)
-            ?: throw PaymentCreationException(
-                "Seller ${request.sellerId} does not have a Stripe account configured for currency ${request.currency}. " +
-                "Please configure the seller's Stripe account before processing payments."
+        // Calculate per-seller breakdowns (platform fee and net amounts)
+        val sellerBreakdowns = request.sellerBreakdown.map { sellerPayment ->
+            val sellerPlatformFee = (sellerPayment.sellerGrossAmountCents * PLATFORM_FEE_PERCENTAGE).toLong()
+            val sellerNetAmount = sellerPayment.sellerGrossAmountCents - sellerPlatformFee
+            
+            require(sellerPlatformFee >= 0) { "Platform fee cannot be negative for seller ${sellerPayment.sellerId}" }
+            require(sellerNetAmount > 0) { "Net seller amount must be positive for seller ${sellerPayment.sellerId}" }
+            
+            com.payments.platform.payments.domain.SellerBreakdown(
+                sellerId = sellerPayment.sellerId,
+                sellerGrossAmountCents = sellerPayment.sellerGrossAmountCents,
+                platformFeeCents = sellerPlatformFee,
+                netSellerAmountCents = sellerNetAmount
             )
+        }
         
-        logger.debug(
-            "Found Stripe account for seller ${request.sellerId} (${request.currency}): ${sellerStripeAccount.stripeAccountId}"
-        )
+        // Calculate totals
+        val totalPlatformFee = sellerBreakdowns.sumOf { it.platformFeeCents }
+        val totalNetSellerAmount = sellerBreakdowns.sumOf { it.netSellerAmountCents }
+        
+        // Validate totals
+        require(totalPlatformFee >= 0) { "Total platform fee cannot be negative" }
+        require(totalNetSellerAmount > 0) { "Total net seller amount must be positive" }
+        require(totalPlatformFee + totalNetSellerAmount == request.grossAmountCents) {
+            "Fee calculation error: totalPlatformFee + totalNetSellerAmount must equal grossAmountCents"
+        }
         
         // Create Stripe PaymentIntent - money goes to platform account
-        // Platform will later transfer seller portion via Stripe Transfers API
+        // No seller Stripe account lookup needed - payment goes to platform
         val paymentIntent = try {
             stripeService.createPaymentIntent(
                 amountCents = request.grossAmountCents,
                 currency = request.currency,
-                description = request.description ?: "Payment: ${request.buyerId} → ${request.sellerId}",
+                description = request.description ?: "Payment for order ${request.orderId}",
                 metadata = mapOf(
                     "paymentId" to paymentId.toString(),
+                    "orderId" to request.orderId.toString(),
                     "buyerId" to request.buyerId,
-                    "sellerId" to request.sellerId,
                     "idempotencyKey" to idempotencyKey
                 )
             )
@@ -118,12 +136,13 @@ class PaymentService(
         // Persist payment with Stripe PaymentIntent ID (NO ledger write - money hasn't moved yet)
         val payment = Payment(
             id = paymentId,
+            orderId = request.orderId,
             buyerId = request.buyerId,
-            sellerId = request.sellerId,
             grossAmountCents = request.grossAmountCents,
-            platformFeeCents = platformFeeCents,
-            netSellerAmountCents = netSellerAmountCents,
+            platformFeeCents = totalPlatformFee,
+            netSellerAmountCents = totalNetSellerAmount,
             currency = request.currency,
+            sellerBreakdown = sellerBreakdowns,
             state = PaymentState.CREATED,
             stripePaymentIntentId = paymentIntent.id,
             ledgerTransactionId = null,  // NULL until capture (ledger write happens after Stripe confirms)
@@ -144,7 +163,7 @@ class PaymentService(
                 attempt = 1
             )
             kafkaProducer.publishCommand(command)
-            logger.info("Published AuthorizePayment command for payment ${saved.id}")
+            logger.info("Published AuthorizePayment command for order payment ${saved.id} (order: ${request.orderId})")
         } catch (e: Exception) {
             // Log error but don't fail the request - payment is already created
             logger.error("Failed to publish AuthorizePayment command for payment ${saved.id}", e)
@@ -173,12 +192,13 @@ class PaymentService(
         // Update state and refundedAt - create new entity with updated fields
         val updated = PaymentEntity(
             id = entity.id,
+            orderId = entity.orderId,
             buyerId = entity.buyerId,
-            sellerId = entity.sellerId,
             grossAmountCents = entity.grossAmountCents,
             platformFeeCents = entity.platformFeeCents,
             netSellerAmountCents = entity.netSellerAmountCents,
             currency = entity.currency,
+            sellerBreakdown = entity.sellerBreakdown,
             state = newState,
             stripePaymentIntentId = entity.stripePaymentIntentId,
             ledgerTransactionId = entity.ledgerTransactionId,
@@ -216,12 +236,13 @@ class PaymentService(
         
         val updated = PaymentEntity(
             id = entity.id,
+            orderId = entity.orderId,
             buyerId = entity.buyerId,
-            sellerId = entity.sellerId,
             grossAmountCents = entity.grossAmountCents,
             platformFeeCents = entity.platformFeeCents,
             netSellerAmountCents = entity.netSellerAmountCents,
             currency = entity.currency,
+            sellerBreakdown = entity.sellerBreakdown,
             state = entity.state,
             stripePaymentIntentId = stripePaymentIntentId,
             ledgerTransactionId = entity.ledgerTransactionId,
@@ -244,12 +265,13 @@ class PaymentService(
         
         val updated = PaymentEntity(
             id = entity.id,
+            orderId = entity.orderId,
             buyerId = entity.buyerId,
-            sellerId = entity.sellerId,
             grossAmountCents = entity.grossAmountCents,
             platformFeeCents = entity.platformFeeCents,
             netSellerAmountCents = entity.netSellerAmountCents,
             currency = entity.currency,
+            sellerBreakdown = entity.sellerBreakdown,
             state = entity.state,
             stripePaymentIntentId = entity.stripePaymentIntentId,
             ledgerTransactionId = ledgerTransactionId,
@@ -279,12 +301,13 @@ class PaymentService(
         // Update state - create new entity with updated fields
         val updated = PaymentEntity(
             id = entity.id,
+            orderId = entity.orderId,
             buyerId = entity.buyerId,
-            sellerId = entity.sellerId,
             grossAmountCents = entity.grossAmountCents,
             platformFeeCents = entity.platformFeeCents,
             netSellerAmountCents = entity.netSellerAmountCents,
             currency = entity.currency,
+            sellerBreakdown = entity.sellerBreakdown,
             state = newState,
             stripePaymentIntentId = entity.stripePaymentIntentId,
             ledgerTransactionId = entity.ledgerTransactionId,
@@ -304,6 +327,15 @@ class PaymentService(
     fun getPayment(paymentId: UUID): Payment {
         val entity = paymentRepository.findById(paymentId)
             .orElseThrow { IllegalArgumentException("Payment not found: $paymentId") }
+        return entity.toDomain()
+    }
+    
+    /**
+     * Gets a payment by order ID.
+     */
+    fun getPaymentByOrderId(orderId: UUID): Payment {
+        val entity = paymentRepository.findByOrderId(orderId)
+            ?: throw IllegalArgumentException("Payment not found for order: $orderId")
         return entity.toDomain()
     }
     
@@ -426,14 +458,23 @@ class PaymentService(
 }
 
 /**
- * Request to create a payment.
+ * Request to create a payment for an order with multiple sellers.
  */
-data class CreatePaymentRequest(
+data class CreateOrderPaymentRequest(
+    val orderId: UUID,
     val buyerId: String,
-    val sellerId: String,  // Seller's Stripe account will be looked up from database
     val grossAmountCents: Long,
     val currency: String,
+    val sellerBreakdown: List<SellerPaymentBreakdown>,  // Per-seller gross amounts
     val description: String? = null
+)
+
+/**
+ * Seller payment breakdown (input - only gross amount, fees calculated).
+ */
+data class SellerPaymentBreakdown(
+    val sellerId: String,
+    val sellerGrossAmountCents: Long  // This seller's portion of the total order
 )
 
 /**

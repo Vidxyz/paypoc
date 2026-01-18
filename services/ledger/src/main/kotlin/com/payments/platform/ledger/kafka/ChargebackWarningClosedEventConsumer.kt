@@ -106,7 +106,7 @@ class ChargebackWarningClosedEventConsumer(
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = "${event.stripeDisputeId}_WARNING_CLOSED", // Unique reference for warning_closed outcome
                 idempotencyKey = "${event.idempotencyKey}_WARNING_CLOSED",
-                description = "Chargeback warning_closed: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId} (both amount and fee returned)",
+                description = "Chargeback warning_closed: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s) (both amount and fee returned)",
                 entries = listOf(
                     EntryRequest(
                         accountId = stripeClearingAccount.id,
@@ -192,6 +192,7 @@ data class ChargebackWarningClosedEvent(
     val stripePaymentIntentId: String,
     val idempotencyKey: String,
     val buyerId: String,
-    val sellerId: String
+    val sellerBreakdown: List<SellerChargebackBreakdown>
 )
+
 

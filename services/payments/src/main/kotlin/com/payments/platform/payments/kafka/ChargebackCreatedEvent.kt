@@ -12,6 +12,9 @@ import java.util.UUID
  * 
  * Consumed by:
  * - Ledger Service (to create double-entry transaction debiting STRIPE_CLEARING)
+ * 
+ * Note: sellerBreakdown is included for reference but no seller-specific ledger entries are needed
+ * (money is simply moved from STRIPE_CLEARING to CHARGEBACK_CLEARING).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ChargebackCreatedEvent(
@@ -51,7 +54,7 @@ data class ChargebackCreatedEvent(
     @JsonProperty("buyerId")
     val buyerId: String,
     
-    @JsonProperty("sellerId")
-    val sellerId: String
+    @JsonProperty("sellerBreakdown")
+    val sellerBreakdown: List<SellerChargebackBreakdown>  // Per-seller breakdown (for reference)
 )
 

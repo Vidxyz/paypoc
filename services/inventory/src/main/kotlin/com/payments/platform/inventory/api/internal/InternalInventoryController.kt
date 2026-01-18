@@ -150,6 +150,45 @@ class InternalInventoryController(
     }
     
     /**
+     * POST /internal/reservations/{reservationId}/allocate
+     * Allocates a reservation (converts soft reservation to hard allocation).
+     * 
+     * Requires: Authorization: Bearer {token}
+     */
+    @PostMapping("/reservations/{reservationId}/allocate")
+    @Operation(
+        summary = "Allocate reservation - Internal",
+        description = "Converts a soft reservation to a hard allocation (checkout). Moves stock from reserved to allocated. Service-to-service only."
+    )
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Reservation allocated successfully"),
+        ApiResponse(responseCode = "400", description = "Invalid request data or reservation cannot be allocated"),
+        ApiResponse(responseCode = "401", description = "Unauthorized: Invalid or missing token"),
+        ApiResponse(responseCode = "404", description = "Reservation not found")
+    ])
+    fun allocateReservation(
+        @PathVariable reservationId: UUID,
+        @RequestBody(required = false) request: AllocateReservationRequest?,
+        httpRequest: HttpServletRequest
+    ): ResponseEntity<Reservation> {
+        if (!validateToken(httpRequest)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
+        }
+        
+        return try {
+            val orderId = request?.orderId ?: reservationId // Use request orderId if provided, otherwise fall back to reservationId
+            val reservation = reservationService.allocateReservation(reservationId, orderId)
+            ResponseEntity.ok(reservation)
+        } catch (e: NoSuchElementException) {
+            ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        } catch (e: IllegalStateException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
+        } catch (e: IllegalArgumentException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
+        }
+    }
+    
+    /**
      * POST /internal/reservations/{reservationId}/release
      * Releases a reservation.
      * 
@@ -184,6 +223,10 @@ class InternalInventoryController(
         }
     }
 }
+
+data class AllocateReservationRequest(
+    val orderId: UUID
+)
 
 data class BatchStockRequest(
     @field:Valid

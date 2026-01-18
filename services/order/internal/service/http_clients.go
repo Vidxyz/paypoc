@@ -30,24 +30,27 @@ func NewInventoryClient(baseURL, token string) *InventoryClient {
 }
 
 // CreateHardAllocation converts a soft reservation to a hard allocation
-// TODO: This requires an internal endpoint in inventory service that takes reservationId
-// For now, this is a placeholder that will need the inventory service to expose:
-// POST /internal/reservations/{reservationId}/allocate
-// OR we need to look up the reservation first to get inventoryId, then call allocate
 func (c *InventoryClient) CreateHardAllocation(ctx context.Context, reservationID, orderID uuid.UUID, quantity int) error {
-	// Option 1: If inventory service exposes POST /internal/reservations/{reservationId}/allocate
+	// Request body with orderId
+	requestBody := map[string]string{
+		"orderId": orderID.String(),
+	}
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/internal/reservations/%s/allocate", c.baseURL, reservationID), nil)
+		fmt.Sprintf("%s/internal/reservations/%s/allocate", c.baseURL, reservationID), bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		// If endpoint doesn't exist, try Option 2: Look up reservation first
-		// For now, we'll need to implement this in inventory service
 		return fmt.Errorf("inventory service endpoint not available: %w", err)
 	}
 	defer resp.Body.Close()
@@ -108,15 +111,17 @@ func (c *InventoryClient) ReleaseReservation(ctx context.Context, reservationID 
 
 // PaymentClient handles communication with payments service
 type PaymentClient struct {
-	baseURL string
-	client  *http.Client
+	baseURL       string
+	internalToken string
+	client        *http.Client
 }
 
-func NewPaymentClient(baseURL string) *PaymentClient {
+func NewPaymentClient(baseURL, internalToken string) *PaymentClient {
 	return &PaymentClient{
-		baseURL: baseURL,
+		baseURL:       baseURL,
+		internalToken: internalToken,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second, // Increased timeout for payment creation which may involve Stripe API calls
 		},
 	}
 }
@@ -126,18 +131,36 @@ type CreatePaymentResponse struct {
 	ClientSecret string    `json:"clientSecret"`
 }
 
-func (c *PaymentClient) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*CreatePaymentResponse, error) {
+// CreateOrderPaymentRequest represents a request to create an order payment (one payment per order, multiple sellers)
+type CreateOrderPaymentRequest struct {
+	OrderID          uuid.UUID                `json:"orderId"`
+	BuyerID          string                   `json:"buyerId"`
+	GrossAmountCents int64                    `json:"grossAmountCents"`
+	Currency         string                   `json:"currency"`
+	SellerBreakdown  []SellerPaymentBreakdown `json:"sellerBreakdown"`
+	Description      string                   `json:"description,omitempty"`
+}
+
+// SellerPaymentBreakdown represents one seller's portion of the order
+type SellerPaymentBreakdown struct {
+	SellerID               string `json:"sellerId"`
+	SellerGrossAmountCents int64  `json:"sellerGrossAmountCents"`
+}
+
+func (c *PaymentClient) CreateOrderPayment(ctx context.Context, req CreateOrderPaymentRequest) (*CreatePaymentResponse, error) {
 	jsonData, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/payments", bytes.NewBuffer(jsonData))
+	// Use internal API endpoint
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/internal/payments/order", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.internalToken)
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
@@ -150,19 +173,27 @@ func (c *PaymentClient) CreatePayment(ctx context.Context, req CreatePaymentRequ
 		return nil, fmt.Errorf("payments service returned %d: %s", resp.StatusCode, string(body))
 	}
 
+	// PaymentResponseDto structure from payments service
 	var paymentResp struct {
-		Payment struct {
-			ID uuid.UUID `json:"id"`
-		} `json:"payment"`
-		ClientSecret string `json:"clientSecret"`
+		ID           *uuid.UUID `json:"id"`
+		ClientSecret string     `json:"clientSecret"`
+		Error        string     `json:"error,omitempty"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&paymentResp); err != nil {
 		return nil, err
 	}
 
+	if paymentResp.Error != "" {
+		return nil, fmt.Errorf("payment creation failed: %s", paymentResp.Error)
+	}
+
+	if paymentResp.ID == nil {
+		return nil, fmt.Errorf("payment response missing id")
+	}
+
 	return &CreatePaymentResponse{
-		PaymentID:    paymentResp.Payment.ID,
+		PaymentID:    *paymentResp.ID,
 		ClientSecret: paymentResp.ClientSecret,
 	}, nil
 }

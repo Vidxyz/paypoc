@@ -12,6 +12,9 @@ import java.util.UUID
  * - state is workflow-only
  * 
  * If this database is deleted, money is still correct in the ledger.
+ * 
+ * For partial refunds with multiple sellers, sellerRefundBreakdown stores the per-seller breakdown.
+ * orderItemsRefunded stores which specific order items were refunded (for order service tracking).
  */
 data class Refund(
     val id: UUID,
@@ -20,6 +23,8 @@ data class Refund(
     val platformFeeRefundCents: Long,
     val netSellerRefundCents: Long,
     val currency: String,
+    val sellerRefundBreakdown: List<SellerRefundBreakdown>?,  // Per-seller refund breakdown (for partial refunds)
+    val orderItemsRefunded: List<OrderItemRefundSnapshot>?,  // Which order items were refunded (for order service tracking)
     val state: RefundState,
     val stripeRefundId: String?,
     val ledgerTransactionId: UUID?,  // NULL until refund confirmed

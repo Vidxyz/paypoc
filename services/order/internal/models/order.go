@@ -20,32 +20,34 @@ const (
 
 // Order represents an order in the system
 type Order struct {
-	ID          uuid.UUID
-	BuyerID     string
-	Status      OrderStatus
-	Provisional bool
-	PaymentID   *uuid.UUID
-	TotalCents  int64
-	Currency    string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ConfirmedAt *time.Time
-	CancelledAt *time.Time
+	ID           uuid.UUID
+	BuyerID      string
+	Status       OrderStatus
+	Provisional  bool
+	PaymentID    *uuid.UUID
+	TotalCents   int64
+	Currency     string
+	RefundStatus string // NONE, PARTIAL, FULL
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	ConfirmedAt  *time.Time
+	CancelledAt  *time.Time
 }
 
 // OrderItem represents an item in an order
 type OrderItem struct {
-	ID            uuid.UUID
-	OrderID       uuid.UUID
-	ProductID     uuid.UUID
-	SKU           string
-	SellerID      string
-	Quantity      int
-	PriceCents    int64
-	Currency      string
-	ReservationID *uuid.UUID
-	ShipmentID    *uuid.UUID
-	CreatedAt     time.Time
+	ID               uuid.UUID
+	OrderID          uuid.UUID
+	ProductID        uuid.UUID
+	SKU              string
+	SellerID         string
+	Quantity         int
+	PriceCents       int64
+	Currency         string
+	RefundedQuantity int // Quantity of this item that has been refunded
+	ReservationID    *uuid.UUID
+	ShipmentID       *uuid.UUID
+	CreatedAt        time.Time
 }
 
 // Shipment represents a shipment (one per seller)

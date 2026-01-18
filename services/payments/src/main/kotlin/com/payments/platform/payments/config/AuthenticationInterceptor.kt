@@ -99,7 +99,8 @@ class AuthenticationInterceptor(
                uri.startsWith("/v3/api-docs") ||
                uri.startsWith("/api/v3/api-docs") ||
                uri.startsWith("/configuration") ||
-               uri.startsWith("/webjars")
+               uri.startsWith("/webjars") ||
+               uri.startsWith("/internal")  // Internal API endpoints use their own opaque token authentication
     }
     
     /**

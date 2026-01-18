@@ -8,8 +8,11 @@ import java.util.UUID
  * 
  * This event triggers ledger write to reverse the original payment transaction.
  * 
+ * For partial refunds with multiple sellers, includes sellerRefundBreakdown.
+ * 
  * Consumed by:
  * - Ledger Service (to create reversed double-entry transaction)
+ * - Order Service (to track refunded order items)
  */
 data class RefundCompletedEvent(
     @JsonProperty("type")
@@ -20,6 +23,9 @@ data class RefundCompletedEvent(
     
     @JsonProperty("paymentId")
     val paymentId: UUID,
+    
+    @JsonProperty("orderId")
+    val orderId: UUID,
     
     @JsonProperty("refundAmountCents")
     val refundAmountCents: Long,
@@ -45,7 +51,43 @@ data class RefundCompletedEvent(
     @JsonProperty("buyerId")
     val buyerId: String,
     
-    @JsonProperty("sellerId")
-    val sellerId: String
+    @JsonProperty("sellerRefundBreakdown")
+    val sellerRefundBreakdown: List<SellerRefundBreakdownEvent>? = null,  // Per-seller refund breakdown (for partial refunds)
+    
+    @JsonProperty("orderItemsRefunded")
+    val orderItemsRefunded: List<OrderItemRefundInfo>? = null  // Which order items were refunded (for order service tracking)
 )
 
+/**
+ * Seller refund breakdown event - one per seller in the refund.
+ */
+data class SellerRefundBreakdownEvent(
+    @JsonProperty("sellerId")
+    val sellerId: String,
+    
+    @JsonProperty("refundAmountCents")
+    val refundAmountCents: Long,
+    
+    @JsonProperty("platformFeeRefundCents")
+    val platformFeeRefundCents: Long,  // This seller's platform fee refund
+    
+    @JsonProperty("netSellerRefundCents")
+    val netSellerRefundCents: Long  // This seller's net refund
+)
+
+/**
+ * Order item refund info - specifies which order items were refunded.
+ */
+data class OrderItemRefundInfo(
+    @JsonProperty("orderItemId")
+    val orderItemId: UUID,
+    
+    @JsonProperty("quantity")
+    val quantity: Int,
+    
+    @JsonProperty("sellerId")
+    val sellerId: String,
+    
+    @JsonProperty("priceCents")
+    val priceCents: Long
+)

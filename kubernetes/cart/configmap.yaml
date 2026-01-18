@@ -90,4 +90,16 @@ data:
         }
       }
     }
+    
+    order {
+      service {
+        url = "http://order-service.order.svc.cluster.local:8084"
+        url = ${?ORDER_SERVICE_URL}
+        internal {
+          api {
+            token = ${?ORDER_INTERNAL_API_TOKEN}
+          }
+        }
+      }
+    }
 

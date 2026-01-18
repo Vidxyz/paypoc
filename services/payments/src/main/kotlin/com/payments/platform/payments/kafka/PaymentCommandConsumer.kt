@@ -176,16 +176,26 @@ class PaymentCommandConsumer(
         paymentService.transitionPayment(payment.id, PaymentState.CAPTURED)
         
         // Publish PaymentCapturedEvent - this triggers ledger write
+        val sellerBreakdownEvents = payment.sellerBreakdown.map { breakdown ->
+            SellerBreakdownEvent(
+                sellerId = breakdown.sellerId,
+                sellerGrossAmountCents = breakdown.sellerGrossAmountCents,
+                platformFeeCents = breakdown.platformFeeCents,
+                netSellerAmountCents = breakdown.netSellerAmountCents
+            )
+        }
+        
         val capturedEvent = PaymentCapturedEvent(
             paymentId = payment.id,
             idempotencyKey = payment.idempotencyKey,
+            orderId = payment.orderId,
             buyerId = payment.buyerId,
-            sellerId = payment.sellerId,
             grossAmountCents = payment.grossAmountCents,
             platformFeeCents = payment.platformFeeCents,
             netSellerAmountCents = payment.netSellerAmountCents,
             currency = payment.currency,
             stripePaymentIntentId = payment.stripePaymentIntentId ?: throw IllegalStateException("Payment ${payment.id} missing stripePaymentIntentId"),
+            sellerBreakdown = sellerBreakdownEvents,
             attempt = command.attempt
         )
         kafkaProducer.publishEvent(capturedEvent)

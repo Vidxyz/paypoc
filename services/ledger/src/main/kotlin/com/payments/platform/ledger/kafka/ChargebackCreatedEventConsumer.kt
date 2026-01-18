@@ -107,7 +107,7 @@ class ChargebackCreatedEventConsumer(
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
                 idempotencyKey = event.idempotencyKey,
-                description = "Chargeback created: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId}, Reason: ${event.reason ?: "unknown"}",
+                description = "Chargeback created: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s), Reason: ${event.reason ?: "unknown"}",
                 entries = listOf(
                     EntryRequest(
                         accountId = chargebackClearingAccount.id,
@@ -190,6 +190,7 @@ data class ChargebackCreatedEvent(
     val reason: String?,
     val idempotencyKey: String,
     val buyerId: String,
-    val sellerId: String
+    val sellerBreakdown: List<SellerChargebackBreakdown>
 )
+
 

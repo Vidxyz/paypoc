@@ -222,6 +222,12 @@ export const syncInventory = async () => {
   return response.data
 }
 
+// Get product by ID (for fetching product images/details)
+export const getProduct = async (productId) => {
+  const response = await catalogApi.get(`/api/catalog/products/${productId}`)
+  return response.data
+}
+
 // Order service endpoints
 const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'https://order.local'
 
@@ -269,10 +275,14 @@ orderApi.interceptors.request.use(
 )
 
 // List orders (ADMIN only, with optional buyer filter and pagination)
-export const getOrders = async (page = 0, pageSize = 20, buyerId = null) => {
+export const getOrders = async (page = 0, pageSize = 20, filterValue = null, filterType = 'uuid') => {
   const params = { page, page_size: pageSize }
-  if (buyerId) {
-    params.buyer_id = buyerId
+  if (filterValue) {
+    if (filterType === 'email') {
+      params.buyer_email = filterValue
+    } else {
+      params.buyer_id = filterValue
+    }
   }
   const response = await orderApi.get('/api/orders', { params })
   return response.data

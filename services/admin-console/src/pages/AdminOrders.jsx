@@ -29,12 +29,16 @@ import {
   Checkbox,
   FormControlLabel,
   IconButton,
+  List,
+  ListItem,
+  ListItemText,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import SearchIcon from '@mui/icons-material/Search'
 import CloseIcon from '@mui/icons-material/Close'
 import ReceiptIcon from '@mui/icons-material/Receipt'
-import { getOrders, getOrder, createFullRefund, createPartialRefund } from '../api/adminApi'
+import ShoppingBagIcon from '@mui/icons-material/ShoppingBag'
+import { getOrders, getOrder, createFullRefund, createPartialRefund, getProduct } from '../api/adminApi'
 import ConfirmationModal from '../components/ConfirmationModal'
 
 function AdminOrders() {
@@ -45,13 +49,19 @@ function AdminOrders() {
   const [totalPages, setTotalPages] = useState(0)
   const [total, setTotal] = useState(0)
   const [buyerFilter, setBuyerFilter] = useState('')
+  const [debouncedBuyerFilter, setDebouncedBuyerFilter] = useState('')
+  const [filterType, setFilterType] = useState('uuid') // 'uuid' or 'email'
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  
+  // Order details dialog state
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
+  const [viewOrderDetails, setViewOrderDetails] = useState(null)
+  const [loadingOrderDetails, setLoadingOrderDetails] = useState(false)
   
   // Refund dialog state
   const [refundDialogOpen, setRefundDialogOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [orderDetails, setOrderDetails] = useState(null)
-  const [loadingOrderDetails, setLoadingOrderDetails] = useState(false)
   const [selectedItems, setSelectedItems] = useState({}) // { orderItemId: quantity }
   const [refundType, setRefundType] = useState('full') // 'full' or 'partial'
   const [processingRefund, setProcessingRefund] = useState(false)
@@ -60,8 +70,8 @@ function AdminOrders() {
     setLoading(true)
     setError('')
     try {
-      const buyerId = buyerFilter.trim() || null
-      const response = await getOrders(page, 20, buyerId)
+      const filterValue = debouncedBuyerFilter.trim() || null
+      const response = await getOrders(page, 20, filterValue, filterType)
       if (response.error) {
         setError(response.error)
       } else {
@@ -76,13 +86,71 @@ function AdminOrders() {
     }
   }
 
+  // Debounce the buyer filter input (500ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedBuyerFilter(buyerFilter)
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [buyerFilter])
+
+  // Load orders when debounced filter, page, or filter type changes
   useEffect(() => {
     loadOrders()
-  }, [page, buyerFilter])
+  }, [page, debouncedBuyerFilter, filterType])
 
   const handleBuyerFilterChange = (e) => {
     setBuyerFilter(e.target.value)
     setPage(0) // Reset to first page when filter changes
+    // Note: API call will be triggered after debounce delay via debouncedBuyerFilter
+  }
+
+  const handleViewDetails = async (order) => {
+    setViewOrderDetails(null)
+    setLoadingOrderDetails(true)
+    setDetailsDialogOpen(true)
+    
+    try {
+      const details = await getOrder(order.id)
+      
+      // Fetch product details for each item to get images
+      if (details.items && details.items.length > 0) {
+        const itemsWithProducts = await Promise.all(
+          details.items.map(async (item) => {
+            try {
+              const product = await getProduct(item.product_id || item.productId)
+              return {
+                ...item,
+                productName: product?.name || `Product ${item.sku || 'Unknown'}`,
+                productImage: product?.images?.[0] || null,
+              }
+            } catch (err) {
+              console.error(`Failed to fetch product ${item.product_id || item.productId}:`, err)
+              return {
+                ...item,
+                productName: `Product ${item.sku || 'Unknown'}`,
+                productImage: null,
+              }
+            }
+          })
+        )
+        details.items = itemsWithProducts
+      }
+      
+      setViewOrderDetails(details)
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: `Failed to load order details: ${err.message}`,
+        severity: 'error',
+      })
+      setDetailsDialogOpen(false)
+    } finally {
+      setLoadingOrderDetails(false)
+    }
   }
 
   const handleRefundClick = async (order) => {
@@ -286,9 +354,36 @@ function AdminOrders() {
           </Box>
 
           <Box sx={{ mb: 3 }}>
+            <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
+              <Typography variant="body2" color="text.secondary">
+                Filter by:
+              </Typography>
+              <Chip
+                label="UUID"
+                onClick={() => {
+                  setFilterType('uuid')
+                  setBuyerFilter('')
+                  setPage(0)
+                }}
+                color={filterType === 'uuid' ? 'primary' : 'default'}
+                variant={filterType === 'uuid' ? 'filled' : 'outlined'}
+                sx={{ cursor: 'pointer' }}
+              />
+              <Chip
+                label="Email"
+                onClick={() => {
+                  setFilterType('email')
+                  setBuyerFilter('')
+                  setPage(0)
+                }}
+                color={filterType === 'email' ? 'primary' : 'default'}
+                variant={filterType === 'email' ? 'filled' : 'outlined'}
+                sx={{ cursor: 'pointer' }}
+              />
+            </Box>
             <TextField
               fullWidth
-              placeholder="Filter by buyer ID..."
+              placeholder={filterType === 'uuid' ? 'Filter by buyer UUID (starts with)...' : 'Filter by buyer email (starts with)...'}
               value={buyerFilter}
               onChange={handleBuyerFilterChange}
               InputProps={{
@@ -368,23 +463,64 @@ function AdminOrders() {
                               />
                             </TableCell>
                             <TableCell>
-                              {formatAmount(order.total_cents, order.currency)}
+                              {(() => {
+                                // Calculate adjusted total (after refunds)
+                                const totalRefundedCents = order.items?.reduce((sum, item) => {
+                                  const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                                  const priceCents = item.price_cents || item.priceCents
+                                  return sum + (refundedQty * priceCents)
+                                }, 0) || 0
+                                const originalTotalCents = order.total_cents || order.totalCents || 0
+                                const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                                const currency = order.currency || 'CAD'
+                                
+                                return (
+                                  <Box>
+                                    {totalRefundedCents > 0 ? (
+                                      <>
+                                        <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                          {formatAmount(originalTotalCents, currency)}
+                                        </Typography>
+                                        <Typography variant="body1" fontWeight="bold" color="success.main">
+                                          {formatAmount(adjustedTotalCents, currency)}
+                                        </Typography>
+                                      </>
+                                ) : (
+                                  <Typography variant="body1" fontWeight="bold">
+                                    {formatAmount(originalTotalCents, currency)}
+                                  </Typography>
+                                )}
+                                  </Box>
+                                )
+                              })()}
                             </TableCell>
                             <TableCell>
-                              {order.items?.length || 0} item(s)
+                              {order.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0} item(s)
                             </TableCell>
                             <TableCell>{formatDate(order.created_at)}</TableCell>
                             <TableCell>
-                              <Button
-                                variant="outlined"
-                                size="small"
-                                color="error"
-                                onClick={() => handleRefundClick(order)}
-                                disabled={!canRefund}
-                                title={reason || 'Refund order'}
-                              >
-                                Refund
-                              </Button>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  onClick={() => handleViewDetails(order)}
+                                >
+                                  View Details
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  color="error"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleRefundClick(order)
+                                  }}
+                                  disabled={!canRefund}
+                                  title={reason || 'Refund order'}
+                                >
+                                  Refund
+                                </Button>
+                              </Box>
                             </TableCell>
                           </TableRow>
                         )
@@ -456,12 +592,47 @@ function AdminOrders() {
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Total Amount
+                    Original Total
                   </Typography>
                   <Typography variant="h6">
-                    {formatAmount(orderDetails.total_cents, orderDetails.currency)}
+                    {formatAmount(orderDetails.total_cents || orderDetails.totalCents, orderDetails.currency)}
                   </Typography>
                 </Grid>
+                {(() => {
+                  // Calculate total refunded amount
+                  const totalRefundedCents = orderDetails.items?.reduce((sum, item) => {
+                    const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                    const priceCents = item.price_cents || item.priceCents
+                    return sum + (refundedQty * priceCents)
+                  }, 0) || 0
+                  const originalTotalCents = orderDetails.total_cents || orderDetails.totalCents || 0
+                  const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                  const currency = orderDetails.currency || 'CAD'
+                  
+                  if (totalRefundedCents > 0) {
+                    return (
+                      <>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Refunded Amount
+                          </Typography>
+                          <Typography variant="h6" color="error.main">
+                            -{formatAmount(totalRefundedCents, currency)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Adjusted Total
+                          </Typography>
+                          <Typography variant="h6" color="success.main" fontWeight="bold">
+                            {formatAmount(adjustedTotalCents, currency)}
+                          </Typography>
+                        </Grid>
+                      </>
+                    )
+                  }
+                  return null
+                })()}
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                     Status
@@ -514,75 +685,84 @@ function AdminOrders() {
                   <Typography variant="subtitle1" gutterBottom>
                     Select Items to Refund
                   </Typography>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell padding="checkbox">Select</TableCell>
-                          <TableCell>SKU</TableCell>
-                          <TableCell>Seller</TableCell>
-                          <TableCell>Quantity</TableCell>
-                          <TableCell>Available</TableCell>
-                          <TableCell>Price</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {orderDetails.items?.map((item) => {
-                          const refundedQty = item.refunded_quantity || 0
-                          const availableQty = item.quantity - refundedQty
-                          const isSelected = !!selectedItems[item.id]
-                          const selectedQty = selectedItems[item.id] || 0
+                  {orderDetails.items?.some(item => {
+                    const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                    return (item.quantity - refundedQty) > 0
+                  }) ? (
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell padding="checkbox">Select</TableCell>
+                            <TableCell>SKU</TableCell>
+                            <TableCell>Seller</TableCell>
+                            <TableCell>Quantity</TableCell>
+                            <TableCell>Available</TableCell>
+                            <TableCell>Price</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {orderDetails.items?.map((item) => {
+                            const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                            const availableQty = item.quantity - refundedQty
+                            const isSelected = !!selectedItems[item.id]
+                            const selectedQty = selectedItems[item.id] || 0
 
-                          return (
-                            <TableRow key={item.id}>
-                              <TableCell padding="checkbox">
-                                <Checkbox
-                                  checked={isSelected}
-                                  onChange={() => handleItemSelectionChange(item.id, availableQty)}
-                                  disabled={availableQty === 0}
-                                />
-                              </TableCell>
-                              <TableCell>{item.sku}</TableCell>
-                              <TableCell>{item.seller_id}</TableCell>
-                              <TableCell>
-                                {isSelected ? (
-                                  <TextField
-                                    type="number"
-                                    size="small"
-                                    value={selectedQty}
-                                    onChange={(e) =>
-                                      handleQuantityChange(
-                                        item.id,
-                                        parseInt(e.target.value) || 0,
-                                        availableQty
-                                      )
-                                    }
-                                    inputProps={{
-                                      min: 1,
-                                      max: availableQty,
-                                    }}
-                                    sx={{ width: 80 }}
+                            return (
+                              <TableRow key={item.id}>
+                                <TableCell padding="checkbox">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onChange={() => handleItemSelectionChange(item.id, availableQty)}
+                                    disabled={availableQty === 0}
                                   />
-                                ) : (
-                                  item.quantity
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {availableQty > 0 ? (
-                                  <Chip label={availableQty} color="success" size="small" />
-                                ) : (
-                                  <Chip label="0" color="error" size="small" />
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {formatAmount(item.price_cents * (isSelected ? selectedQty : item.quantity), item.currency)}
-                              </TableCell>
-                            </TableRow>
-                          )
-                        })}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                                </TableCell>
+                                <TableCell>{item.sku}</TableCell>
+                                <TableCell>{item.seller_id || item.sellerId}</TableCell>
+                                <TableCell>
+                                  {isSelected ? (
+                                    <TextField
+                                      type="number"
+                                      size="small"
+                                      value={selectedQty}
+                                      onChange={(e) =>
+                                        handleQuantityChange(
+                                          item.id,
+                                          parseInt(e.target.value) || 0,
+                                          availableQty
+                                        )
+                                      }
+                                      inputProps={{
+                                        min: 1,
+                                        max: availableQty,
+                                      }}
+                                      sx={{ width: 80 }}
+                                    />
+                                  ) : (
+                                    item.quantity
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  {availableQty > 0 ? (
+                                    <Chip label={availableQty} color="success" size="small" />
+                                  ) : (
+                                    <Chip label="0" color="error" size="small" />
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  {formatAmount((item.price_cents || item.priceCents) * (isSelected ? selectedQty : item.quantity), item.currency)}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  ) : (
+                    <Alert severity="warning">
+                      All items in this order have already been refunded. No items available for refund.
+                    </Alert>
+                  )}
                 </Box>
               )}
             </Box>
@@ -623,6 +803,404 @@ function AdminOrders() {
               'Confirm Partial Refund'
             )}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Order Details Dialog */}
+      <Dialog
+        open={detailsDialogOpen}
+        onClose={() => {
+          setDetailsDialogOpen(false)
+          setViewOrderDetails(null)
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <ShoppingBagIcon color="primary" />
+            <Typography variant="h6">Order Details</Typography>
+          </Box>
+          <IconButton
+            onClick={() => {
+              setDetailsDialogOpen(false)
+              setViewOrderDetails(null)
+            }}
+            size="small"
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          {loadingOrderDetails ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : viewOrderDetails ? (
+            <Box>
+              <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Order ID
+                  </Typography>
+                  <Typography variant="body1" component="code" sx={{ fontFamily: 'monospace' }}>
+                    {viewOrderDetails.id}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Buyer ID
+                  </Typography>
+                  <Typography variant="body1">
+                    {viewOrderDetails.buyer_id || viewOrderDetails.buyerId}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Status
+                  </Typography>
+                  <Chip
+                    label={viewOrderDetails.status}
+                    color={getStatusColor(viewOrderDetails.status)}
+                    size="small"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Refund Status
+                  </Typography>
+                  <Chip
+                    label={viewOrderDetails.refund_status || viewOrderDetails.refundStatus || 'NONE'}
+                    color={getRefundStatusColor(viewOrderDetails.refund_status || viewOrderDetails.refundStatus)}
+                    size="small"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Original Total
+                  </Typography>
+                  <Typography variant="h6">
+                    {formatAmount(viewOrderDetails.total_cents || viewOrderDetails.totalCents, viewOrderDetails.currency)}
+                  </Typography>
+                </Grid>
+                {(() => {
+                  // Calculate total refunded amount
+                  const totalRefundedCents = viewOrderDetails.items?.reduce((sum, item) => {
+                    const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                    const priceCents = item.price_cents || item.priceCents
+                    return sum + (refundedQty * priceCents)
+                  }, 0) || 0
+                  const originalTotalCents = viewOrderDetails.total_cents || viewOrderDetails.totalCents || 0
+                  const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                  const currency = viewOrderDetails.currency || 'CAD'
+                  
+                  if (totalRefundedCents > 0) {
+                    return (
+                      <>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Refunded Amount
+                          </Typography>
+                          <Typography variant="h6" color="error.main">
+                            -{formatAmount(totalRefundedCents, currency)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Adjusted Total
+                          </Typography>
+                          <Typography variant="h6" color="success.main" fontWeight="bold">
+                            {formatAmount(adjustedTotalCents, currency)}
+                          </Typography>
+                        </Grid>
+                      </>
+                    )
+                  }
+                  return null
+                })()}
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Payment ID
+                  </Typography>
+                  <Typography variant="body2" component="code" sx={{ fontFamily: 'monospace' }}>
+                    {viewOrderDetails.payment_id || viewOrderDetails.paymentId || 'N/A'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    Created
+                  </Typography>
+                  <Typography variant="body2">
+                    {formatDate(viewOrderDetails.created_at || viewOrderDetails.createdAt)}
+                  </Typography>
+                </Grid>
+                {(viewOrderDetails.confirmed_at || viewOrderDetails.confirmedAt) && (
+                  <Grid item xs={12} sm={6}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Confirmed
+                    </Typography>
+                    <Typography variant="body2">
+                      {formatDate(viewOrderDetails.confirmed_at || viewOrderDetails.confirmedAt)}
+                    </Typography>
+                  </Grid>
+                )}
+              </Grid>
+
+              {(() => {
+                // Calculate totals for summary
+                const totalRefundedCents = viewOrderDetails.items?.reduce((sum, item) => {
+                  const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                  const priceCents = item.price_cents || item.priceCents
+                  return sum + (refundedQty * priceCents)
+                }, 0) || 0
+                const originalTotalCents = viewOrderDetails.total_cents || viewOrderDetails.totalCents || 0
+                const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                const currency = viewOrderDetails.currency || 'CAD'
+                
+                if (totalRefundedCents > 0) {
+                  return (
+                    <>
+                      <Divider sx={{ my: 3 }} />
+                      <Box sx={{ 
+                        bgcolor: 'grey.50', 
+                        p: 2, 
+                        borderRadius: 2, 
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        mb: 3
+                      }}>
+                        <Typography variant="h6" gutterBottom>
+                          Order Summary
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Original Order Total:
+                            </Typography>
+                            <Typography variant="body2" fontWeight="medium">
+                              {formatAmount(originalTotalCents, currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Total Refunded:
+                            </Typography>
+                            <Typography variant="body2" fontWeight="medium" color="error.main">
+                              -{formatAmount(totalRefundedCents, currency)}
+                            </Typography>
+                          </Box>
+                          <Divider />
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body1" fontWeight="bold">
+                              Final Amount:
+                            </Typography>
+                            <Typography variant="body1" fontWeight="bold" color="success.main">
+                              {formatAmount(adjustedTotalCents, currency)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Box>
+                    </>
+                  )
+                }
+                return null
+              })()}
+
+              <Divider sx={{ my: 3 }} />
+
+              <Typography variant="h6" gutterBottom>
+                Order Items ({viewOrderDetails.items?.length || 0})
+              </Typography>
+              <List>
+                {viewOrderDetails.items?.map((item, index) => {
+                  const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                  const availableQty = item.quantity - refundedQty
+                  const priceCents = item.price_cents || item.priceCents
+                  const currency = item.currency
+                  const productName = item.productName || `Product ${item.sku || 'Unknown'}`
+                  const productImage = item.productImage
+                  
+                  return (
+                    <Box key={item.id}>
+                      <ListItem>
+                        {productImage && (
+                          <Box
+                            component="img"
+                            src={productImage}
+                            alt={productName}
+                            sx={{
+                              width: 60,
+                              height: 60,
+                              objectFit: 'cover',
+                              borderRadius: 1,
+                              mr: 2,
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none'
+                            }}
+                          />
+                        )}
+                        <ListItemText
+                          primary={
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                              <Box>
+                                <Typography variant="body1" fontWeight="medium">
+                                  {productName}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  SKU: {item.sku}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ textAlign: 'right' }}>
+                                {refundedQty > 0 ? (
+                                  <>
+                                    <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                      {formatAmount(priceCents * item.quantity, currency)}
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="error.main">
+                                      -{formatAmount(priceCents * refundedQty, currency)} refunded
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="success.main">
+                                      {formatAmount(priceCents * availableQty, currency)} remaining
+                                    </Typography>
+                                  </>
+                                ) : (
+                                  <Typography variant="body1" fontWeight="bold">
+                                    {formatAmount(priceCents * item.quantity, currency)}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Box>
+                          }
+                          secondary={
+                            <Box sx={{ mt: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Quantity: {item.quantity}
+                                </Typography>
+                                {refundedQty > 0 && (
+                                  <>
+                                    <Chip
+                                      label={`${refundedQty} refunded`}
+                                      color="error"
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                    <Chip
+                                      label={`${availableQty} remaining`}
+                                      color={availableQty > 0 ? 'success' : 'default'}
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                  </>
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                Price: {formatAmount(priceCents, currency)} each
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Seller: {item.seller_id || item.sellerId}
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                      {index < viewOrderDetails.items.length - 1 && <Divider />}
+                    </Box>
+                  )
+                })}
+              </List>
+
+              {viewOrderDetails.shipments && viewOrderDetails.shipments.length > 0 && (
+                <>
+                  <Divider sx={{ my: 3 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Shipments ({viewOrderDetails.shipments.length})
+                  </Typography>
+                  <List>
+                    {viewOrderDetails.shipments.map((shipment, index) => {
+                      const shipmentItems = viewOrderDetails.items.filter(item => 
+                        (item.shipment_id || item.shipmentId) === (shipment.id || shipment.id)
+                      )
+                      return (
+                        <Box key={shipment.id || index}>
+                          <ListItem>
+                            <ListItemText
+                              primary={
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <Typography variant="body1" fontWeight="medium">
+                                    Seller: {shipment.seller_id || shipment.sellerId} ({shipmentItems.length} items)
+                                  </Typography>
+                                  <Chip
+                                    label={shipment.status}
+                                    color={shipment.status === 'DELIVERED' ? 'success' : shipment.status === 'SHIPPED' ? 'info' : 'default'}
+                                    size="small"
+                                  />
+                                </Box>
+                              }
+                              secondary={
+                                <Box sx={{ mt: 1 }}>
+                                  {shipment.tracking_number || shipment.trackingNumber ? (
+                                    <Typography variant="body2" color="text.secondary">
+                                      Tracking: {shipment.tracking_number || shipment.trackingNumber}
+                                    </Typography>
+                                  ) : null}
+                                  {shipment.carrier && (
+                                    <Typography variant="body2" color="text.secondary">
+                                      Carrier: {shipment.carrier}
+                                    </Typography>
+                                  )}
+                                  {shipment.shipped_at || shipment.shippedAt ? (
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      Shipped: {formatDate(shipment.shipped_at || shipment.shippedAt)}
+                                    </Typography>
+                                  ) : null}
+                                  {shipment.delivered_at || shipment.deliveredAt ? (
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      Delivered: {formatDate(shipment.delivered_at || shipment.deliveredAt)}
+                                    </Typography>
+                                  ) : null}
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                          {index < viewOrderDetails.shipments.length - 1 && <Divider />}
+                        </Box>
+                      )
+                    })}
+                  </List>
+                </>
+              )}
+            </Box>
+          ) : (
+            <Alert severity="error">Failed to load order details</Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => {
+              setDetailsDialogOpen(false)
+              setViewOrderDetails(null)
+            }}
+          >
+            Close
+          </Button>
+          {viewOrderDetails && canRefundOrder({ 
+            status: viewOrderDetails.status, 
+            payment_id: viewOrderDetails.payment_id || viewOrderDetails.paymentId,
+            refund_status: viewOrderDetails.refund_status || viewOrderDetails.refundStatus
+          }).canRefund && (
+            <Button
+              onClick={() => {
+                setDetailsDialogOpen(false)
+                handleRefundClick({ id: viewOrderDetails.id })
+              }}
+              variant="contained"
+              color="error"
+            >
+              Refund Order
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

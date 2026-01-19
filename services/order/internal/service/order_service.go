@@ -16,6 +16,8 @@ type OrderService struct {
 	inventoryClient *InventoryClient
 	paymentClient   *PaymentClient
 	cartClient      *CartClient
+	userClient      *UserClient
+	catalogClient   *CatalogClient
 	kafkaProducer   KafkaProducerInterface
 }
 
@@ -29,6 +31,8 @@ func NewOrderService(
 	inventoryClient *InventoryClient,
 	paymentClient *PaymentClient,
 	cartClient *CartClient,
+	userClient *UserClient,
+	catalogClient *CatalogClient,
 	kafkaProducer KafkaProducerInterface,
 ) *OrderService {
 	return &OrderService{
@@ -36,6 +40,8 @@ func NewOrderService(
 		inventoryClient: inventoryClient,
 		paymentClient:   paymentClient,
 		cartClient:      cartClient,
+		userClient:      userClient,
+		catalogClient:   catalogClient,
 		kafkaProducer:   kafkaProducer,
 	}
 }
@@ -298,12 +304,12 @@ func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID, accountT
 				filteredItems = append(filteredItems, item)
 			}
 		}
-		
+
 		// If seller has no items in this order, return not found
 		if len(filteredItems) == 0 {
 			return nil, fmt.Errorf("order not found or seller has no items in this order")
 		}
-		
+
 		items = filteredItems
 	}
 
@@ -373,16 +379,32 @@ func (s *OrderService) GetOrderForInvoice(ctx context.Context, orderID uuid.UUID
 		return nil, fmt.Errorf("failed to get order items: %w", err)
 	}
 
+	// Fetch product names from catalog service
+	productNames := make(map[uuid.UUID]string)
+	for _, item := range items {
+		if s.catalogClient != nil {
+			product, err := s.catalogClient.GetProduct(ctx, item.ProductID)
+			if err != nil {
+				// Log error but continue - we'll use SKU as fallback
+				log.Printf("Failed to fetch product name for %s: %v", item.ProductID, err)
+			} else {
+				productNames[item.ProductID] = product.Name
+			}
+		}
+	}
+
 	return &OrderForInvoice{
-		Order: order,
-		Items: items,
+		Order:        order,
+		Items:        items,
+		ProductNames: productNames,
 	}, nil
 }
 
 // OrderForInvoice contains order and items for invoice generation
 type OrderForInvoice struct {
-	Order *models.Order
-	Items []models.OrderItem
+	Order        *models.Order
+	Items        []models.OrderItem
+	ProductNames map[uuid.UUID]string // Map of product ID to product name
 }
 
 // ProcessRefund handles RefundCompletedEvent from payments service
@@ -591,10 +613,10 @@ type ListOrdersResponse struct {
 }
 
 // ListOrders retrieves orders based on account type
-// ADMIN: can see all orders, optionally filtered by buyerID
+// ADMIN: can see all orders, optionally filtered by buyerID (UUID) or buyerEmail (email)
 // BUYER: only their own orders
 // SELLER: only orders where they have items (with only their items shown)
-func (s *OrderService) ListOrders(ctx context.Context, accountType, userID string, buyerIDFilter *string, page, pageSize int) (*ListOrdersResponse, error) {
+func (s *OrderService) ListOrders(ctx context.Context, accountType, userID string, buyerIDFilter *string, buyerEmailFilter *string, authToken string, page, pageSize int) (*ListOrdersResponse, error) {
 	// Validate pagination
 	if page < 0 {
 		page = 0
@@ -614,12 +636,37 @@ func (s *OrderService) ListOrders(ctx context.Context, accountType, userID strin
 
 	switch accountType {
 	case "ADMIN":
-		// ADMIN can see all orders, optionally filtered by buyer
-		orders, err = s.repo.ListOrders(ctx, buyerIDFilter, pageSize, offset)
+		// ADMIN can see all orders, optionally filtered by buyer (UUID or email)
+		var finalFilter *string
+		if buyerEmailFilter != nil {
+			// For email filtering, look up UUID from user service
+			user, err := s.userClient.GetUserByEmail(ctx, *buyerEmailFilter, authToken)
+			if err != nil {
+				// If user not found, return empty results
+				log.Printf("User not found for email %s: %v", *buyerEmailFilter, err)
+				return &ListOrdersResponse{
+					Orders:     []models.OrderResponse{},
+					Total:      0,
+					Page:       page,
+					PageSize:   pageSize,
+					TotalPages: 0,
+				}, nil
+			}
+			// Use the user's ID (primary key UUID) for filtering
+			// Note: This assumes orders.buyer_id stores the user service's primary key ID
+			// If it stores Auth0 user ID instead, we'd need auth0_user_id from user service
+			uuidFilter := user.ID.String()
+			log.Printf("Email filter %s resolved to user ID: %s", *buyerEmailFilter, uuidFilter)
+			finalFilter = &uuidFilter
+		} else if buyerIDFilter != nil {
+			finalFilter = buyerIDFilter
+		}
+
+		orders, err = s.repo.ListOrders(ctx, finalFilter, pageSize, offset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list orders: %w", err)
 		}
-		total, err = s.repo.CountOrders(ctx, buyerIDFilter)
+		total, err = s.repo.CountOrders(ctx, finalFilter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count orders: %w", err)
 		}

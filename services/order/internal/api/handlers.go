@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -146,7 +147,7 @@ func (h *OrderHandler) GetInvoice(c *gin.Context) {
 	}
 
 	// Generate invoice
-	buf, err := h.invoiceGen.GenerateInvoice(order.Order, order.Items)
+	buf, err := h.invoiceGen.GenerateInvoice(order.Order, order.Items, order.ProductNames)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate invoice"})
 		return
@@ -193,14 +194,27 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	}
 
 	// Parse optional buyer filter (only for ADMIN)
+	// Supports both buyer_id (UUID) and buyer_email (email) filtering
 	var buyerIDFilter *string
+	var buyerEmailFilter *string
 	if accountType == auth.AccountTypeAdmin {
 		if buyerID := c.Query("buyer_id"); buyerID != "" {
 			buyerIDFilter = &buyerID
 		}
+		if buyerEmail := c.Query("buyer_email"); buyerEmail != "" {
+			buyerEmailFilter = &buyerEmail
+		}
 	}
 
-	response, err := h.orderService.ListOrders(c.Request.Context(), accountType, userID, buyerIDFilter, page, pageSize)
+	// Extract auth token for user service calls (if needed for email filtering)
+	authToken := ""
+	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			authToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	response, err := h.orderService.ListOrders(c.Request.Context(), accountType, userID, buyerIDFilter, buyerEmailFilter, authToken, page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

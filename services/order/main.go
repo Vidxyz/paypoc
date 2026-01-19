@@ -47,6 +47,8 @@ func main() {
 	inventoryClient := service.NewInventoryClient(config.InventoryServiceURL, config.InventoryInternalToken)
 	paymentClient := service.NewPaymentClient(config.PaymentServiceURL, config.PaymentInternalToken)
 	cartClient := service.NewCartClient(config.CartServiceURL)
+	userClient := service.NewUserClient(config.UserServiceURL)
+	catalogClient := service.NewCatalogClient(config.CatalogServiceURL)
 
 	// Initialize Kafka producer
 	kafkaProducer := kafka.NewKafkaProducer(config.KafkaBrokers, config.KafkaEventsTopic)
@@ -58,6 +60,8 @@ func main() {
 		inventoryClient,
 		paymentClient,
 		cartClient,
+		userClient,
+		catalogClient,
 		kafkaProducer,
 	)
 
@@ -181,6 +185,8 @@ type Config struct {
 	PaymentServiceURL      string
 	PaymentInternalToken   string
 	CartServiceURL         string
+	UserServiceURL         string
+	CatalogServiceURL      string
 	KafkaBrokers           []string
 	KafkaEventsTopic       string
 	KafkaConsumerGroupID   string
@@ -208,6 +214,8 @@ func loadConfig() *Config {
 		PaymentServiceURL:      getEnv("PAYMENT_SERVICE_URL", "http://payments-service.payments-platform.svc.cluster.local:8080"),
 		PaymentInternalToken:   getEnv("PAYMENT_INTERNAL_API_TOKEN", ""),
 		CartServiceURL:         getEnv("CART_SERVICE_URL", "http://cart-service.cart.svc.cluster.local:9000"),
+		UserServiceURL:         getEnv("USER_SERVICE_URL", "http://user-service.user.svc.cluster.local:9000"),
+		CatalogServiceURL:      getEnv("CATALOG_SERVICE_URL", "http://catalog-service.catalog.svc.cluster.local:8082"),
 		KafkaBrokers:           []string{getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092")},
 		KafkaEventsTopic:       getEnv("KAFKA_EVENTS_TOPIC", "payment.events"),
 		KafkaConsumerGroupID:   getEnv("KAFKA_CONSUMER_GROUP_ID", "order-service"),

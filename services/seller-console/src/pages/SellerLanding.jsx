@@ -30,6 +30,7 @@ function SellerLanding() {
   const [balance, setBalance] = useState(null)
   const [payments, setPayments] = useState([])
   const [payouts, setPayouts] = useState([])
+  const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -51,7 +52,7 @@ function SellerLanding() {
             console.warn('Failed to fetch balance:', err)
             return { balanceCents: 0, currency: 'CAD', error: err.message }
           }),
-          paymentsApi.getSellerPayments({ page: 0, size: 10, sortBy: 'createdAt', sortDirection: 'DESC' }).catch((err) => {
+          paymentsApi.getSellerPayments({ page: 0, size: 50, sortBy: 'createdAt', sortDirection: 'DESC' }).catch((err) => {
             console.warn('Failed to fetch payments:', err)
             return { payments: [], total: 0 }
           }),
@@ -64,6 +65,102 @@ function SellerLanding() {
         setBalance(balanceData)
         setPayments(paymentsData.payments || [])
         setPayouts(payoutsData.payouts || [])
+
+        // Fetch refunds for all payments in a single batch call
+        const paymentsList = paymentsData.payments || []
+        const paymentIds = paymentsList.map(p => p.id)
+        const refundsMap = await paymentsApi.getRefundsForPayments(paymentIds).catch(() => ({}))
+        
+        // Map refunds back to payments for easier processing
+        const refundResults = paymentsList.map(payment => ({
+          refunds: refundsMap[payment.id] || []
+        }))
+        
+        // Build combined transactions list
+        const transactionsList = []
+        
+        // Add payments as CREDIT transactions
+        paymentsList.forEach((payment, index) => {
+          const refunds = refundResults[index]?.refunds || []
+          
+          // Find this seller's portion in the payment
+          const sellerBreakdown = payment.sellerBreakdown?.find(sb => sb.sellerId === userEmail)
+          if (!sellerBreakdown) return // Skip if seller not in this payment
+          
+          // Add payment as CREDIT (only if CAPTURED)
+          if (payment.state === 'CAPTURED' || payment.state === 'REFUNDING' || payment.state === 'REFUNDED') {
+            transactionsList.push({
+              id: payment.id,
+              type: 'CREDIT',
+              date: payment.createdAt,
+              description: `Payment from order ${payment.orderId?.substring(0, 8) || 'N/A'}...`,
+              amountCents: sellerBreakdown.netSellerAmountCents,
+              currency: payment.currency,
+              paymentId: payment.id,
+              orderId: payment.orderId,
+              state: payment.state,
+            })
+          }
+          
+          // Add refunds as DEBIT transactions
+          refunds.forEach(refund => {
+            if (refund.state === 'REFUNDED' || refund.state === 'REFUNDING') {
+              // Find this seller's portion in the refund
+              const sellerRefundBreakdown = refund.sellerRefundBreakdown?.find(srb => srb.sellerId === userEmail)
+              
+              // If sellerRefundBreakdown is not available (old refunds), calculate proportionally
+              // This is not accurate for partial refunds, but better than nothing
+              let sellerRefundAmount = 0
+              if (sellerRefundBreakdown) {
+                sellerRefundAmount = sellerRefundBreakdown.netSellerRefundCents
+              } else if (sellerBreakdown) {
+                // Fallback: calculate proportionally based on payment breakdown
+                // This assumes the refund is proportional, which may not be true for partial refunds
+                const sellerPaymentRatio = sellerBreakdown.netSellerAmountCents / payment.netSellerAmountCents
+                sellerRefundAmount = Math.round(refund.netSellerRefundCents * sellerPaymentRatio)
+              }
+              
+              if (sellerRefundAmount > 0) {
+                transactionsList.push({
+                  id: refund.id,
+                  type: 'DEBIT',
+                  date: refund.refundedAt || refund.updatedAt || refund.createdAt,
+                  description: refund.state === 'REFUNDING' 
+                    ? `Refund processing for payment ${payment.id.substring(0, 8)}...`
+                    : `Refund for payment ${payment.id.substring(0, 8)}...`,
+                  amountCents: sellerRefundAmount,
+                  currency: payment.currency,
+                  paymentId: payment.id,
+                  refundId: refund.id,
+                  orderId: payment.orderId,
+                  state: refund.state,
+                })
+              }
+            }
+          })
+        })
+        
+        // Sort transactions by date (oldest first for balance calculation)
+        transactionsList.sort((a, b) => new Date(a.date) - new Date(b.date))
+        
+        // Calculate running balance for each transaction
+        let runningBalance = 0
+        const transactionsWithBalance = transactionsList.map(transaction => {
+          if (transaction.type === 'CREDIT') {
+            runningBalance += transaction.amountCents
+          } else {
+            runningBalance -= transaction.amountCents
+          }
+          return {
+            ...transaction,
+            runningBalance,
+          }
+        })
+        
+        // Sort back to newest first for display
+        transactionsWithBalance.sort((a, b) => new Date(b.date) - new Date(a.date))
+        
+        setTransactions(transactionsWithBalance)
 
         paymentsApi.cleanup()
       } catch (err) {
@@ -221,41 +318,63 @@ function SellerLanding() {
           <Typography variant="h5" component="h2" gutterBottom>
             Recent Transactions
           </Typography>
-          {payments.length === 0 ? (
+          {transactions.length === 0 ? (
             <Alert severity="info">No transactions found.</Alert>
           ) : (
             <TableContainer component={Paper} variant="outlined">
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Payment ID</TableCell>
                     <TableCell>Date</TableCell>
-                    <TableCell>Buyer ID</TableCell>
-                    <TableCell>Amount</TableCell>
-                    <TableCell>Net Amount</TableCell>
-                    <TableCell>State</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell align="right">Amount</TableCell>
+                    <TableCell align="right">Running Balance</TableCell>
+                    <TableCell>Status</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {payments.map((payment) => (
-                    <TableRow key={payment.id}>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {payment.id.substring(0, 8)}...
-                        </Typography>
-                      </TableCell>
-                      <TableCell>{formatDate(payment.createdAt)}</TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {payment.buyerId?.substring(0, 12)}...
-                        </Typography>
-                      </TableCell>
-                      <TableCell>{formatAmount(payment.grossAmountCents, payment.currency)}</TableCell>
-                      <TableCell>{formatAmount(payment.netSellerAmountCents, payment.currency)}</TableCell>
+                  {transactions.slice(0, 20).map((transaction) => (
+                    <TableRow key={`${transaction.type}-${transaction.id}`}>
+                      <TableCell>{formatDate(transaction.date)}</TableCell>
                       <TableCell>
                         <Chip
-                          label={payment.state}
-                          color={getStateColor(payment.state)}
+                          label={transaction.type}
+                          color={transaction.type === 'CREDIT' ? 'success' : 'error'}
+                          size="small"
+                          variant="outlined"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {transaction.description}
+                        </Typography>
+                        {transaction.orderId && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Order: {transaction.orderId.substring(0, 8)}...
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography
+                          variant="body2"
+                          fontWeight="bold"
+                          color={transaction.type === 'CREDIT' ? 'success.main' : 'error.main'}
+                        >
+                          {transaction.type === 'CREDIT' ? '+' : '-'}
+                          {formatAmount(transaction.amountCents, transaction.currency)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography variant="body2" color="text.secondary">
+                          {formatAmount(transaction.runningBalance, transaction.currency)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={transaction.state}
+                          color={transaction.state === 'CAPTURED' || transaction.state === 'REFUNDED' ? 'success' : 
+                                 transaction.state === 'REFUNDING' ? 'warning' : 'default'}
                           size="small"
                         />
                       </TableCell>

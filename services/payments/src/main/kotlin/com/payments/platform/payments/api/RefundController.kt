@@ -141,6 +141,67 @@ class RefundController(
     }
     
     /**
+     * POST /admin/refunds/batch
+     * Gets all refunds for multiple payments in a single query.
+     * 
+     * This endpoint is optimized to fetch refunds for multiple payments at once,
+     * avoiding N+1 query problems when displaying transaction lists.
+     * 
+     * Admin-only endpoint.
+     */
+    @Operation(
+        summary = "Get refunds for multiple payments (Admin) - Batch",
+        description = "Retrieves all refunds for multiple payments in a single query. Returns a map of payment ID to list of refunds. Admin-only endpoint. This is optimized to avoid N+1 query problems."
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Refunds retrieved successfully",
+                content = [Content(schema = Schema(implementation = BatchRefundsResponseDto::class))]
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "Invalid request (e.g., empty payment IDs list)",
+                content = [Content(schema = Schema(implementation = BatchRefundsResponseDto::class))]
+            )
+        ]
+    )
+    @PostMapping("/refunds/batch")
+    fun getRefundsForPayments(
+        @RequestBody request: BatchRefundsRequestDto
+    ): ResponseEntity<BatchRefundsResponseDto> {
+        return try {
+            if (request.paymentIds.isEmpty()) {
+                return ResponseEntity.ok(
+                    BatchRefundsResponseDto(
+                        refundsByPaymentId = emptyMap(),
+                        error = null
+                    )
+                )
+            }
+            
+            val refundsMap = refundService.getRefundsByPaymentIds(request.paymentIds)
+            val responseMap = refundsMap.mapKeys { it.key.toString() }
+                .mapValues { (_, refunds) -> refunds.map { RefundResponseDto.fromDomain(it) } }
+            
+            ResponseEntity.ok(
+                BatchRefundsResponseDto(
+                    refundsByPaymentId = responseMap,
+                    error = null
+                )
+            )
+        } catch (e: Exception) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                BatchRefundsResponseDto(
+                    refundsByPaymentId = emptyMap(),
+                    error = "Failed to retrieve refunds: ${e.message}"
+                )
+            )
+        }
+    }
+    
+    /**
      * GET /admin/refunds/{refundId}
      * Gets a refund by ID.
      * 

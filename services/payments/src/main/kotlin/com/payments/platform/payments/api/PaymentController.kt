@@ -208,7 +208,13 @@ class PaymentController(
             ListPaymentsResponseDto(
                 payments = payments.map { payment ->
                     val chargebackInfo = chargebackInfoMap[payment.id]
-                    PaymentResponseDto.fromDomain(payment, chargebackInfo = chargebackInfo)
+                    // Include seller breakdown for sellers so they can see their portion
+                    val includeSellerBreakdown = user.accountType == User.AccountType.SELLER
+                    PaymentResponseDto.fromDomain(
+                        payment, 
+                        chargebackInfo = chargebackInfo,
+                        includeSellerBreakdown = includeSellerBreakdown
+                    )
                 },
                 page = validPage,
                 size = validSize,

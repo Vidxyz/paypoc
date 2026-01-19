@@ -22,6 +22,9 @@ interface PaymentRepository : JpaRepository<PaymentEntity, UUID> {
      * 
      * This uses a native SQL query because JSONB operations are PostgreSQL-specific
      * and not supported in standard JPQL.
+     * 
+     * Note: We use LIMIT/OFFSET directly in the query to avoid Spring Data JPA trying to
+     * add its own ORDER BY clause which would conflict with our explicit ORDER BY.
      */
     @Query(
         value = """
@@ -30,6 +33,8 @@ interface PaymentRepository : JpaRepository<PaymentEntity, UUID> {
             SELECT 1 FROM jsonb_array_elements(p.seller_breakdown) AS breakdown 
             WHERE breakdown->>'sellerId' = :sellerId
         )
+        ORDER BY p.created_at DESC
+        LIMIT :limit OFFSET :offset
     """,
         countQuery = """
         SELECT COUNT(p.*) FROM payments p 
@@ -40,6 +45,22 @@ interface PaymentRepository : JpaRepository<PaymentEntity, UUID> {
     """,
         nativeQuery = true
     )
-    fun findBySellerId(@Param("sellerId") sellerId: String, pageable: Pageable): Page<PaymentEntity>
+    fun findBySellerId(
+        @Param("sellerId") sellerId: String,
+        @Param("limit") limit: Int,
+        @Param("offset") offset: Long
+    ): List<PaymentEntity>
+    
+    @Query(
+        value = """
+        SELECT COUNT(p.*) FROM payments p 
+        WHERE EXISTS (
+            SELECT 1 FROM jsonb_array_elements(p.seller_breakdown) AS breakdown 
+            WHERE breakdown->>'sellerId' = :sellerId
+        )
+    """,
+        nativeQuery = true
+    )
+    fun countBySellerId(@Param("sellerId") sellerId: String): Long
 }
 

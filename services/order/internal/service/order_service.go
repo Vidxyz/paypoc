@@ -163,9 +163,10 @@ func (s *OrderService) CreateProvisionalOrder(ctx context.Context, req models.Cr
 	}
 
 	// Update order with payment ID
-	order.PaymentID = &paymentResp.PaymentID
-	if err := s.repo.Create(ctx, order); err != nil {
+	if err := s.repo.UpdatePaymentID(ctx, orderID, paymentResp.PaymentID); err != nil {
 		log.Printf("Warning: failed to update order with payment ID: %v", err)
+		// Don't fail the entire operation - payment was created successfully
+		// The order can be updated later if needed
 	}
 
 	return &models.CreateOrderResponse{
@@ -272,7 +273,8 @@ func (s *OrderService) cancelOrder(ctx context.Context, orderID uuid.UUID) {
 }
 
 // GetOrder retrieves an order by ID
-func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID) (*models.OrderResponse, error) {
+// For SELLER account type, only returns items and shipments belonging to that seller
+func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID, accountType, userID string) (*models.OrderResponse, error) {
 	order, err := s.repo.GetByID(ctx, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order: %w", err)
@@ -288,17 +290,46 @@ func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID) (*models
 		return nil, fmt.Errorf("failed to get shipments: %w", err)
 	}
 
+	// For SELLER, filter items to only show their items
+	if accountType == "SELLER" {
+		filteredItems := make([]models.OrderItem, 0)
+		for _, item := range items {
+			if item.SellerID == userID {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		
+		// If seller has no items in this order, return not found
+		if len(filteredItems) == 0 {
+			return nil, fmt.Errorf("order not found or seller has no items in this order")
+		}
+		
+		items = filteredItems
+	}
+
+	// For SELLER, filter shipments to only show their shipments
+	if accountType == "SELLER" {
+		filteredShipments := make([]models.Shipment, 0)
+		for _, shipment := range shipments {
+			if shipment.SellerID == userID {
+				filteredShipments = append(filteredShipments, shipment)
+			}
+		}
+		shipments = filteredShipments
+	}
+
 	// Convert to response
 	itemResponses := make([]models.OrderItemResponse, len(items))
 	for i, item := range items {
 		itemResponses[i] = models.OrderItemResponse{
-			ID:         item.ID,
-			ProductID:  item.ProductID,
-			SKU:        item.SKU,
-			SellerID:   item.SellerID,
-			Quantity:   item.Quantity,
-			PriceCents: item.PriceCents,
-			Currency:   item.Currency,
+			ID:               item.ID,
+			ProductID:        item.ProductID,
+			SKU:              item.SKU,
+			SellerID:         item.SellerID,
+			Quantity:         item.Quantity,
+			RefundedQuantity: item.RefundedQuantity,
+			PriceCents:       item.PriceCents,
+			Currency:         item.Currency,
 		}
 	}
 
@@ -316,15 +347,17 @@ func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID) (*models
 	}
 
 	return &models.OrderResponse{
-		ID:          order.ID,
-		BuyerID:     order.BuyerID,
-		Status:      string(order.Status),
-		TotalCents:  order.TotalCents,
-		Currency:    order.Currency,
-		Items:       itemResponses,
-		Shipments:   shipmentResponses,
-		CreatedAt:   order.CreatedAt,
-		ConfirmedAt: order.ConfirmedAt,
+		ID:           order.ID,
+		BuyerID:      order.BuyerID,
+		Status:       string(order.Status),
+		TotalCents:   order.TotalCents,
+		Currency:     order.Currency,
+		PaymentID:    order.PaymentID,
+		RefundStatus: order.RefundStatus,
+		Items:        itemResponses,
+		Shipments:    shipmentResponses,
+		CreatedAt:    order.CreatedAt,
+		ConfirmedAt:  order.ConfirmedAt,
 	}, nil
 }
 
@@ -545,6 +578,279 @@ func (s *OrderService) ProcessRefund(ctx context.Context, event models.RefundCom
 	}
 
 	log.Printf("Successfully processed refund %s for order %s (status: %s)", event.RefundID, event.OrderID, refundStatus)
+	return nil
+}
+
+// ListOrdersResponse represents a paginated list of orders
+type ListOrdersResponse struct {
+	Orders     []models.OrderResponse `json:"orders"`
+	Total      int                    `json:"total"`
+	Page       int                    `json:"page"`
+	PageSize   int                    `json:"page_size"`
+	TotalPages int                    `json:"total_pages"`
+}
+
+// ListOrders retrieves orders based on account type
+// ADMIN: can see all orders, optionally filtered by buyerID
+// BUYER: only their own orders
+// SELLER: only orders where they have items (with only their items shown)
+func (s *OrderService) ListOrders(ctx context.Context, accountType, userID string, buyerIDFilter *string, page, pageSize int) (*ListOrdersResponse, error) {
+	// Validate pagination
+	if page < 0 {
+		page = 0
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	offset := page * pageSize
+
+	var orders []models.Order
+	var total int
+	var err error
+
+	switch accountType {
+	case "ADMIN":
+		// ADMIN can see all orders, optionally filtered by buyer
+		orders, err = s.repo.ListOrders(ctx, buyerIDFilter, pageSize, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list orders: %w", err)
+		}
+		total, err = s.repo.CountOrders(ctx, buyerIDFilter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count orders: %w", err)
+		}
+
+	case "BUYER":
+		// BUYER can only see their own orders
+		buyerID := userID
+		orders, err = s.repo.ListOrders(ctx, &buyerID, pageSize, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list orders: %w", err)
+		}
+		total, err = s.repo.CountOrders(ctx, &buyerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count orders: %w", err)
+		}
+
+	case "SELLER":
+		// SELLER can see orders where they have items
+		orders, err = s.repo.ListOrdersForSeller(ctx, userID, pageSize, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list orders for seller: %w", err)
+		}
+		total, err = s.repo.CountOrdersForSeller(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to count orders for seller: %w", err)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported account type: %s", accountType)
+	}
+
+	// Convert to response format
+	orderResponses := make([]models.OrderResponse, 0, len(orders))
+	for _, order := range orders {
+		// Get items for this order
+		items, err := s.repo.GetItemsByOrderID(ctx, order.ID)
+		if err != nil {
+			log.Printf("Warning: failed to get items for order %s: %v", order.ID, err)
+			continue
+		}
+
+		// For SELLER, filter items to only show their items
+		if accountType == "SELLER" {
+			filteredItems := make([]models.OrderItem, 0)
+			for _, item := range items {
+				if item.SellerID == userID {
+					filteredItems = append(filteredItems, item)
+				}
+			}
+			items = filteredItems
+		}
+
+		// Get shipments
+		shipments, err := s.repo.GetShipmentsByOrderID(ctx, order.ID)
+		if err != nil {
+			log.Printf("Warning: failed to get shipments for order %s: %v", order.ID, err)
+			shipments = []models.Shipment{}
+		}
+
+		// For SELLER, filter shipments to only show their shipments
+		if accountType == "SELLER" {
+			filteredShipments := make([]models.Shipment, 0)
+			for _, shipment := range shipments {
+				if shipment.SellerID == userID {
+					filteredShipments = append(filteredShipments, shipment)
+				}
+			}
+			shipments = filteredShipments
+		}
+
+		// Convert items to response
+		itemResponses := make([]models.OrderItemResponse, len(items))
+		for i, item := range items {
+			itemResponses[i] = models.OrderItemResponse{
+				ID:               item.ID,
+				ProductID:        item.ProductID,
+				SKU:              item.SKU,
+				SellerID:         item.SellerID,
+				Quantity:         item.Quantity,
+				RefundedQuantity: item.RefundedQuantity,
+				PriceCents:       item.PriceCents,
+				Currency:         item.Currency,
+			}
+		}
+
+		// Convert shipments to response
+		shipmentResponses := make([]models.ShipmentResponse, len(shipments))
+		for i, shipment := range shipments {
+			shipmentResponses[i] = models.ShipmentResponse{
+				ID:             shipment.ID,
+				SellerID:       shipment.SellerID,
+				Status:         shipment.Status,
+				TrackingNumber: shipment.TrackingNumber,
+				Carrier:        shipment.Carrier,
+				ShippedAt:      shipment.ShippedAt,
+				DeliveredAt:    shipment.DeliveredAt,
+			}
+		}
+
+		orderResponses = append(orderResponses, models.OrderResponse{
+			ID:           order.ID,
+			BuyerID:      order.BuyerID,
+			Status:       string(order.Status),
+			TotalCents:   order.TotalCents,
+			Currency:     order.Currency,
+			PaymentID:    order.PaymentID,
+			RefundStatus: order.RefundStatus,
+			Items:        itemResponses,
+			Shipments:    shipmentResponses,
+			CreatedAt:    order.CreatedAt,
+			ConfirmedAt:  order.ConfirmedAt,
+		})
+	}
+
+	totalPages := (total + pageSize - 1) / pageSize
+
+	return &ListOrdersResponse{
+		Orders:     orderResponses,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// PartialRefundRequest represents a request for a partial refund
+type PartialRefundRequest struct {
+	OrderItemsToRefund []OrderItemRefundRequest `json:"orderItemsToRefund" binding:"required"`
+}
+
+// OrderItemRefundRequest represents an order item to refund
+type OrderItemRefundRequest struct {
+	OrderItemID uuid.UUID `json:"orderItemId" binding:"required"`
+	Quantity    int       `json:"quantity" binding:"required,min=1"`
+}
+
+// CreatePartialRefund creates a partial refund for an order (admin-only)
+func (s *OrderService) CreatePartialRefund(ctx context.Context, orderID uuid.UUID, req PartialRefundRequest) error {
+	// Get order to verify it exists and is confirmed
+	order, err := s.repo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("order not found: %w", err)
+	}
+
+	if order.Status != models.OrderStatusConfirmed {
+		return fmt.Errorf("only confirmed orders can be refunded")
+	}
+
+	if order.PaymentID == nil {
+		return fmt.Errorf("order has no payment ID")
+	}
+
+	// Get all order items
+	allItems, err := s.repo.GetItemsByOrderID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to get order items: %w", err)
+	}
+
+	// Create a map for quick lookup
+	itemsMap := make(map[uuid.UUID]models.OrderItem)
+	for _, item := range allItems {
+		itemsMap[item.ID] = item
+	}
+
+	// Validate and build refund request
+	orderItemsToRefund := make([]OrderItemRefundForPayment, 0, len(req.OrderItemsToRefund))
+	for _, itemRefund := range req.OrderItemsToRefund {
+		item, exists := itemsMap[itemRefund.OrderItemID]
+		if !exists {
+			return fmt.Errorf("order item %s not found in order", itemRefund.OrderItemID)
+		}
+
+		// Validate quantity
+		availableQuantity := item.Quantity - item.RefundedQuantity
+		if itemRefund.Quantity > availableQuantity {
+			return fmt.Errorf("refund quantity %d exceeds available quantity %d for order item %s", itemRefund.Quantity, availableQuantity, itemRefund.OrderItemID)
+		}
+
+		if itemRefund.Quantity <= 0 {
+			return fmt.Errorf("refund quantity must be greater than 0")
+		}
+
+		orderItemsToRefund = append(orderItemsToRefund, OrderItemRefundForPayment{
+			OrderItemID: itemRefund.OrderItemID,
+			Quantity:    itemRefund.Quantity,
+			SellerID:    item.SellerID,
+			PriceCents:  item.PriceCents,
+		})
+	}
+
+	if len(orderItemsToRefund) == 0 {
+		return fmt.Errorf("no items to refund")
+	}
+
+	// Call payments service internal API for partial refund
+	// OrderItemRefundForPayment is defined in http_clients.go (same package)
+	err = s.paymentClient.CreatePartialRefund(ctx, orderID, orderItemsToRefund)
+	if err != nil {
+		return fmt.Errorf("failed to create partial refund: %w", err)
+	}
+
+	return nil
+}
+
+// CreateFullRefund creates a full refund for an order (admin-only)
+func (s *OrderService) CreateFullRefund(ctx context.Context, orderID uuid.UUID) error {
+	// Get order to verify it exists and is confirmed
+	order, err := s.repo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("order not found: %w", err)
+	}
+
+	if order.Status != models.OrderStatusConfirmed {
+		return fmt.Errorf("only confirmed orders can be refunded")
+	}
+
+	if order.PaymentID == nil {
+		return fmt.Errorf("order has no payment ID")
+	}
+
+	// Check if already fully refunded
+	if order.RefundStatus == "FULL" {
+		return fmt.Errorf("order is already fully refunded")
+	}
+
+	// Call payments service internal API for full refund
+	err = s.paymentClient.CreateFullRefund(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to create full refund: %w", err)
+	}
+
 	return nil
 }
 

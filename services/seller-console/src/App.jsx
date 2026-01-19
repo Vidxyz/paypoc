@@ -6,6 +6,7 @@ import SellerLanding from './pages/SellerLanding'
 import SellerProfile from './pages/SellerProfile'
 import Products from './pages/Products'
 import AddProduct from './pages/AddProduct'
+import SellerOrders from './pages/SellerOrders'
 import SellerNavbar from './components/SellerNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -280,6 +281,16 @@ function AppContent() {
           element={
             isSellerAuthenticated ? (
               <SellerProfile />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            isSellerAuthenticated ? (
+              <SellerOrders userEmail={userEmail} />
             ) : (
               <Navigate to="/" replace />
             )

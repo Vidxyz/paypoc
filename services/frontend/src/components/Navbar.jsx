@@ -20,7 +20,7 @@ import PersonIcon from '@mui/icons-material/Person'
 import LogoutIcon from '@mui/icons-material/Logout'
 import AccountCircleIcon from '@mui/icons-material/AccountCircle'
 import HomeIcon from '@mui/icons-material/Home'
-import PaymentIcon from '@mui/icons-material/Payment'
+import ShoppingBagIcon from '@mui/icons-material/ShoppingBag'
 import { useCart } from '../context/CartContext'
 import CartPopup from './CartPopup'
 
@@ -129,21 +129,21 @@ function Navbar({ onLogout, buyerId, userEmail }) {
           />
           <Button
             component={Link}
-            to="/payments"
+            to="/orders"
             color="inherit"
-            startIcon={<PaymentIcon />}
+            startIcon={<ShoppingBagIcon />}
             sx={{
               minWidth: 'auto',
               px: 2,
               py: 1,
               borderRadius: 2,
-              bgcolor: location.pathname === '/payments' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              bgcolor: location.pathname === '/orders' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
               '&:hover': {
                 bgcolor: 'rgba(255, 255, 255, 0.1)',
               },
             }}
           >
-            Payments
+            Orders
           </Button>
         </Box>
         

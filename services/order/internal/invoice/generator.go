@@ -61,25 +61,38 @@ func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.O
 	// Items table header
 	pdf.SetFont("Arial", "B", 10)
 	pdf.SetFillColor(240, 240, 240)
-	pdf.Cell(100, 8, "Item")
-	pdf.Cell(30, 8, "Quantity")
-	pdf.Cell(30, 8, "Price")
-	pdf.Cell(30, 8, "Total")
+	pdf.Rect(10, pdf.GetY(), 190, 8, "F")
+	pdf.SetTextColor(0, 0, 0)
+	pdf.SetXY(10, pdf.GetY())
+	pdf.CellFormat(80, 8, "Product / SKU", "B", 0, "", false, 0, "")
+	pdf.CellFormat(30, 8, "Quantity", "B", 0, "", false, 0, "")
+	pdf.CellFormat(30, 8, "Unit Price", "B", 0, "", false, 0, "")
+	pdf.CellFormat(30, 8, "Total", "B", 0, "", false, 0, "")
 	pdf.Ln(8)
 
 	// Items
 	pdf.SetFont("Arial", "", 10)
 	pdf.SetFillColor(255, 255, 255)
+	pdf.SetTextColor(0, 0, 0)
 	var totalCents int64
 
 	for _, item := range items {
 		itemTotal := item.PriceCents * int64(item.Quantity)
 		totalCents += itemTotal
 
-		pdf.Cell(100, 8, item.SKU)
-		pdf.Cell(30, 8, fmt.Sprintf("%d", item.Quantity))
-		pdf.Cell(30, 8, formatCurrency(item.PriceCents, item.Currency))
-		pdf.Cell(30, 8, formatCurrency(itemTotal, item.Currency))
+		// Truncate SKU if too long (max 35 chars for product name area)
+		sku := item.SKU
+		if len(sku) > 35 {
+			sku = sku[:32] + "..."
+		}
+
+		// Format: "SKU: {sku}" (product name would go here if available)
+		itemDescription := fmt.Sprintf("SKU: %s", sku)
+
+		pdf.CellFormat(80, 8, itemDescription, "", 0, "", false, 0, "")
+		pdf.CellFormat(30, 8, fmt.Sprintf("%d", item.Quantity), "", 0, "", false, 0, "")
+		pdf.CellFormat(30, 8, formatCurrency(item.PriceCents, item.Currency), "", 0, "", false, 0, "")
+		pdf.CellFormat(30, 8, formatCurrency(itemTotal, item.Currency), "", 0, "", false, 0, "")
 		pdf.Ln(8)
 	}
 

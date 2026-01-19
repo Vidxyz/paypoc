@@ -6,6 +6,7 @@ import AdminRefunds from './pages/AdminRefunds'
 import AdminReconciliation from './pages/AdminReconciliation'
 import AdminPayouts from './pages/AdminPayouts'
 import AdminProducts from './pages/AdminProducts'
+import AdminOrders from './pages/AdminOrders'
 import AdminNavbar from './components/AdminNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -171,6 +172,16 @@ function App() {
             element={
               isAdminAuthenticated ? (
                 <AdminProducts />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              isAdminAuthenticated ? (
+                <AdminOrders />
               ) : (
                 <Navigate to="/" replace />
               )

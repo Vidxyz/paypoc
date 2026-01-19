@@ -198,6 +198,81 @@ func (c *PaymentClient) CreateOrderPayment(ctx context.Context, req CreateOrderP
 	}, nil
 }
 
+// OrderItemRefundForPayment represents an order item refund for the payments service
+type OrderItemRefundForPayment struct {
+	OrderItemID uuid.UUID `json:"orderItemId"`
+	Quantity    int       `json:"quantity"`
+	SellerID    string    `json:"sellerId"`
+	PriceCents  int64     `json:"priceCents"`
+}
+
+// CreatePartialRefundRequest represents a request for a partial refund
+type CreatePartialRefundRequest struct {
+	OrderItemsToRefund []OrderItemRefundForPayment `json:"orderItemsToRefund"`
+}
+
+// CreateFullRefund creates a full refund via the payments service internal API
+func (c *PaymentClient) CreateFullRefund(ctx context.Context, orderID uuid.UUID) error {
+	// Use internal API endpoint for full refund
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("%s/internal/payments/order/%s/refund", c.baseURL, orderID),
+		nil)
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+c.internalToken)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("payments service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// CreatePartialRefund creates a partial refund via the payments service internal API
+func (c *PaymentClient) CreatePartialRefund(ctx context.Context, orderID uuid.UUID, orderItemsToRefund []OrderItemRefundForPayment) error {
+	reqBody := CreatePartialRefundRequest{
+		OrderItemsToRefund: orderItemsToRefund,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	// Use internal API endpoint
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("%s/internal/payments/order/%s/partial-refund", c.baseURL, orderID),
+		bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.internalToken)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("payments service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // CartClient handles communication with cart service
 type CartClient struct {
 	baseURL string

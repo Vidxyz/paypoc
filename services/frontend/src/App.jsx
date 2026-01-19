@@ -5,7 +5,7 @@ import { useAuth0 } from './auth/Auth0Provider'
 import { CartProvider } from './context/CartContext'
 import Home from './pages/Home'
 import Checkout from './pages/Checkout'
-import Payments from './pages/Payments'
+import Orders from './pages/Orders'
 import Profile from './pages/Profile'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -141,10 +141,10 @@ function App() {
             }
           />
           <Route
-            path="/payments"
+            path="/orders"
             element={
               isAuthenticated ? (
-                <Payments buyerId={userId} userEmail={userEmail} />
+                <Orders buyerId={userId} userEmail={userEmail} />
               ) : (
                 <Navigate to="/" replace />
               )

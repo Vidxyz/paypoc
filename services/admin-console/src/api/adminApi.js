@@ -222,5 +222,81 @@ export const syncInventory = async () => {
   return response.data
 }
 
+// Order service endpoints
+const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'https://order.local'
+
+// Create a separate axios instance for order service with token handling
+const orderApi = axios.create({
+  baseURL: ORDER_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// Add request interceptor to include bearer token for order API
+orderApi.interceptors.request.use(
+  async (config) => {
+    let token = localStorage.getItem('bearerToken')
+    
+    // If no token in localStorage and we have an Auth0 client, try to get a fresh token
+    if (!token && auth0ClientRef) {
+      try {
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE || undefined
+        const tokenResponse = await auth0ClientRef.getTokenSilently({ 
+          detailedResponse: true,
+          authorizationParams: {
+            audience: audience
+          }
+        })
+        token = tokenResponse.access_token
+        if (!token) {
+          throw new Error('No access token received from Auth0')
+        }
+        localStorage.setItem('bearerToken', token)
+      } catch (error) {
+        console.error('Error getting access token from Auth0:', error)
+      }
+    }
+    
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// List orders (ADMIN only, with optional buyer filter and pagination)
+export const getOrders = async (page = 0, pageSize = 20, buyerId = null) => {
+  const params = { page, page_size: pageSize }
+  if (buyerId) {
+    params.buyer_id = buyerId
+  }
+  const response = await orderApi.get('/api/orders', { params })
+  return response.data
+}
+
+// Get order by ID
+export const getOrder = async (orderId) => {
+  const response = await orderApi.get(`/api/orders/${orderId}`)
+  return response.data
+}
+
+// Create full refund (ADMIN only)
+export const createFullRefund = async (orderId) => {
+  const response = await orderApi.post(`/api/orders/${orderId}/refund`)
+  return response.data
+}
+
+// Create partial refund (ADMIN only)
+export const createPartialRefund = async (orderId, orderItemsToRefund) => {
+  const response = await orderApi.post(`/api/orders/${orderId}/partial-refund`, {
+    orderItemsToRefund,
+  })
+  return response.data
+}
+
 export default adminApi
 

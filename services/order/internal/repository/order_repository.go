@@ -190,6 +190,15 @@ func (r *OrderRepository) CancelOrder(ctx context.Context, orderID uuid.UUID, ca
 	return err
 }
 
+// UpdatePaymentID updates the payment_id for an order
+func (r *OrderRepository) UpdatePaymentID(ctx context.Context, orderID uuid.UUID, paymentID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE orders SET payment_id = $1, updated_at = $2 WHERE id = $3`,
+		paymentID, time.Now(), orderID,
+	)
+	return err
+}
+
 // UpdateItemRefundedQuantity updates the refunded quantity for an order item
 func (r *OrderRepository) UpdateItemRefundedQuantity(ctx context.Context, orderItemID uuid.UUID, refundedQuantity int) error {
 	_, err := r.pool.Exec(ctx,
@@ -400,4 +409,162 @@ func (r *OrderRepository) CheckRefundExists(ctx context.Context, refundID uuid.U
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// ListOrders retrieves orders with optional buyer filtering and pagination
+func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit, offset int) ([]models.Order, error) {
+	var query string
+	var args []interface{}
+	
+	if buyerID != nil {
+		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                created_at, updated_at, confirmed_at, cancelled_at
+		         FROM orders 
+		         WHERE buyer_id = $1
+		         ORDER BY created_at DESC
+		         LIMIT $2 OFFSET $3`
+		args = []interface{}{*buyerID, limit, offset}
+	} else {
+		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                created_at, updated_at, confirmed_at, cancelled_at
+		         FROM orders 
+		         ORDER BY created_at DESC
+		         LIMIT $1 OFFSET $2`
+		args = []interface{}{limit, offset}
+	}
+	
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	var orders []models.Order
+	for rows.Next() {
+		var order models.Order
+		var confirmedAt, cancelledAt *time.Time
+		var refundStatus string
+		
+		err := rows.Scan(
+			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
+			&confirmedAt, &cancelledAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		
+		if confirmedAt != nil {
+			order.ConfirmedAt = confirmedAt
+		}
+		if cancelledAt != nil {
+			order.CancelledAt = cancelledAt
+		}
+		order.RefundStatus = refundStatus
+		
+		orders = append(orders, order)
+	}
+	
+	return orders, rows.Err()
+}
+
+// CountOrders counts total orders with optional buyer filtering
+func (r *OrderRepository) CountOrders(ctx context.Context, buyerID *string) (int, error) {
+	var count int
+	var err error
+	
+	if buyerID != nil {
+		err = r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM orders WHERE buyer_id = $1`,
+			*buyerID,
+		).Scan(&count)
+	} else {
+		err = r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM orders`,
+		).Scan(&count)
+	}
+	
+	return count, err
+}
+
+// ListOrdersForSeller retrieves orders where the seller has items, with pagination
+// Returns orders with only the items belonging to that seller
+func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID string, limit, offset int) ([]models.Order, error) {
+	// Get distinct order IDs for orders containing items from this seller
+	orderIDRows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT order_id 
+		 FROM order_items 
+		 WHERE seller_id = $1
+		 ORDER BY order_id DESC
+		 LIMIT $2 OFFSET $3`,
+		sellerID, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer orderIDRows.Close()
+	
+	var orderIDs []uuid.UUID
+	for orderIDRows.Next() {
+		var orderID uuid.UUID
+		if err := orderIDRows.Scan(&orderID); err != nil {
+			return nil, err
+		}
+		orderIDs = append(orderIDs, orderID)
+	}
+	
+	if len(orderIDs) == 0 {
+		return []models.Order{}, nil
+	}
+	
+	// Get orders for these IDs
+	query := `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+	                 created_at, updated_at, confirmed_at, cancelled_at
+	          FROM orders 
+	          WHERE id = ANY($1)
+	          ORDER BY created_at DESC`
+	
+	rows, err := r.pool.Query(ctx, query, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	var orders []models.Order
+	for rows.Next() {
+		var order models.Order
+		var confirmedAt, cancelledAt *time.Time
+		var refundStatus string
+		
+		err := rows.Scan(
+			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
+			&confirmedAt, &cancelledAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		
+		if confirmedAt != nil {
+			order.ConfirmedAt = confirmedAt
+		}
+		if cancelledAt != nil {
+			order.CancelledAt = cancelledAt
+		}
+		order.RefundStatus = refundStatus
+		
+		orders = append(orders, order)
+	}
+	
+	return orders, rows.Err()
+}
+
+// CountOrdersForSeller counts total orders where seller has items
+func (r *OrderRepository) CountOrdersForSeller(ctx context.Context, sellerID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(DISTINCT order_id) FROM order_items WHERE seller_id = $1`,
+		sellerID,
+	).Scan(&count)
+	return count, err
 }

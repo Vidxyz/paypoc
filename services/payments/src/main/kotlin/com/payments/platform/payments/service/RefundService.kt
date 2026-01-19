@@ -34,6 +34,28 @@ class RefundService(
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     private val PLATFORM_FEE_PERCENTAGE = 0.10  // 10% platform fee
+    
+    /**
+     * Creates a full refund for an order.
+     * Looks up the payment by orderId and creates a full refund.
+     * 
+     * @param orderId Order ID
+     * @return Created refund
+     * @throws RefundCreationException if refund creation fails
+     */
+    @Transactional
+    fun createRefundForOrder(orderId: UUID): Refund {
+        // Get payment by order ID
+        val payment = try {
+            paymentService.getPaymentByOrderId(orderId)
+        } catch (e: IllegalArgumentException) {
+            throw RefundCreationException("Payment not found for order: $orderId")
+        }
+        
+        // Create full refund using existing method
+        return createRefund(payment.id)
+    }
+    
     /**
      * Creates a full refund for a payment.
      * 
@@ -60,20 +82,23 @@ class RefundService(
         }
         val payment = paymentEntity.toDomain()
         
-        // Validate payment state
-        if (payment.state != PaymentState.CAPTURED) {
+        // Validate payment state - allow CAPTURED or REFUNDING (for multiple refunds)
+        if (payment.state != PaymentState.CAPTURED && payment.state != PaymentState.REFUNDING) {
             throw RefundCreationException(
                 "Payment $paymentId cannot be refunded. Current state: ${payment.state}. " +
-                "Only CAPTURED payments can be refunded."
+                "Only CAPTURED or REFUNDING payments can be refunded."
             )
         }
         
-        // Validate payment hasn't been refunded already
+        // Check if payment is already fully refunded
         val existingRefunds = refundRepository.findByPaymentId(paymentId)
-        if (existingRefunds.isNotEmpty()) {
+        val completedRefunds = existingRefunds.filter { it.state == RefundState.REFUNDED }
+        val totalRefundedAmount = completedRefunds.sumOf { it.refundAmountCents }
+        
+        if (totalRefundedAmount >= payment.grossAmountCents) {
             throw RefundCreationException(
-                "Payment $paymentId has already been refunded. " +
-                "Only one refund per payment is currently supported."
+                "Payment $paymentId has already been fully refunded. " +
+                "Total refunded: $totalRefundedAmount, Payment amount: ${payment.grossAmountCents}"
             )
         }
         
@@ -166,10 +191,14 @@ class RefundService(
         val entity = RefundEntity.fromDomain(refund)
         val saved = refundRepository.save(entity)
         
-        // Transition payment from CAPTURED to REFUNDING
+        // Transition payment to REFUNDING (if not already in REFUNDING state)
         try {
-            paymentService.transitionPayment(payment.id, PaymentState.REFUNDING)
-            logger.info("Payment $paymentId transitioned to REFUNDING state")
+            if (payment.state == PaymentState.CAPTURED) {
+                paymentService.transitionPayment(payment.id, PaymentState.REFUNDING)
+                logger.info("Payment $paymentId transitioned to REFUNDING state")
+            } else {
+                logger.info("Payment $paymentId already in REFUNDING state (multiple refunds)")
+            }
         } catch (e: Exception) {
             logger.error("Failed to transition payment $paymentId to REFUNDING state", e)
             // Don't fail the refund creation - refund is created, payment state can be corrected later
@@ -217,11 +246,23 @@ class RefundService(
             throw RefundCreationException("Payment not found for order: $orderId")
         }
         
-        // Validate payment state
-        if (payment.state != PaymentState.CAPTURED) {
+        // Validate payment state - allow CAPTURED or REFUNDING (for multiple refunds)
+        if (payment.state != PaymentState.CAPTURED && payment.state != PaymentState.REFUNDING) {
             throw RefundCreationException(
                 "Payment for order $orderId cannot be refunded. Current state: ${payment.state}. " +
-                "Only CAPTURED payments can be refunded."
+                "Only CAPTURED or REFUNDING payments can be refunded."
+            )
+        }
+        
+        // Check if payment is already fully refunded
+        val existingRefunds = refundRepository.findByPaymentId(payment.id)
+        val completedRefunds = existingRefunds.filter { it.state == RefundState.REFUNDED }
+        val totalRefundedAmount = completedRefunds.sumOf { it.refundAmountCents }
+        
+        if (totalRefundedAmount >= payment.grossAmountCents) {
+            throw RefundCreationException(
+                "Payment for order $orderId has already been fully refunded. " +
+                "Total refunded: $totalRefundedAmount, Payment amount: ${payment.grossAmountCents}"
             )
         }
         
@@ -353,13 +394,13 @@ class RefundService(
         val entity = RefundEntity.fromDomain(refund)
         val saved = refundRepository.save(entity)
         
-        // Transition payment from CAPTURED to REFUNDING (if this is the first refund)
-        // Note: For partial refunds, payment might remain CAPTURED if not fully refunded
-        // For now, we'll transition to REFUNDING to indicate a refund is in progress
+        // Transition payment to REFUNDING (if not already in REFUNDING state)
         try {
             if (payment.state == PaymentState.CAPTURED) {
                 paymentService.transitionPayment(payment.id, PaymentState.REFUNDING)
                 logger.info("Payment ${payment.id} (order: $orderId) transitioned to REFUNDING state")
+            } else {
+                logger.info("Payment ${payment.id} (order: $orderId) already in REFUNDING state (multiple refunds)")
             }
         } catch (e: Exception) {
             logger.error("Failed to transition payment ${payment.id} (order: $orderId) to REFUNDING state", e)

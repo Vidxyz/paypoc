@@ -86,6 +86,52 @@ class InternalPaymentController(
     }
     
     /**
+     * POST /internal/payments/order/{orderId}/refund
+     * Creates a full refund for a payment.
+     * 
+     * The payment is looked up by orderId internally.
+     * All remaining items in the order will be refunded.
+     * 
+     * Requires: Authorization: Bearer {token}
+     */
+    @PostMapping("/order/{orderId}/refund")
+    @Operation(
+        summary = "Create full refund - Internal",
+        description = "Creates a full refund for a payment. All remaining items in the order will be refunded. Payment is looked up by orderId. Service-to-service only."
+    )
+    @ApiResponse(responseCode = "201", description = "Full refund created successfully")
+    @ApiResponse(responseCode = "400", description = "Invalid request data or validation error")
+    @ApiResponse(responseCode = "401", description = "Unauthorized: Invalid or missing token")
+    @ApiResponse(responseCode = "404", description = "Payment not found for order")
+    fun createFullRefund(
+        @PathVariable orderId: UUID,
+        httpRequest: HttpServletRequest
+    ): ResponseEntity<com.payments.platform.payments.api.RefundResponseDto> {
+        if (!validateToken(httpRequest)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
+        }
+        
+        return try {
+            val refund = refundService.createRefundForOrder(orderId)
+            ResponseEntity.status(HttpStatus.CREATED).body(
+                com.payments.platform.payments.api.RefundResponseDto.fromDomain(refund)
+            )
+        } catch (e: IllegalArgumentException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                com.payments.platform.payments.api.RefundResponseDto(error = e.message)
+            )
+        } catch (e: com.payments.platform.payments.service.RefundCreationException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                com.payments.platform.payments.api.RefundResponseDto(error = "Refund creation failed: ${e.message}")
+            )
+        } catch (e: Exception) {
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                com.payments.platform.payments.api.RefundResponseDto(error = "Failed to create full refund: ${e.message}")
+            )
+        }
+    }
+    
+    /**
      * POST /internal/payments/order/{orderId}/partial-refund
      * Creates a partial refund for a payment with multiple sellers.
      * 

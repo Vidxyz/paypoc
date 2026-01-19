@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -127,6 +128,17 @@ func main() {
 func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	router := gin.Default()
 
+	// CORS configuration - allow admin console, seller console, and frontend
+	corsConfig := cors.Config{
+		AllowOrigins:     []string{"https://admin.local", "http://admin.local", "https://seller.local", "http://seller.local", "https://buyit.local", "http://buyit.local"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "Access-Control-Request-Method", "Access-Control-Request-Headers"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
+		AllowCredentials: true,
+		MaxAge:           3600,
+	}
+	router.Use(cors.New(corsConfig))
+
 	// Health check
 	router.GET("/health", orderHandler.Health)
 
@@ -147,9 +159,15 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	// Public API (requires JWT authentication)
 	api := router.Group("/api")
 	{
-		// Require BUYER or ADMIN account type
-		api.GET("/orders/:id", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin), orderHandler.GetOrder)
+		// List orders - supports ADMIN, BUYER, SELLER
+		api.GET("/orders", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin, auth.AccountTypeSeller), orderHandler.ListOrders)
+		// Get single order - supports BUYER, ADMIN, and SELLER (sellers see only their items)
+		api.GET("/orders/:id", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin, auth.AccountTypeSeller), orderHandler.GetOrder)
 		api.GET("/orders/:id/invoice", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin), orderHandler.GetInvoice)
+		// Full refund - admin only
+		api.POST("/orders/:id/refund", jwtAuth.RequireAccountType(auth.AccountTypeAdmin), orderHandler.CreateFullRefund)
+		// Partial refund - admin only
+		api.POST("/orders/:id/partial-refund", jwtAuth.RequireAccountType(auth.AccountTypeAdmin), orderHandler.CreatePartialRefund)
 	}
 
 	return router
@@ -166,9 +184,9 @@ type Config struct {
 	KafkaBrokers           []string
 	KafkaEventsTopic       string
 	KafkaConsumerGroupID   string
-	InternalAPIToken      string
-	Auth0Domain           string
-	Auth0Audience         string
+	InternalAPIToken       string
+	Auth0Domain            string
+	Auth0Audience          string
 }
 
 func loadConfig() *Config {

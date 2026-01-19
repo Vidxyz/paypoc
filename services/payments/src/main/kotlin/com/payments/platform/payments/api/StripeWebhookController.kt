@@ -331,13 +331,30 @@ class StripeWebhookController(
             }
             val payment = paymentEntity.toDomain()
             
-            // Transition payment from REFUNDING to REFUNDED and set refundedAt timestamp
+            // Check if payment is fully refunded (sum of all completed refunds >= payment amount)
+            val allRefunds = refundRepository.findByPaymentId(refund.paymentId)
+            val completedRefunds = allRefunds.filter { it.state == RefundState.REFUNDED }
+            val totalRefundedAmount = completedRefunds.sumOf { it.refundAmountCents }
+            val isFullyRefunded = totalRefundedAmount >= payment.grossAmountCents
+            
+            // Only transition payment to REFUNDED if fully refunded
+            // Otherwise, keep it in REFUNDING state to allow additional refunds
             try {
-                val refundedAt = Instant.now()
-                paymentService.transitionPaymentWithRefundedAt(refund.paymentId, PaymentState.REFUNDED, refundedAt)
-                logger.info("Payment ${refund.paymentId} transitioned to REFUNDED state with refundedAt=$refundedAt")
+                if (isFullyRefunded) {
+                    val refundedAt = Instant.now()
+                    paymentService.transitionPaymentWithRefundedAt(refund.paymentId, PaymentState.REFUNDED, refundedAt)
+                    logger.info(
+                        "Payment ${refund.paymentId} transitioned to REFUNDED state with refundedAt=$refundedAt " +
+                        "(total refunded: $totalRefundedAmount, payment amount: ${payment.grossAmountCents})"
+                    )
+                } else {
+                    logger.info(
+                        "Payment ${refund.paymentId} remains in REFUNDING state " +
+                        "(partial refund: total refunded: $totalRefundedAmount, payment amount: ${payment.grossAmountCents})"
+                    )
+                }
             } catch (e: Exception) {
-                logger.error("Failed to transition payment ${refund.paymentId} to REFUNDED state", e)
+                logger.error("Failed to transition payment ${refund.paymentId} state", e)
                 // Don't fail the refund processing - refund is complete, payment state can be corrected
             }
             

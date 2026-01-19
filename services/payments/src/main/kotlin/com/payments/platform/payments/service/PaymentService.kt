@@ -385,16 +385,21 @@ class PaymentService(
         sortBy: String = "createdAt",
         sortDirection: String = "DESC"
     ): List<Payment> {
-        val sort = if (sortDirection.uppercase() == "ASC") {
-            org.springframework.data.domain.Sort.by(sortBy).ascending()
-        } else {
-            org.springframework.data.domain.Sort.by(sortBy).descending()
-        }
+        // Use manual pagination with native query to avoid Spring Data JPA trying to add its own ORDER BY
+        // The query already has ORDER BY p.created_at DESC, so we just need LIMIT/OFFSET
+        val limit = size
+        val offset = page.toLong() * size.toLong()
+        val payments = paymentRepository.findBySellerId(sellerId, limit, offset)
         
-        val pageable = org.springframework.data.domain.PageRequest.of(page, size, sort)
-        val pageResult = paymentRepository.findBySellerId(sellerId, pageable)
-        
-        return pageResult.content.map { it.toDomain() }
+        return payments.map { it.toDomain() }
+    }
+    
+    /**
+     * Gets the total count of payments for a seller.
+     * Used for pagination metadata.
+     */
+    fun countPaymentsBySellerId(sellerId: String): Long {
+        return paymentRepository.countBySellerId(sellerId)
     }
     
     /**

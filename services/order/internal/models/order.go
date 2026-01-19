@@ -94,26 +94,29 @@ type CreateOrderResponse struct {
 
 // OrderResponse represents an order in API responses
 type OrderResponse struct {
-	ID          uuid.UUID           `json:"id"`
-	BuyerID     string              `json:"buyer_id"`
-	Status      string              `json:"status"`
-	TotalCents  int64               `json:"total_cents"`
-	Currency    string              `json:"currency"`
-	Items       []OrderItemResponse `json:"items"`
-	Shipments   []ShipmentResponse  `json:"shipments"`
-	CreatedAt   time.Time           `json:"created_at"`
-	ConfirmedAt *time.Time          `json:"confirmed_at,omitempty"`
+	ID           uuid.UUID           `json:"id"`
+	BuyerID      string              `json:"buyer_id"`
+	Status       string              `json:"status"`
+	TotalCents   int64               `json:"total_cents"`
+	Currency     string              `json:"currency"`
+	PaymentID    *uuid.UUID          `json:"payment_id,omitempty"`
+	RefundStatus string              `json:"refund_status,omitempty"`
+	Items        []OrderItemResponse `json:"items"`
+	Shipments    []ShipmentResponse  `json:"shipments"`
+	CreatedAt    time.Time           `json:"created_at"`
+	ConfirmedAt  *time.Time          `json:"confirmed_at,omitempty"`
 }
 
 // OrderItemResponse represents an order item in API responses
 type OrderItemResponse struct {
-	ID         uuid.UUID `json:"id"`
-	ProductID  uuid.UUID `json:"product_id"`
-	SKU        string    `json:"sku"`
-	SellerID   string    `json:"seller_id"`
-	Quantity   int       `json:"quantity"`
-	PriceCents int64     `json:"price_cents"`
-	Currency   string    `json:"currency"`
+	ID               uuid.UUID `json:"id"`
+	ProductID        uuid.UUID `json:"product_id"`
+	SKU              string    `json:"sku"`
+	SellerID         string    `json:"seller_id"`
+	Quantity         int       `json:"quantity"`
+	RefundedQuantity int       `json:"refunded_quantity,omitempty"`
+	PriceCents       int64     `json:"price_cents"`
+	Currency         string    `json:"currency"`
 }
 
 // ShipmentResponse represents a shipment in API responses

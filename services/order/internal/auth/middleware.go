@@ -108,9 +108,39 @@ func (j *JWTAuth) RequireAccountType(allowedTypes ...string) gin.HandlerFunc {
 		}
 
 		// Validate audience if configured
+		// JWT audience can be either a string or an array of strings
 		if j.audience != "" {
-			aud, _ := token.Get("aud")
-			if audStr, ok := aud.(string); !ok || audStr != j.audience {
+			aud, exists := token.Get("aud")
+			if !exists {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Token missing audience claim"})
+				c.Abort()
+				return
+			}
+
+			// Handle both string and array cases
+			audienceMatch := false
+			switch v := aud.(type) {
+			case string:
+				audienceMatch = v == j.audience
+			case []interface{}:
+				// Check if configured audience is in the array
+				for _, item := range v {
+					if str, ok := item.(string); ok && str == j.audience {
+						audienceMatch = true
+						break
+					}
+				}
+			case []string:
+				// Check if configured audience is in the array
+				for _, item := range v {
+					if item == j.audience {
+						audienceMatch = true
+						break
+					}
+				}
+			}
+
+			if !audienceMatch {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token audience"})
 				c.Abort()
 				return
@@ -144,19 +174,52 @@ func (j *JWTAuth) RequireAccountType(allowedTypes ...string) gin.HandlerFunc {
 			return
 		}
 
-		// Extract user ID
-		userIDClaim, ok := token.Get(customNamespace + "user_id")
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token missing user_id claim"})
-			c.Abort()
-			return
-		}
+		// Extract user identity.
+		//
+		// IMPORTANT:
+		// - For BUYER/ADMIN we use `https://buyit.local/user_id` (UUID) as the principal.
+		// - For SELLER we use `https://buyit.local/email` as the principal because our order DB
+		//   stores `order_items.seller_id` as the seller email (e.g. seller2@buyit.com).
+		var userID string
+		if accountType == AccountTypeSeller {
+			emailClaim, ok := token.Get(customNamespace + "email")
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Token missing email claim"})
+				c.Abort()
+				return
+			}
+			email, ok := emailClaim.(string)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email claim format"})
+				c.Abort()
+				return
+			}
+			userID = strings.TrimSpace(email)
+			if userID == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Empty email claim"})
+				c.Abort()
+				return
+			}
+		} else {
+			userIDClaim, ok := token.Get(customNamespace + "user_id")
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Token missing user_id claim"})
+				c.Abort()
+				return
+			}
 
-		userID, ok := userIDClaim.(string)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user_id claim format"})
-			c.Abort()
-			return
+			id, ok := userIDClaim.(string)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user_id claim format"})
+				c.Abort()
+				return
+			}
+			userID = strings.TrimSpace(id)
+			if userID == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Empty user_id claim"})
+				c.Abort()
+				return
+			}
 		}
 
 		// Store user info in context for handlers to use

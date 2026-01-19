@@ -267,7 +267,7 @@ function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
 }
 
 function CheckoutForm({ buyerId }) {
-  const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems, loading: cartLoading } = useCart()
+  const { cartItems, updateQuantity, removeFromCart, getTotalPrice, getTotalItems, loading: cartLoading, clearCart } = useCart()
   const { getAccessToken } = useAuth0()
   const navigate = useNavigate()
   const [showPayment, setShowPayment] = useState(false)
@@ -329,9 +329,16 @@ function CheckoutForm({ buyerId }) {
     }
   }
 
-  const handlePaymentSuccess = (intent, orderId, paymentId) => {
+  const handlePaymentSuccess = async (intent, orderId, paymentId) => {
     setPaymentIntent(intent)
     setSuccess(true)
+    // Clear the cart after successful payment
+    try {
+      await clearCart()
+    } catch (err) {
+      console.error('Failed to clear cart after payment:', err)
+      // Don't block the success UI if cart clearing fails
+    }
   }
 
   const handleBackToCart = () => {

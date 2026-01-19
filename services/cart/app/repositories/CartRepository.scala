@@ -33,6 +33,7 @@ class CartRepository @Inject()(
   }
   
   // Save active cart to Redis with TTL
+  // todo-vh: Expired carts cannot be recovered - consider increased TTL or persisting earlier. Consider publish events on cart expiry and tracking analytics/recovery via them. Can also persist expired carts in a separate table for analytics/recovery.
   def saveActiveCart(cart: Cart): Future[Boolean] = Future {
     val key = s"$REDIS_KEY_PREFIX${cart.buyerId}"
     val expiresAt = cart.expiresAt.getOrElse(Instant.now().plusSeconds(CART_TTL_SECONDS))
@@ -73,12 +74,22 @@ class CartRepository @Inject()(
     db.withConnection { implicit conn =>
       val now = Instant.now()
       items.foreach { item =>
-        SQL"""
-          INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
-          VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
-                  ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
-                  ${item.reservationId.map(_.toString)}, $now)
-        """.execute()
+        item.reservationId match {
+          case Some(reservationId) =>
+            SQL"""
+              INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
+              VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
+                      ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
+                      CAST(${reservationId.toString} AS uuid), $now)
+            """.execute()
+          case None =>
+            SQL"""
+              INSERT INTO cart_items (id, cart_id, product_id, sku, seller_id, quantity, price_cents, currency, reservation_id, created_at)
+              VALUES (CAST(${item.itemId.toString} AS uuid), CAST(${cartId.toString} AS uuid), CAST(${item.productId.toString} AS uuid), 
+                      ${item.sku}, ${item.sellerId}, ${item.quantity}, ${item.priceCents}, ${item.currency}, 
+                      NULL, $now)
+            """.execute()
+        }
       }
     }
   }

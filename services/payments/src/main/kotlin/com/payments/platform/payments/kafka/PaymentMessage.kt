@@ -88,19 +88,32 @@ data class PaymentFailedEvent(
  * 
  * This event triggers the ledger write (double-entry bookkeeping).
  * Contains all information needed for ledger entry creation.
+ * 
+ * One payment per order - can have multiple sellers via sellerBreakdown.
  */
 data class PaymentCapturedEvent(
     override val eventId: UUID = UUID.randomUUID(),
     override val paymentId: UUID,
     override val idempotencyKey: String,
+    val orderId: UUID,
     val buyerId: String,
-    val sellerId: String,
     val grossAmountCents: Long,
-    val platformFeeCents: Long,
-    val netSellerAmountCents: Long,
+    val platformFeeCents: Long,  // Total platform fee (sum of all seller platform fees)
+    val netSellerAmountCents: Long,  // Total net seller amounts (sum of all seller net amounts)
     val currency: String,
     val stripePaymentIntentId: String,
+    val sellerBreakdown: List<SellerBreakdownEvent>,  // Per-seller breakdown
     override val attempt: Int = 1,
     override val createdAt: Instant = Instant.now(),
     override val payload: Map<String, Any> = emptyMap()
 ) : PaymentMessage(eventId, paymentId, idempotencyKey, "PAYMENT_CAPTURED", attempt, createdAt, payload)
+
+/**
+ * Seller breakdown event - one per seller in the payment.
+ */
+data class SellerBreakdownEvent(
+    val sellerId: String,
+    val sellerGrossAmountCents: Long,
+    val platformFeeCents: Long,  // This seller's platform fee
+    val netSellerAmountCents: Long  // This seller's net amount
+)

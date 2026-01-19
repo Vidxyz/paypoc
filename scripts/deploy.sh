@@ -228,6 +228,7 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/user/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -317,6 +318,10 @@ build_all_images() {
     (cd "$PROJECT_ROOT/services/cart" && docker build -t cart-service:latest .) &
     CART_PID=$!
     
+    log_info "Building order-service image..."
+    (cd "$PROJECT_ROOT/services/order" && docker build -t order-service:latest .) &
+    ORDER_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -346,6 +351,9 @@ build_all_images() {
     wait $CART_PID || { log_error "Cart image build failed"; exit 1; }
     log_info "Cart image built successfully"
     
+    wait $ORDER_PID || { log_error "Order image build failed"; exit 1; }
+    log_info "Order image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
@@ -357,6 +365,7 @@ build_all_images() {
     minikube image load catalog-service:latest &
     minikube image load inventory-service:latest &
     minikube image load cart-service:latest &
+    minikube image load order-service:latest &
     
     # Wait for all image loads to complete
     wait
@@ -394,6 +403,12 @@ delete_deployments() {
                 ;;
             inventory)
                 kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
+                ;;
+            cart)
+                kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
+                ;;
+            order)
+                kubectl delete -f "$K8S_DIR/order/deployment.yaml" 2>/dev/null || true
                 ;;
         esac
     done
@@ -443,6 +458,10 @@ deploy_multiple_services() {
                 ;;
             cart)
                 deploy_cart &
+                pids+=($!)
+                ;;
+            order)
+                deploy_order &
                 pids+=($!)
                 ;;
         esac
@@ -568,9 +587,21 @@ build_single_image() {
             minikube image load inventory-service:latest
             log_info "Inventory image built and loaded successfully"
             ;;
+            cart)
+                log_info "Building cart-service image..."
+                (cd "$PROJECT_ROOT/services/cart" && docker build -t cart-service:latest .) || { log_error "Cart image build failed"; exit 1; }
+                minikube image load cart-service:latest
+                log_info "Cart image built and loaded successfully"
+                ;;
+            order)
+                log_info "Building order-service image..."
+                (cd "$PROJECT_ROOT/services/order" && docker build -t order-service:latest .) || { log_error "Order image build failed"; exit 1; }
+                minikube image load order-service:latest
+                log_info "Order image built and loaded successfully"
+                ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart, order"
             exit 1
             ;;
     esac
@@ -700,6 +731,17 @@ deploy_cart() {
     wait
 }
 
+deploy_order() {
+    log_info "Deploying Order Service..."
+    kubectl apply -f "$K8S_DIR/order/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/order/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/order/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/order/service.yaml" &
+    kubectl apply -f "$K8S_DIR/order/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/order/ingress.yaml" &
+    wait
+}
+
 wait_for_services() {
     local service_name="${1:-all}"
     
@@ -751,6 +793,10 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet" &
     CART_PID=$!
     
+    log_info "Waiting for Order Service..."
+    kubectl wait --for=condition=available deployment/order-service -n order --timeout=300s || log_warn "Order Service not ready yet" &
+    ORDER_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
@@ -762,6 +808,7 @@ wait_for_services() {
     wait $CATALOG_PID
     wait $INVENTORY_PID
     wait $CART_PID
+    wait $ORDER_PID
     
     log_info "Services deployment complete"
 }
@@ -803,9 +850,13 @@ wait_for_single_service() {
             kubectl wait --for=condition=available deployment/inventory-service -n "inventory" --timeout=300s || log_warn "Inventory Service not ready yet"
             ;;
             cart)
-            log_info "Waiting for Cart Service..."
-            kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet"
-            ;;
+                log_info "Waiting for Cart Service..."
+                kubectl wait --for=condition=available deployment/cart-service -n cart --timeout=300s || log_warn "Cart Service not ready yet"
+                ;;
+            order)
+                log_info "Waiting for Order Service..."
+                kubectl wait --for=condition=available deployment/order-service -n order --timeout=300s || log_warn "Order Service not ready yet"
+                ;;
         esac
 }
 
@@ -839,6 +890,13 @@ show_status() {
     kubectl get services -n "$NAMESPACE"
     echo ""
     kubectl get ingress -n "$NAMESPACE"
+    echo ""
+    echo "=== Order Namespace ==="
+    kubectl get pods -n "order"
+    echo ""
+    kubectl get services -n "order"
+    echo ""
+    kubectl get ingress -n "order"
     echo ""
     
     log_info "Access URLs:"
@@ -917,6 +975,8 @@ main() {
     deploy_user &
     deploy_catalog &
     deploy_inventory &
+    deploy_cart &
+    deploy_order &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -932,7 +992,7 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart" "order")
 SERVICES_TO_DEPLOY=()
 EXCLUDED_SERVICES=()
 EXCLUDE_MODE=false

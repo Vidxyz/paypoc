@@ -24,6 +24,7 @@ import { useCart } from '../context/CartContext'
 import { useNavigate } from 'react-router-dom'
 import { useAuth0 } from '../auth/Auth0Provider'
 import { catalogApiClient } from '../api/catalogApi'
+import { cacheProduct } from '../utils/productCache'
 
 function ProductModal({ open, onClose, product }) {
   const navigate = useNavigate()
@@ -82,6 +83,13 @@ function ProductModal({ open, onClose, product }) {
     }
   }, [open, product?.category_id, product?.id, isAuthenticated, getAccessToken])
 
+  // Cache product info when modal opens
+  useEffect(() => {
+    if (product) {
+      cacheProduct(product)
+    }
+  }, [product])
+
   if (!product) return null
 
   const images = product.images || []
@@ -92,6 +100,8 @@ function ProductModal({ open, onClose, product }) {
   // Check if product is out of stock (treat null inventory as 0)
   const availableQty = product.inventory?.available_quantity ?? product.inventory?.availableQuantity ?? 0
   const isOutOfStock = availableQty <= 0
+  const LOW_STOCK_THRESHOLD = 10 // Products with <= 10 available are considered low stock
+  const isLowStock = availableQty > 0 && availableQty <= LOW_STOCK_THRESHOLD
 
   const handleCategoryClick = (categoryId) => {
     onClose()
@@ -382,6 +392,21 @@ function ProductModal({ open, onClose, product }) {
                   </Box>
                 ) : (
                   <>
+                    {isLowStock && (
+                      <Box sx={{ mb: 2, p: 1.5, backgroundColor: 'warning.light', borderRadius: 1, border: '1px solid', borderColor: 'warning.main' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                          <Chip
+                            label="Low Stock"
+                            color="warning"
+                            size="small"
+                            sx={{ fontWeight: 600 }}
+                          />
+                        </Box>
+                        <Typography variant="body2" color="warning.dark" sx={{ fontWeight: 500 }}>
+                          Only {availableQty} {availableQty === 1 ? 'item' : 'items'} remaining. Order soon!
+                        </Typography>
+                      </Box>
+                    )}
                     <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
                       <TextField
                         label="Quantity"
@@ -393,6 +418,7 @@ function ProductModal({ open, onClose, product }) {
                         size="small"
                         helperText={availableQty > 0 ? `${availableQty} available` : ''}
                         disabled={isOutOfStock}
+                        error={isLowStock}
                       />
                       <Button
                         variant="contained"

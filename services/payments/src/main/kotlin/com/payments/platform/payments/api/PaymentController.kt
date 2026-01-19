@@ -4,7 +4,6 @@ import com.payments.platform.payments.client.LedgerClient
 import com.payments.platform.payments.client.LedgerClientException
 import com.payments.platform.payments.config.AuthenticationInterceptor
 import com.payments.platform.payments.models.User
-import com.payments.platform.payments.service.CreatePaymentRequest
 import com.payments.platform.payments.service.PaymentCreationException
 import com.payments.platform.payments.service.PaymentService
 import io.swagger.v3.oas.annotations.Operation
@@ -29,35 +28,21 @@ class PaymentController(
     
     /**
      * POST /payments
-     * Creates a new payment.
      * 
-     * This endpoint orchestrates the payment workflow:
-     * 1. Looks up seller's Stripe account from database (based on sellerId and currency)
-     * 2. Creates Stripe PaymentIntent with marketplace split
-     * 3. Creates payment record (NO ledger write - money hasn't moved yet)
-     * 4. Publishes AuthorizePayment command to Kafka
-     * 5. Returns payment with client_secret (client doesn't wait for Stripe/Kafka processing)
+     * This endpoint has been removed. Payments are now created through the order service
+     * using the internal API endpoint POST /internal/payments/order.
      * 
-     * Ledger write happens AFTER Stripe webhook confirms capture.
-     * 
-     * Note: The seller's Stripe account must be configured via the internal API before
-     * payments can be processed for that seller.
+     * All payments must be associated with an order and can include multiple sellers.
      */
     @Operation(
-        summary = "Create a payment",
-        description = "Creates a new payment and Stripe PaymentIntent. Requires authentication - buyerId is extracted from the authenticated user's JWT token. The seller's Stripe account is automatically looked up from the database based on sellerId and currency. NO ledger write at this stage - money hasn't moved yet. Returns client_secret for frontend payment confirmation. Ledger write happens after Stripe webhook confirms capture."
+        summary = "Create a payment (removed)",
+        description = "This endpoint has been removed. Payments are now created through the order service. Use POST /internal/payments/order for order-based payments."
     )
     @ApiResponses(
         value = [
             ApiResponse(
-                responseCode = "201",
-                description = "Payment created successfully",
-                content = [Content(schema = Schema(implementation = PaymentResponseDto::class))]
-            ),
-            ApiResponse(
-                responseCode = "400",
-                description = "Payment creation failed (validation error)",
-                content = [Content(schema = Schema(implementation = PaymentResponseDto::class))]
+                responseCode = "410",
+                description = "This endpoint has been removed. Use order service to create payments."
             )
         ]
     )
@@ -66,44 +51,11 @@ class PaymentController(
         @Valid @RequestBody request: CreatePaymentRequestDto,
         httpRequest: jakarta.servlet.http.HttpServletRequest
     ): ResponseEntity<PaymentResponseDto> {
-        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
-        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
-            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
-                PaymentResponseDto(
-                    error = "Unauthorized: user not authenticated"
-                )
+        return ResponseEntity.status(HttpStatus.GONE).body(
+            PaymentResponseDto(
+                error = "This endpoint has been removed. Payments must be created through the order service using POST /internal/payments/order. All payments must be associated with an order."
             )
-        
-        // Extract buyerId from authenticated user (UUID converted to string)
-        val buyerId = user.userId.toString()
-        
-        return try {
-            val createPaymentResponse = paymentService.createPayment(
-                CreatePaymentRequest(
-                    buyerId = buyerId,
-                    sellerId = request.sellerId,
-                    grossAmountCents = request.grossAmountCents,
-                    currency = request.currency,
-                    description = request.description
-                )
-            )
-            
-            ResponseEntity.status(HttpStatus.CREATED).body(
-                PaymentResponseDto.fromDomain(createPaymentResponse.payment, createPaymentResponse.clientSecret)
-            )
-        } catch (e: PaymentCreationException) {
-            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                PaymentResponseDto(
-                    error = "Payment creation failed: ${e.message}"
-                )
-            )
-        } catch (e: IllegalArgumentException) {
-            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                PaymentResponseDto(
-                    error = "Invalid request: ${e.message}"
-                )
-            )
-        }
+        )
     }
     
     /**

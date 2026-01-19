@@ -42,7 +42,7 @@ class JwtValidator @Inject()(config: Configuration) {
     Try {
       val decodedJWT = decodeToken(token)
       val accountType = extractAccountTypeFromClaims(decodedJWT)
-      logger.debug(s"Successfully validated JWT token, account_type: ${accountType.value}")
+      logger.info(s"Successfully validated JWT token, account_type: ${accountType.value}")
       accountType
     } match {
       case Success(accountType) => Some(accountType)
@@ -136,10 +136,11 @@ class JwtValidator @Inject()(config: Configuration) {
     
     val accountTypeClaim = Option(claims.get(customNamespace + "account_type"))
       .map(_.asString())
+      .map(_.trim.toUpperCase) // Normalize: trim whitespace and convert to uppercase
       .getOrElse(throw new IllegalArgumentException(s"Token missing custom claim: ${customNamespace}account_type"))
     
     AccountType.fromString(accountTypeClaim)
-      .getOrElse(throw new IllegalArgumentException(s"Invalid account_type in token: $accountTypeClaim"))
+      .getOrElse(throw new IllegalArgumentException(s"Invalid account_type in token: '$accountTypeClaim'. Must be one of: BUYER, SELLER, ADMIN"))
   }
   
   private def extractUserIdFromClaims(decodedJWT: DecodedJWT): String = {

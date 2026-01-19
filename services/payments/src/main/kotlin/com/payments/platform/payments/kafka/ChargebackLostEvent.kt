@@ -12,6 +12,8 @@ import java.util.UUID
  * 
  * Consumed by:
  * - Ledger Service (to create double-entry transaction reducing SELLER_PAYABLE and BUYIT_REVENUE)
+ * 
+ * The chargeback is distributed proportionally across all sellers in the payment.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ChargebackLostEvent(
@@ -28,10 +30,10 @@ data class ChargebackLostEvent(
     val chargebackAmountCents: Long,
     
     @JsonProperty("platformFeeCents")
-    val platformFeeCents: Long,
+    val platformFeeCents: Long,  // Total platform fee (sum of all seller platform fees)
     
     @JsonProperty("netSellerAmountCents")
-    val netSellerAmountCents: Long,
+    val netSellerAmountCents: Long,  // Total net seller amounts (sum of all seller net amounts)
     
     @JsonProperty("currency")
     val currency: String,
@@ -48,7 +50,7 @@ data class ChargebackLostEvent(
     @JsonProperty("buyerId")
     val buyerId: String,
     
-    @JsonProperty("sellerId")
-    val sellerId: String
+    @JsonProperty("sellerBreakdown")
+    val sellerBreakdown: List<SellerChargebackBreakdown>  // Per-seller chargeback breakdown
 )
 

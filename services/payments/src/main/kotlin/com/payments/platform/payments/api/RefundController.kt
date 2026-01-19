@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -19,10 +20,21 @@ import java.util.UUID
 class RefundController(
     private val refundService: RefundService
 ) {
+    private val logger = LoggerFactory.getLogger(RefundController::class.java)
     
     /**
      * POST /admin/payments/{paymentId}/refund
      * Creates a full refund for a payment.
+     * 
+     * **DEPRECATED**: This endpoint is deprecated and should NOT be used.
+     * 
+     * **WARNING**: Using this endpoint will lead to orphaned orders. The order service will not be
+     * notified of the refund, causing order refund status to remain incorrect. This breaks the
+     * order-payment synchronization.
+     * 
+     * **Use instead**: 
+     * - For full refunds: Use the order service endpoint POST /api/orders/{orderId}/refund (to be implemented)
+     * - For partial refunds: Use POST /api/orders/{orderId}/partial-refund via the order service
      * 
      * Admin-only endpoint.
      * 
@@ -34,10 +46,13 @@ class RefundController(
      * 5. Returns refund details
      * 
      * Ledger write happens AFTER Stripe webhook confirms refund completion.
+     * 
+     * **Problem**: This endpoint does not notify the order service, so order.refund_status
+     * will not be updated, leading to data inconsistency.
      */
     @Operation(
-        summary = "Create a refund for a payment (Admin)",
-        description = "Creates a full refund for a captured payment. Admin-only endpoint. The refund is processed through Stripe and recorded in the ledger after Stripe confirms refund completion via webhook. Only CAPTURED payments can be refunded, and each payment can only be refunded once (full refund only)."
+        summary = "Create a refund for a payment (Admin) - DEPRECATED",
+        description = "**DEPRECATED**: This endpoint is deprecated. Using it will lead to orphaned orders. Use order service refund endpoints instead. Creates a full refund for a captured payment. Admin-only endpoint. The refund is processed through Stripe and recorded in the ledger after Stripe confirms refund completion via webhook. Only CAPTURED payments can be refunded, and each payment can only be refunded once (full refund only). WARNING: This endpoint does not notify the order service, causing order refund status to remain incorrect."
     )
     @ApiResponses(
         value = [
@@ -59,9 +74,13 @@ class RefundController(
         ]
     )
     @PostMapping("/payments/{paymentId}/refund")
+    @Deprecated("Use order service refund endpoints instead. This endpoint causes orphaned orders.")
     fun createRefund(
         @PathVariable paymentId: UUID
     ): ResponseEntity<RefundResponseDto> {
+        // Log warning about deprecated usage
+        logger.warn("DEPRECATED: POST /admin/payments/{paymentId}/refund called. This will cause orphaned orders. Use order service refund endpoints instead.")
+        
         return try {
             val refund = refundService.createRefund(paymentId)
             ResponseEntity.status(HttpStatus.CREATED).body(

@@ -60,7 +60,7 @@ AMAZON_TO_BUYIT_CATEGORY_MAP = {
     'Patio, Lawn & Garden': 'home-garden',
     'Tools & Home Improvement': 'home-garden',
     'Cell Phones & Accessories': 'electronics',
-    'Hobbies': 'toys-games',  # Could be crafts-supplies, but toys is broader
+    'Hobbies': None,  # Too broad - use keyword/product name matching instead
     
     # Approximate matches
     'Baby Products': 'health-beauty',  # Health & Personal Care subcategory
@@ -72,18 +72,58 @@ AMAZON_TO_BUYIT_CATEGORY_MAP = {
 }
 
 # Subcategory keyword mappings for better matching
+# Order matters: more specific keywords should be checked first
+# Electronics keywords are prioritized to avoid misclassification
 SUBCATEGORY_KEYWORDS = {
-    # Electronics
+    # Electronics (high priority - check first to avoid misclassification)
+    'servo': 'electronics',
+    'arduino': 'electronics',
+    'raspberry pi': 'electronics',
+    'circuit': 'electronics',
+    'component': 'electronics',
+    'resistor': 'electronics',
+    'capacitor': 'electronics',
+    'transistor': 'electronics',
+    'led': 'electronics',
+    'sensor': 'electronics',
+    'microcontroller': 'electronics',
+    'breadboard': 'electronics',
+    'extension': 'electronics',  # Cable/connector extensions
+    'cable': 'electronics',
+    'connector': 'electronics',
+    'adapter': 'electronics',
+    'charger': 'electronics',
+    'battery': 'electronics',
     'phone': 'electronics',
+    'smartphone': 'electronics',
     'computer': 'electronics',
+    'laptop': 'electronics',
     'tablet': 'electronics',
     'camera': 'electronics',
     'tv': 'electronics',
+    'television': 'electronics',
     'audio': 'electronics',
+    'speaker': 'electronics',
+    'headphone': 'electronics',
     'smart home': 'electronics',
+    'router': 'electronics',
+    'modem': 'electronics',
+    'wireless': 'electronics',
+    'bluetooth': 'electronics',
+    'usb': 'electronics',
+    'hdmi': 'electronics',
+    
+    # Business & Industrial (check before toys to catch RC parts correctly)
+    'industrial': 'business-industrial',
+    'equipment': 'business-industrial',
+    'machinery': 'business-industrial',
+    'professional': 'business-industrial',
+    'commercial': 'business-industrial',
+    'office': 'business-industrial',
     
     # Fashion
     'clothing': 'fashion',
+    'apparel': 'fashion',
     'shoes': 'fashion',
     'jewelry': 'fashion',
     'watch': 'fashion',
@@ -100,14 +140,17 @@ SUBCATEGORY_KEYWORDS = {
     'tool': 'home-garden',
     'decor': 'home-garden',
     
-    # Toys & Games
+    # Toys & Games (lower priority - only match if clearly toys)
     'toy': 'toys-games',
-    'game': 'toys-games',
-    'puzzle': 'toys-games',
     'action figure': 'toys-games',
     'doll': 'toys-games',
-    'building': 'toys-games',
-    'educational': 'toys-games',
+    'building block': 'toys-games',
+    'lego': 'toys-games',
+    'puzzle': 'toys-games',
+    'board game': 'toys-games',
+    'card game': 'toys-games',
+    # Note: 'game' alone is too broad, so we don't include it
+    # 'educational' is also too broad
     
     # Sports & Outdoors
     'sport': 'sports-outdoors',
@@ -117,6 +160,7 @@ SUBCATEGORY_KEYWORDS = {
     'hiking': 'sports-outdoors',
     'skateboard': 'sports-outdoors',
     'bike': 'sports-outdoors',
+    'bicycle': 'sports-outdoors',
     
     # Health & Beauty
     'beauty': 'health-beauty',
@@ -139,11 +183,7 @@ SUBCATEGORY_KEYWORDS = {
     'truck': 'automotive',
     'motorcycle': 'automotive',
     'auto': 'automotive',
-    
-    # Business & Industrial
-    'office': 'business-industrial',
-    'industrial': 'business-industrial',
-    'equipment': 'business-industrial',
+    'vehicle': 'automotive',
     
     # Crafts & Supplies
     'craft': 'crafts-supplies',
@@ -567,8 +607,26 @@ class InventoryAPIClient:
             return False
 
 
-def map_amazon_category_to_buyit(amazon_category_path: str, category_mapping: Dict[str, str]) -> Optional[str]:
-    """Map Amazon category path to BuyIt category UUID"""
+def map_amazon_category_to_buyit(
+    amazon_category_path: str, 
+    category_mapping: Dict[str, str],
+    product_name: Optional[str] = None,
+    product_description: Optional[str] = None
+) -> Optional[str]:
+    """Map Amazon category path to BuyIt category UUID
+    
+    Uses multiple strategies:
+    1. Direct category mapping
+    2. Product name keyword analysis (most reliable for electronics components)
+    3. Category path keyword matching
+    4. Fuzzy matching
+    
+    Args:
+        amazon_category_path: Amazon category path (pipe-separated)
+        category_mapping: Mapping of BuyIt category slugs to UUIDs
+        product_name: Product name for keyword analysis
+        product_description: Product description for keyword analysis
+    """
     if not amazon_category_path:
         return None
     
@@ -576,25 +634,51 @@ def map_amazon_category_to_buyit(amazon_category_path: str, category_mapping: Di
     # Get the top-level category (first part)
     top_level = amazon_category_path.split('|')[0].strip()
     
-    # Try direct mapping
+    # Strategy 1: Try direct mapping
     buyit_slug = AMAZON_TO_BUYIT_CATEGORY_MAP.get(top_level)
     if buyit_slug and buyit_slug in category_mapping:
         return category_mapping[buyit_slug]
     
-    # Try keyword matching in the full category path
+    # Strategy 2: Analyze product name/description for electronics keywords (high priority)
+    # This catches cases like "Servo Extension" that might be miscategorized
+    if product_name or product_description:
+        search_text = ' '.join([
+            (product_name or '').lower(),
+            (product_description or '').lower()
+        ])
+        
+        # Check for electronics keywords first (they take priority)
+        for keyword, slug in SUBCATEGORY_KEYWORDS.items():
+            if slug == 'electronics' and keyword in search_text:
+                if slug in category_mapping:
+                    return category_mapping[slug]
+    
+    # Strategy 3: Try keyword matching in the full category path
     category_lower = amazon_category_path.lower()
     for keyword, slug in SUBCATEGORY_KEYWORDS.items():
-        if keyword in category_lower:
+        if slug and keyword in category_lower:
             if slug in category_mapping:
                 return category_mapping[slug]
     
-    # Try fuzzy matching on top-level category name
+    # Strategy 4: Try keyword matching in product name/description (non-electronics)
+    if product_name or product_description:
+        search_text = ' '.join([
+            (product_name or '').lower(),
+            (product_description or '').lower()
+        ])
+        
+        for keyword, slug in SUBCATEGORY_KEYWORDS.items():
+            if slug and slug != 'electronics' and keyword in search_text:
+                if slug in category_mapping:
+                    return category_mapping[slug]
+    
+    # Strategy 5: Try fuzzy matching on top-level category name
     top_level_lower = top_level.lower()
     for key, cat_id in category_mapping.items():
         if top_level_lower in key or key in top_level_lower:
             return cat_id
     
-    # Try word-by-word matching
+    # Strategy 6: Try word-by-word matching
     words = top_level_lower.split()
     for word in words:
         if len(word) > 3 and word in category_mapping:
@@ -804,9 +888,16 @@ Example:
             logger.info(f"  → SKU: {product_data['sku']}")
             logger.info(f"  → Price: {product_data['price_cents']/100:.2f} {product_data['currency']}")
             
-            # Map category
+            # Map category (use product name and description for better accuracy)
             category_path = product_data.pop('category_path')
-            category_id = map_amazon_category_to_buyit(category_path, category_mapping)
+            product_name = product_data.get('name')
+            product_description = product_data.get('description')
+            category_id = map_amazon_category_to_buyit(
+                category_path, 
+                category_mapping,
+                product_name=product_name,
+                product_description=product_description
+            )
             product_data['category_id'] = category_id
             
             if category_id:

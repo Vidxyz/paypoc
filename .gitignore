@@ -8,23 +8,91 @@
 
 # Built Visual Studio Code Extensions
 *.vsix
-.gradle/*
-build/*
-/services/payments/.gradle/
-/services/payments/build/
 .idea/*
 .stripe_logs
 
-# Node modules
+# Build artifacts - Java/Kotlin (Gradle)
+.gradle/
+.gradle/*
+build/
+**/.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Build artifacts - Scala/SBT (Play Framework)
+target/
+project/target/
+project/project/
+**/target/
+**/project/target/
+**/project/project/
+*.class
+*.cache
+
+# Build artifacts - Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts - Node.js/Frontend
 node_modules/
 **/node_modules/
+dist/
+.next/
+out/
+.nuxt/
 
 # Environment variables
 scripts/.env
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.local
 
-# macOS
+# Logs
+*.log
+logs/
+**/*.log
+**/logs/
+RUNNING_PID
+
+# OS
 .DS_Store
 **/.DS_Store
+Thumbs.db
+.DS_Store?
+
+# Temporary files
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# Ignore template files (files ending in .ignore)
+*.ignore
+
+# Editor directories and files
+.history/
+.bsp/
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+out/
+bin/
+!**/src/main/**/out/
+!**/src/test/**/out/
+!**/src/main/**/bin/
+!**/src/test/**/bin/

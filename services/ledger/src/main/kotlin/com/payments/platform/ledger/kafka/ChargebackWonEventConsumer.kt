@@ -107,7 +107,7 @@ class ChargebackWonEventConsumer(
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
                 idempotencyKey = event.idempotencyKey,
-                description = "Chargeback won: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId}",
+                description = "Chargeback won: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s)",
                 entries = listOf(
                     EntryRequest(
                         accountId = stripeClearingAccount.id,
@@ -197,6 +197,7 @@ data class ChargebackWonEvent(
     val stripePaymentIntentId: String,
     val idempotencyKey: String,
     val buyerId: String,
-    val sellerId: String
+    val sellerBreakdown: List<SellerChargebackBreakdown>
 )
+
 

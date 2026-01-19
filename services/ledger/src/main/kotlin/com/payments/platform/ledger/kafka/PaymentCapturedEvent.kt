@@ -10,6 +10,8 @@ import java.util.UUID
  * 
  * This event triggers the ledger write (double-entry bookkeeping).
  * 
+ * One payment per order - can have multiple sellers via sellerBreakdown.
+ * 
  * Note: The JSON includes a "type" field from PaymentMessage, which we ignore.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -23,26 +25,29 @@ data class PaymentCapturedEvent(
     @JsonProperty("idempotencyKey")
     val idempotencyKey: String,
     
+    @JsonProperty("orderId")
+    val orderId: UUID,
+    
     @JsonProperty("buyerId")
     val buyerId: String,
-    
-    @JsonProperty("sellerId")
-    val sellerId: String,
     
     @JsonProperty("grossAmountCents")
     val grossAmountCents: Long,
     
     @JsonProperty("platformFeeCents")
-    val platformFeeCents: Long,
+    val platformFeeCents: Long,  // Total platform fee (sum of all seller platform fees)
     
     @JsonProperty("netSellerAmountCents")
-    val netSellerAmountCents: Long,
+    val netSellerAmountCents: Long,  // Total net seller amounts (sum of all seller net amounts)
     
     @JsonProperty("currency")
     val currency: String,
     
     @JsonProperty("stripePaymentIntentId")
     val stripePaymentIntentId: String,
+    
+    @JsonProperty("sellerBreakdown")
+    val sellerBreakdown: List<SellerBreakdownEvent>,  // Per-seller breakdown
     
     @JsonProperty("attempt")
     val attempt: Int,
@@ -54,3 +59,20 @@ data class PaymentCapturedEvent(
     val payload: Map<String, Any> = emptyMap()
 )
 
+/**
+ * Seller breakdown event - one per seller in the payment.
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class SellerBreakdownEvent(
+    @JsonProperty("sellerId")
+    val sellerId: String,
+    
+    @JsonProperty("sellerGrossAmountCents")
+    val sellerGrossAmountCents: Long,
+    
+    @JsonProperty("platformFeeCents")
+    val platformFeeCents: Long,  // This seller's platform fee
+    
+    @JsonProperty("netSellerAmountCents")
+    val netSellerAmountCents: Long  // This seller's net amount
+)

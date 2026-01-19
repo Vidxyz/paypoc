@@ -71,4 +71,35 @@ data:
         acceptAnyCertificate = true
       }
     }
+    
+    catalog {
+      service {
+        url = "http://catalog-service.catalog.svc.cluster.local:8082"
+        url = ${?CATALOG_SERVICE_URL}
+      }
+    }
+    
+    inventory {
+      service {
+        url = "http://inventory-service.inventory.svc.cluster.local:8083"
+        url = ${?INVENTORY_SERVICE_URL}
+        internal {
+          api {
+            token = ${?INVENTORY_INTERNAL_API_TOKEN}
+          }
+        }
+      }
+    }
+    
+    order {
+      service {
+        url = "http://order-service.order.svc.cluster.local:8084"
+        url = ${?ORDER_SERVICE_URL}
+        internal {
+          api {
+            token = ${?ORDER_INTERNAL_API_TOKEN}
+          }
+        }
+      }
+    }
 

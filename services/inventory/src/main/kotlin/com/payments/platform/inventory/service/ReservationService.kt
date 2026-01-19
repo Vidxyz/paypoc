@@ -10,6 +10,7 @@ import com.payments.platform.inventory.kafka.ReservationCancelledEvent
 import com.payments.platform.inventory.kafka.ReservationConfirmedEvent
 import com.payments.platform.inventory.kafka.ReservationCreatedEvent
 import com.payments.platform.inventory.kafka.ReservationFulfilledEvent
+import com.payments.platform.inventory.kafka.StockUpdatedEvent
 import com.payments.platform.inventory.persistence.InventoryRepository
 import com.payments.platform.inventory.persistence.InventoryTransactionRepository
 import com.payments.platform.inventory.persistence.ReservationEntity
@@ -93,6 +94,16 @@ class ReservationService(
                 expiresAt = saved.expiresAt
             ))
             
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
+            ))
+            
             saved.toDomain()
         }
     }
@@ -153,6 +164,87 @@ class ReservationService(
                 orderId = cartId,
                 productId = inventory.productId,
                 quantity = saved.quantity
+            ))
+            
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
+            ))
+            
+            saved.toDomain()
+        }
+    }
+    
+    /**
+     * Allocate reservation (convert soft reservation to hard allocation)
+     * Moves stock from reserved to allocated
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    fun allocateReservation(reservationId: UUID, orderId: UUID): Reservation {
+        return executeWithRetry(maxRetries = 10) {
+            val reservation = reservationRepository.findById(reservationId)
+                .orElseThrow { NoSuchElementException("Reservation not found: $reservationId") }
+            
+            if (reservation.status != ReservationStatus.ACTIVE) {
+                throw IllegalStateException("Reservation ${reservation.id} is not ACTIVE, cannot allocate. Current state: ${reservation.status}")
+            }
+            
+            if (reservation.reservationType != ReservationType.SOFT) {
+                throw IllegalStateException("Reservation ${reservation.id} is not a SOFT reservation, cannot allocate. Type: ${reservation.reservationType}")
+            }
+            
+            val inventoryEntity = inventoryRepository.findById(reservation.inventoryId)
+                .orElseThrow { NoSuchElementException("Inventory not found: ${reservation.inventoryId}") }
+            
+            val inventory = inventoryEntity.toDomain()
+            
+            if (!inventory.canAllocate(reservation.quantity)) {
+                throw IllegalStateException("Not enough reserved stock. Reserved: ${inventory.reservedQuantity}, Requested: ${reservation.quantity}")
+            }
+            
+            // Hard allocate: move from reserved to allocated
+            val updated = inventory.hardAllocate(reservation.quantity)
+            updateInventoryEntity(inventoryEntity, updated)
+            inventoryRepository.save(inventoryEntity)
+            
+            // Update reservation status to ALLOCATED
+            // Note: reservationType, cartId, and expiresAt are immutable (val), so we only update status
+            // The cartId remains as the original cart ID, which is fine for tracking purposes
+            reservation.status = ReservationStatus.ALLOCATED
+            
+            val saved = reservationRepository.save(reservation)
+            
+            // Record transaction
+            recordTransaction(
+                inventoryId = reservation.inventoryId,
+                transactionType = TransactionType.ALLOCATE,
+                quantity = reservation.quantity,
+                referenceId = orderId,
+                description = "Soft reservation converted to hard allocation (checkout)"
+            )
+            
+            logger.info("Allocated reservation ${saved.id} for order $orderId, inventory ${reservation.inventoryId}, quantity ${reservation.quantity}")
+            
+            kafkaProducer.publishReservationConfirmedEvent(ReservationConfirmedEvent(
+                reservationId = saved.id,
+                orderId = orderId,
+                productId = inventory.productId,
+                quantity = saved.quantity
+            ))
+            
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
             ))
             
             saved.toDomain()
@@ -218,6 +310,16 @@ class ReservationService(
                 quantity = saved.quantity
             ))
             
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
+            ))
+            
             saved.toDomain()
         }
     }
@@ -265,6 +367,16 @@ class ReservationService(
                 orderId = saved.cartId,
                 productId = inventory.productId,
                 quantity = saved.quantity
+            ))
+            
+            // Publish StockUpdatedEvent so catalog service can update denormalized inventory cache
+            kafkaProducer.publishStockUpdatedEvent(StockUpdatedEvent(
+                stockId = inventoryEntity.id,
+                productId = inventoryEntity.productId,
+                availableQuantity = inventoryEntity.availableQuantity,
+                totalQuantity = inventoryEntity.totalQuantity,
+                reservedQuantity = inventoryEntity.reservedQuantity,
+                allocatedQuantity = inventoryEntity.allocatedQuantity
             ))
             
             saved.toDomain()

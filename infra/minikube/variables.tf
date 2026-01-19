@@ -96,4 +96,23 @@ variable "redis_cpu_limit" {
   default     = "500m"
 }
 
+variable "prometheus_namespace" {
+  description = "Kubernetes namespace for Prometheus monitoring"
+  type        = string
+  default     = "monitoring"
+}
+
+variable "prometheus_chart_version" {
+  description = "Version of the kube-prometheus-stack Helm chart"
+  type        = string
+  default     = "59.0.0"
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password"
+  type        = string
+  default     = "admin"
+  sensitive   = true
+}
+
 

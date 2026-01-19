@@ -94,16 +94,26 @@ class RefundCompletedEventConsumer(
                 "Refund calculation error: refundAmount != platformFeeRefund + netSellerRefund"
             }
             
-            // Get accounts (same accounts as original payment)
+            // Validate seller refund breakdown if present
+            if (event.sellerRefundBreakdown != null && event.sellerRefundBreakdown.isNotEmpty()) {
+                val totalSellerRefund = event.sellerRefundBreakdown.sumOf { it.refundAmountCents }
+                val totalSellerPlatformFee = event.sellerRefundBreakdown.sumOf { it.platformFeeRefundCents }
+                val totalSellerNet = event.sellerRefundBreakdown.sumOf { it.netSellerRefundCents }
+                require(totalSellerRefund == event.refundAmountCents) {
+                    "Seller refund breakdown gross sum ($totalSellerRefund) must equal total refund (${event.refundAmountCents})"
+                }
+                require(totalSellerPlatformFee == event.platformFeeRefundCents) {
+                    "Seller refund breakdown platform fee sum ($totalSellerPlatformFee) must equal total platform fee (${event.platformFeeRefundCents})"
+                }
+                require(totalSellerNet == event.netSellerRefundCents) {
+                    "Seller refund breakdown net sum ($totalSellerNet) must equal total net (${event.netSellerRefundCents})"
+                }
+            }
+            
+            // Get accounts
             val stripeClearingAccount = getOrCreateAccount(
                 accountType = AccountType.STRIPE_CLEARING,
                 referenceId = null,
-                currency = event.currency
-            )
-            
-            val sellerPayableAccount = getOrCreateAccount(
-                accountType = AccountType.SELLER_PAYABLE,
-                referenceId = event.sellerId,
                 currency = event.currency
             )
             
@@ -113,33 +123,55 @@ class RefundCompletedEventConsumer(
                 currency = event.currency
             )
             
+            // Get or create SELLER_PAYABLE account for each seller
+            val sellerRefundBreakdown = event.sellerRefundBreakdown
+                ?: throw IllegalArgumentException("Seller refund breakdown is required for refunds with multiple sellers")
+            
+            val sellerPayableAccounts = sellerRefundBreakdown.map { seller ->
+                seller.sellerId to getOrCreateAccount(
+                    accountType = AccountType.SELLER_PAYABLE,
+                    referenceId = seller.sellerId,
+                    currency = event.currency
+                )
+            }.toMap()
+            
             // Create reversed double-entry transaction
             // Original transaction was:
-            //   DR STRIPE_CLEARING (money received from Stripe)
-            //   CR SELLER_PAYABLE (money owed to seller)
-            //   CR BUYIT_REVENUE (platform commission)
+            //   DR STRIPE_CLEARING (money received from Stripe - total gross)
+            //   CR SELLER_PAYABLE per seller (money owed to each seller - their net amount)
+            //   CR BUYIT_REVENUE (platform commission - total platform fee)
             // 
             // Refund reverses this:
-            //   DR SELLER_PAYABLE (reduce money owed to seller)
-            //   DR BUYIT_REVENUE (reduce platform commission)
-            //   CR STRIPE_CLEARING (money returned to Stripe)
-            val transactionRequest = CreateDoubleEntryTransactionRequest(
-                referenceId = event.stripeRefundId,  // External reference (Stripe Refund ID)
-                idempotencyKey = event.idempotencyKey,
-                description = "Refund: ${event.refundId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, Seller: ${event.sellerId}",
-                entries = listOf(
-                    EntryRequest(
-                        accountId = sellerPayableAccount.id,
-                        direction = EntryDirection.DEBIT,
-                        amountCents = event.netSellerRefundCents,
-                        currency = event.currency
-                    ),
+            //   DR SELLER_PAYABLE per seller (reduce money owed to each seller - their net refund)
+            //   DR BUYIT_REVENUE (reduce platform commission - total platform fee refund)
+            //   CR STRIPE_CLEARING (money returned to Stripe - total refund)
+            val entries = mutableListOf<EntryRequest>().apply {
+                // DEBIT: SELLER_PAYABLE for each seller
+                sellerRefundBreakdown.forEach { seller ->
+                    val sellerAccount = sellerPayableAccounts[seller.sellerId]
+                        ?: throw IllegalStateException("Failed to get/create account for seller ${seller.sellerId}")
+                    add(
+                        EntryRequest(
+                            accountId = sellerAccount.id,
+                            direction = EntryDirection.DEBIT,
+                            amountCents = seller.netSellerRefundCents,
+                            currency = event.currency
+                        )
+                    )
+                }
+                
+                // DEBIT: BUYIT_REVENUE (total platform fee refund)
+                add(
                     EntryRequest(
                         accountId = buyitRevenueAccount.id,
                         direction = EntryDirection.DEBIT,
                         amountCents = event.platformFeeRefundCents,
                         currency = event.currency
-                    ),
+                    )
+                )
+                
+                // CREDIT: STRIPE_CLEARING (total refund)
+                add(
                     EntryRequest(
                         accountId = stripeClearingAccount.id,
                         direction = EntryDirection.CREDIT,
@@ -147,14 +179,25 @@ class RefundCompletedEventConsumer(
                         currency = event.currency
                     )
                 )
+            }
+            
+            val sellerIds = sellerRefundBreakdown.joinToString(", ") { it.sellerId }
+            val transactionRequest = CreateDoubleEntryTransactionRequest(
+                referenceId = event.stripeRefundId,  // External reference (Stripe Refund ID)
+                idempotencyKey = event.idempotencyKey,
+                description = "Refund: ${event.refundId} (order: ${event.orderId}) for payment ${event.paymentId} - Buyer: ${event.buyerId}, Sellers: $sellerIds",
+                entries = entries
             )
             
             // Create transaction (atomic, balanced, idempotent)
             val transaction = ledgerService.createDoubleEntryTransaction(transactionRequest)
             
+            val sellerDebits = sellerRefundBreakdown.joinToString(", ") { 
+                "${it.sellerId}: ${it.netSellerRefundCents}" 
+            }
             logger.info(
-                "Created ledger transaction ${transaction.id} for refund ${event.refundId}. " +
-                "DR SELLER_PAYABLE: ${event.netSellerRefundCents}, " +
+                "Created ledger transaction ${transaction.id} for refund ${event.refundId} (order: ${event.orderId}). " +
+                "DR SELLER_PAYABLE: [$sellerDebits], " +
                 "DR BUYIT_REVENUE: ${event.platformFeeRefundCents}, " +
                 "CR STRIPE_CLEARING: ${event.refundAmountCents}"
             )
@@ -210,12 +253,15 @@ class RefundCompletedEventConsumer(
  * Data class for RefundCompletedEvent.
  * Matches the structure of RefundCompletedEvent from payments service.
  * 
+ * One refund per payment - can have multiple sellers via sellerRefundBreakdown.
+ * 
  * Note: The JSON includes a "type" field from PaymentMessage, which we ignore.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class RefundCompletedEvent(
     val refundId: UUID,
     val paymentId: UUID,
+    val orderId: UUID,
     val refundAmountCents: Long,
     val platformFeeRefundCents: Long,
     val netSellerRefundCents: Long,
@@ -224,6 +270,17 @@ data class RefundCompletedEvent(
     val stripePaymentIntentId: String,
     val idempotencyKey: String,
     val buyerId: String,
-    val sellerId: String
+    val sellerRefundBreakdown: List<SellerRefundBreakdownEvent>?  // Per-seller refund breakdown (for partial refunds)
+)
+
+/**
+ * Seller refund breakdown event - one per seller in the refund.
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class SellerRefundBreakdownEvent(
+    val sellerId: String,
+    val refundAmountCents: Long,
+    val platformFeeRefundCents: Long,  // This seller's platform fee refund
+    val netSellerRefundCents: Long  // This seller's net refund
 )
 

@@ -19,7 +19,7 @@ class PaymentStateMachine {
         PaymentState.CONFIRMING to setOf(PaymentState.AUTHORIZED, PaymentState.FAILED),
         PaymentState.AUTHORIZED to setOf(PaymentState.CAPTURED, PaymentState.FAILED),
         PaymentState.CAPTURED to setOf(PaymentState.REFUNDING),
-        PaymentState.REFUNDING to setOf(PaymentState.REFUNDED, PaymentState.FAILED),
+        PaymentState.REFUNDING to setOf(PaymentState.REFUNDING, PaymentState.REFUNDED, PaymentState.FAILED), // Allow multiple refunds
         PaymentState.REFUNDED to emptySet<PaymentState>(),  // Terminal state
         PaymentState.FAILED to emptySet<PaymentState>()     // Terminal state
     )

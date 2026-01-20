@@ -717,6 +717,7 @@ deploy_inventory() {
     kubectl apply -f "$K8S_DIR/inventory/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/inventory/service.yaml" &
     kubectl apply -f "$K8S_DIR/inventory/ingress.yaml" &
+    kubectl apply -f "$K8S_DIR/inventory/cronjob.yaml" &
     wait
 }
 
@@ -728,6 +729,7 @@ deploy_cart() {
     kubectl apply -f "$K8S_DIR/cart/service.yaml" &
     kubectl apply -f "$K8S_DIR/cart/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/cart/ingress.yaml" &
+    kubectl apply -f "$K8S_DIR/cart/cronjob.yaml" &
     wait
 }
 

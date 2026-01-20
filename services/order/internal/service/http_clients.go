@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -289,10 +290,50 @@ func NewCartClient(baseURL string) *CartClient {
 	}
 }
 
-func (c *CartClient) UpdateCartStatus(ctx context.Context, buyerID, status string) error {
-	// This would call the cart service to update cart status
-	// For now, we'll just log it
-	// In production, you'd make an HTTP call
+func (c *CartClient) UpdateCartStatus(ctx context.Context, cartID uuid.UUID, status string) error {
+	// Get internal API token from environment
+	internalToken := os.Getenv("CART_INTERNAL_API_TOKEN")
+	if internalToken == "" {
+		return fmt.Errorf("CART_INTERNAL_API_TOKEN not configured")
+	}
+
+	// Create request body
+	requestBody := map[string]string{
+		"status": status,
+	}
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "PUT",
+		fmt.Sprintf("%s/internal/carts/%s/status", c.baseURL, cartID.String()),
+		bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+internalToken)
+
+	// Make request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cart service endpoint not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("cart not found: %s", cartID)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("cart service returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
 	return nil
 }
 

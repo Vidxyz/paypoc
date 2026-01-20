@@ -16,6 +16,7 @@ import com.payments.platform.inventory.persistence.InventoryTransactionRepositor
 import com.payments.platform.inventory.persistence.ReservationEntity
 import com.payments.platform.inventory.persistence.ReservationRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.CannotAcquireLockException
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.stereotype.Service
@@ -31,10 +32,12 @@ class ReservationService(
     private val reservationRepository: ReservationRepository,
     private val inventoryRepository: InventoryRepository,
     private val transactionRepository: InventoryTransactionRepository,
-    private val kafkaProducer: InventoryKafkaProducer
+    private val kafkaProducer: InventoryKafkaProducer,
+    @Autowired(required = false) private val cartServiceClient: CartServiceClient? = null  // Optional to avoid circular dependencies
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
+    // todo-vh: When an order is refunded wholly or partially, inventory is NOT returned. This needs to be implemented
     /**
      * Create a soft reservation (add-to-cart)
      * Moves stock from available to reserved
@@ -274,15 +277,20 @@ class ReservationService(
             
             val inventory = inventoryEntity.toDomain()
             
-            // Release based on reservation type
-            val updated = when (reservation.reservationType) {
-                ReservationType.SOFT -> {
+            // Release based on reservation status, not type
+            // A SOFT reservation that was converted to ALLOCATED still has reservationType=SOFT,
+            // but the stock is in allocated, not reserved
+            val updated = when (reservation.status) {
+                ReservationStatus.ACTIVE -> {
                     // Release soft reservation: move from reserved back to available
                     inventory.releaseReservation(reservation.quantity)
                 }
-                ReservationType.HARD -> {
+                ReservationStatus.ALLOCATED -> {
                     // Release hard allocation: move from allocated back to available
                     inventory.releaseAllocation(reservation.quantity)
+                }
+                else -> {
+                    throw IllegalStateException("Cannot release reservation ${reservation.id} with status ${reservation.status}. Only ACTIVE and ALLOCATED reservations can be released.")
                 }
             }
             
@@ -413,6 +421,20 @@ class ReservationService(
         
         for (reservationEntity in expiredActive) {
             try {
+                // Check if cart still exists before releasing
+                val cartExists = cartServiceClient?.checkCartExists(reservationEntity.cartId)
+                if (cartExists == true) {
+                    logger.info("Skipping release of expired reservation ${reservationEntity.id} - cart ${reservationEntity.cartId} still exists")
+                    expiredCount++ // Count as expired but not released
+                    continue
+                } else if (cartExists == null) {
+                    // Error checking cart - assume cart exists to be safe
+                    logger.warn("Error checking cart existence for reservation ${reservationEntity.id}, cart ${reservationEntity.cartId}. Skipping release to be safe.")
+                    expiredCount++
+                    continue
+                }
+                
+                // Cart doesn't exist - safe to release
                 // Release the reservation (this will move stock back to available)
                 // This publishes ReservationCancelledEvent automatically
                 releaseReservation(reservationEntity.id)
@@ -456,6 +478,20 @@ class ReservationService(
         
         for (reservationEntity in expiredAllocated) {
             try {
+                // Check if cart still exists before releasing
+                val cartExists = cartServiceClient?.checkCartExists(reservationEntity.cartId)
+                if (cartExists == true) {
+                    logger.info("Skipping release of expired ALLOCATED reservation ${reservationEntity.id} - cart ${reservationEntity.cartId} still exists")
+                    expiredCount++ // Count as expired but not released
+                    continue
+                } else if (cartExists == null) {
+                    // Error checking cart - assume cart exists to be safe
+                    logger.warn("Error checking cart existence for ALLOCATED reservation ${reservationEntity.id}, cart ${reservationEntity.cartId}. Skipping release to be safe.")
+                    expiredCount++
+                    continue
+                }
+                
+                // Cart doesn't exist - safe to release
                 // Release the reservation (this will move stock back to available)
                 // This publishes ReservationCancelledEvent automatically
                 releaseReservation(reservationEntity.id)

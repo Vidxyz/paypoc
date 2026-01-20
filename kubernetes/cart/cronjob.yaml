@@ -1,8 +1,8 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: inventory-cleanup-cronjob
-  namespace: inventory
+  name: cart-cleanup-cronjob
+  namespace: cart
 spec:
   # Run every hour
   schedule: "0 * * * *"
@@ -21,11 +21,19 @@ spec:
             - |
               echo "Publishing cleanup command to Kafka..."
               TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-              echo "{\"type\":\"CLEANUP_EXPIRED_RESERVATIONS\",\"timestamp\":\"${TIMESTAMP}\"}" | \
+              # Wait a bit for Kafka to be ready and topic to exist
+              sleep 2
+              echo "{\"type\":\"CLEANUP_ABANDONED_CARTS\",\"timestamp\":\"${TIMESTAMP}\"}" | \
               /opt/kafka/bin/kafka-console-producer.sh \
                 --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
-                --topic inventory.commands
-              echo "Cleanup command published successfully"
+                --topic cart.commands \
+                --max-block-ms 10000
+              if [ $? -eq 0 ]; then
+                echo "✓ Cleanup command published successfully"
+              else
+                echo "✗ Failed to publish cleanup command"
+                exit 1
+              fi
             env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"

@@ -252,6 +252,10 @@ POST    /api/cart/checkout                controllers.CartController.checkout
 ###
 GET     /api/cart/history                controllers.CartController.getCartHistory
 
+# Internal API (for service-to-service communication)
+GET     /internal/carts/:cartId/exists   controllers.InternalCartController.checkCartExists(cartId: java.util.UUID)
+PUT     /internal/carts/:cartId/status   controllers.InternalCartController.updateCartStatus(cartId: java.util.UUID)
+
 # Swagger/OpenAPI Documentation  
 GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson
 GET     /api-docs                        controllers.ApiDocsController.swaggerUI

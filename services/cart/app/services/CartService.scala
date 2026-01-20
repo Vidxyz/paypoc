@@ -25,6 +25,7 @@ class CartService @Inject()(
   private val catalogServiceUrl = config.getOptional[String]("catalog.service.url").getOrElse("http://catalog-service.catalog.svc.cluster.local:8082")
   private val orderServiceUrl = config.getOptional[String]("order.service.url").getOrElse("http://order-service.order.svc.cluster.local:8084")
   private val orderInternalApiToken = config.getOptional[String]("order.service.internal.api.token")
+  private val abandonmentTimeoutSeconds = config.getOptional[Int]("cart.abandonment.timeout.seconds").getOrElse(3600) // Default: 1 hour
   
   // Helper to get internal API authorization header for inventory service
   private def getInternalAuthHeader: Option[(String, String)] = {
@@ -249,6 +250,106 @@ class CartService @Inject()(
     cartRepository.getCartHistory(buyerId, limit)
   }
   
+  // Update cart status (internal API)
+  def updateCartStatus(cartId: UUID, status: String): Future[Option[CartEntity]] = {
+    cartRepository.updateCartStatus(cartId, status).map { cartEntityOpt =>
+      cartEntityOpt.foreach { cartEntity =>
+        // Publish event based on status
+        status match {
+          case "COMPLETED" =>
+            cartEventProducer.publishCartCompletedEvent(cartId, cartEntity.buyerId, cartId) // orderId is cartId for now
+          case "ABANDONED" =>
+            cartEventProducer.publishCartAbandonedEvent(cartId, cartEntity.buyerId, "Status updated to ABANDONED")
+          case _ =>
+            // No event for other status updates
+        }
+      }
+      cartEntityOpt
+    }
+  }
+  
+  // Cleanup abandoned carts (CHECKOUT status, older than configured timeout)
+  // Releases inventory reservations and marks carts as ABANDONED
+  def cleanupAbandonedCarts(): Future[CleanupResult] = {
+    logger.info(s"=== Starting cleanupAbandonedCarts ===")
+    logger.info(s"Abandonment timeout: ${abandonmentTimeoutSeconds} seconds (${abandonmentTimeoutSeconds / 60} minutes)")
+    
+    val now = Instant.now()
+    val timeoutAgo = now.minusSeconds(abandonmentTimeoutSeconds)
+    logger.info(s"Current time: $now")
+    logger.info(s"Looking for carts in CHECKOUT status created before: $timeoutAgo")
+    
+    cartRepository.findAbandonedCarts(timeoutAgo).flatMap { abandonedCarts =>
+      logger.info(s"=== Found ${abandonedCarts.size} abandoned cart(s) to cleanup ===")
+      if (abandonedCarts.nonEmpty) {
+        abandonedCarts.zipWithIndex.foreach { case (cart, idx) =>
+          logger.info(s"  Cart ${idx + 1}/${abandonedCarts.size}: id=${cart.id}, buyerId=${cart.buyerId}, status=${cart.status}, createdAt=${cart.createdAt}")
+        }
+      }
+      
+      val futures = abandonedCarts.map { cart =>
+        logger.info(s"Processing abandoned cart: id=${cart.id}, buyerId=${cart.buyerId}")
+        // Get cart items with reservations
+        cartRepository.getCartWithItems(cart.id).flatMap {
+          case Some((cartEntity, items)) =>
+            logger.info(s"Cart ${cart.id} has ${items.size} item(s)")
+            val reservations = items.flatMap(_.reservationId)
+            logger.info(s"Cart ${cart.id} has ${reservations.size} reservation(s) to release: ${reservations.map(_.toString).mkString(", ")}")
+            
+            // Release all reservations for this cart
+            val reservationFutures = reservations.map { reservationId =>
+              logger.info(s"Releasing reservation ${reservationId} for cart ${cart.id}")
+              releaseReservation(reservationId)
+            }
+            
+            // Wait for all reservations to be released, then mark cart as ABANDONED
+            Future.sequence(reservationFutures).flatMap { _ =>
+              logger.info(s"All reservations released for cart ${cart.id}, marking as ABANDONED")
+              updateCartStatus(cart.id, "ABANDONED").map { _ =>
+                logger.info(s"✓ Successfully marked cart ${cart.id} as ABANDONED and released ${reservationFutures.size} reservation(s)")
+                (true, false) // (success, error)
+              }
+            }.recover { case e =>
+              logger.error(s"✗ Error processing abandoned cart ${cart.id}: ${e.getMessage}", e)
+              logger.error(s"Stack trace: ${e.getStackTrace.mkString("\n")}")
+              (false, true) // (success, error)
+            }
+          case None =>
+            // Cart not found or no items - mark as ABANDONED anyway
+            logger.warn(s"Cart ${cart.id} not found or has no items, marking as ABANDONED anyway")
+            updateCartStatus(cart.id, "ABANDONED").map { _ =>
+              logger.info(s"✓ Marked cart ${cart.id} as ABANDONED (no items found)")
+              (true, false) // (success, error)
+            }.recover { case e =>
+              logger.error(s"✗ Error marking cart ${cart.id} as ABANDONED: ${e.getMessage}", e)
+              logger.error(s"Stack trace: ${e.getStackTrace.mkString("\n")}")
+              (false, true) // (success, error)
+            }
+        }
+      }
+      
+      Future.sequence(futures).map { results =>
+        val processedCount = results.count(_._1)
+        val errorCount = results.count(_._2)
+        logger.info(s"=== Cleanup processing complete ===")
+        logger.info(s"Total carts found: ${abandonedCarts.size}")
+        logger.info(s"Successfully processed: $processedCount")
+        logger.info(s"Errors: $errorCount")
+        CleanupResult(
+          foundCount = abandonedCarts.size,
+          processedCount = processedCount,
+          errorCount = errorCount
+        )
+      }
+    }
+  }
+  
+  case class CleanupResult(
+    foundCount: Int,
+    processedCount: Int,
+    errorCount: Int
+  )
+  
   // Helper: Get product details from Catalog Service (public endpoint)
   private def getProductDetails(productId: UUID): Future[Option[JsValue]] = {
     ws.url(s"$catalogServiceUrl/api/catalog/products/$productId")
@@ -348,24 +449,41 @@ class CartService @Inject()(
   }
   
   // Helper: Release reservation (using internal API)
+  // Handles cases where reservation is already in terminal state (SOLD, RELEASED, EXPIRED)
   private def releaseReservation(reservationId: UUID): Future[Unit] = {
     val headers = getInternalAuthHeader.toSeq
     ws.url(s"$inventoryServiceUrl/internal/reservations/$reservationId/release")
       .addHttpHeaders(headers: _*)
       .post(Json.obj())
       .map { response =>
+        val responseBody = response.body
         if (response.status == 200) {
           logger.debug(s"Successfully released reservation $reservationId")
         } else if (response.status == 401) {
           logger.error(s"Unauthorized: Invalid or missing internal API token for inventory service")
         } else if (response.status == 404) {
-          logger.warn(s"Reservation $reservationId not found (may have already been released)")
+          // Reservation not found - may have already been released or never existed
+          logger.warn(s"Reservation $reservationId not found (may have already been released or expired)")
+        } else if (response.status == 400) {
+          // 400 Bad Request typically means reservation is in a state that can't be released
+          // (e.g., SOLD, already RELEASED, or EXPIRED)
+          // This is expected for abandoned carts where reservations may have been:
+          // - Confirmed as SOLD after payment
+          // - Already released by inventory cleanup job
+          // - Expired and auto-released
+          // We treat this as success (idempotent operation)
+          if (responseBody.contains("SOLD") || responseBody.contains("RELEASED") || responseBody.contains("EXPIRED") || 
+              responseBody.contains("Cannot release")) {
+            logger.debug(s"Reservation $reservationId cannot be released (already in terminal state): $responseBody")
+          } else {
+            logger.warn(s"Failed to release reservation $reservationId: ${response.status} - $responseBody")
+          }
         } else {
-          logger.warn(s"Failed to release reservation $reservationId: ${response.status} - ${response.body}")
+          logger.warn(s"Unexpected error releasing reservation $reservationId: ${response.status} - $responseBody")
         }
       }
       .recover { case e =>
-        logger.error(s"Error releasing reservation $reservationId", e)
+        logger.error(s"Error releasing reservation $reservationId: ${e.getMessage}", e)
       }
   }
 }

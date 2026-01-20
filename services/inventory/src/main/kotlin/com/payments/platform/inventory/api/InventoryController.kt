@@ -69,7 +69,8 @@ class InventoryController(
         requireSellerOrAdmin(user)
         
         // SELLER can only view their own stock
-        if (user.accountType == User.AccountType.SELLER && user.userId.toString() != sellerId) {
+        // sellerId is expected to be an email (consistent with payments and catalog services)
+        if (user.accountType == User.AccountType.SELLER && user.email != sellerId) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build()
         }
         
@@ -100,9 +101,10 @@ class InventoryController(
         val user = getCurrentUser(httpRequest)
         requireSellerOrAdmin(user)
         
-        // For now, sellerId is derived from the authenticated user
+        // sellerId is derived from the authenticated user's email
+        // This matches the design where seller_id = email (consistent with payments and catalog services)
         // In the future, this could be passed in the request for ADMIN users
-        val sellerId = user.userId.toString()
+        val sellerId = user.email
         
         val stock = inventoryService.createOrUpdateStock(
             productId = productId,

@@ -21,9 +21,9 @@ func NewOrderRepository(pool *pgxpool.Pool) *OrderRepository {
 
 func (r *OrderRepository) Create(ctx context.Context, order *models.Order) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO orders (id, buyer_id, status, provisional, payment_id, total_cents, currency, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		order.ID, order.BuyerID, order.Status, order.Provisional, order.PaymentID,
+		`INSERT INTO orders (id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		order.ID, order.CartID, order.BuyerID, order.Status, order.Provisional, order.PaymentID,
 		order.TotalCents, order.Currency, order.CreatedAt, order.UpdatedAt,
 	)
 	return err
@@ -64,16 +64,18 @@ func (r *OrderRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Or
 	var confirmedAt, cancelledAt *time.Time
 	var refundStatus string
 
+	var cartID *uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 		        created_at, updated_at, confirmed_at, cancelled_at
 		 FROM orders WHERE id = $1`,
 		id,
 	).Scan(
-		&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
 		&confirmedAt, &cancelledAt,
 	)
+	order.CartID = cartID
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +147,15 @@ func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUI
 	var order models.Order
 	var confirmedAt, cancelledAt *time.Time
 	var refundStatus string
+	var cartID *uuid.UUID
 
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 		        created_at, updated_at, confirmed_at, cancelled_at
 		 FROM orders WHERE payment_id = $1`,
 		paymentID,
 	).Scan(
-		&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
 		&confirmedAt, &cancelledAt,
 	)
@@ -160,6 +163,7 @@ func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUI
 		return nil, err
 	}
 
+	order.CartID = cartID
 	order.ConfirmedAt = confirmedAt
 	order.CancelledAt = cancelledAt
 	order.RefundStatus = refundStatus

@@ -19,6 +19,7 @@ class CartRepository @Inject()(
   
   private val CART_TTL_SECONDS = 15 * 60  // 15 minutes
   private val REDIS_KEY_PREFIX = "cart:"
+  private val REDIS_CART_ID_KEY_PREFIX = "cart-id:"  // Reverse mapping: cartId -> cart
   
   // Redis cart JSON format
   implicit val cartItemReads: Reads[CartItem] = Json.reads[CartItem]
@@ -32,25 +33,66 @@ class CartRepository @Inject()(
     redis.get[Cart](key)
   }
   
+  // Get active cart from Redis by cart ID (for internal API)
+  // Uses reverse mapping: cart-id:{cartId} -> cart
+  def getActiveCartByCartId(cartId: UUID): Future[Option[Cart]] = Future {
+    val key = s"$REDIS_CART_ID_KEY_PREFIX$cartId"
+    redis.get[Cart](key)
+  }
+  
+  // Get cart from PostgreSQL by cart ID
+  def getCartByCartId(cartId: UUID): Future[Option[CartEntity]] = Future {
+    db.withConnection { implicit conn =>
+      SQL"""
+        SELECT id, buyer_id, status, created_at, updated_at, completed_at
+        FROM carts
+        WHERE id = CAST(${cartId.toString} AS uuid)
+      """.as(cartEntityParser.singleOpt)
+    }
+  }
+  
   // Save active cart to Redis with TTL
+  // Stores cart by both buyerId (for normal lookups) and cartId (for reverse lookups)
   // todo-vh: Expired carts cannot be recovered - consider increased TTL or persisting earlier. Consider publish events on cart expiry and tracking analytics/recovery via them. Can also persist expired carts in a separate table for analytics/recovery.
   def saveActiveCart(cart: Cart): Future[Boolean] = Future {
-    val key = s"$REDIS_KEY_PREFIX${cart.buyerId}"
     val expiresAt = cart.expiresAt.getOrElse(Instant.now().plusSeconds(CART_TTL_SECONDS))
     val ttlSeconds = (expiresAt.getEpochSecond - Instant.now().getEpochSecond).toInt.max(1)
-    redis.set(key, cart, Some(ttlSeconds))
+    
+    // Store by buyerId (for normal lookups)
+    val buyerKey = s"$REDIS_KEY_PREFIX${cart.buyerId}"
+    redis.set(buyerKey, cart, Some(ttlSeconds))
+    
+    // Store by cartId (for reverse lookups - used by inventory service)
+    val cartIdKey = s"$REDIS_CART_ID_KEY_PREFIX${cart.cartId}"
+    redis.set(cartIdKey, cart, Some(ttlSeconds))
+    
+    true
   }
   
   // Extend cart TTL
   def extendCartTTL(buyerId: String): Future[Boolean] = Future {
     val key = s"$REDIS_KEY_PREFIX$buyerId"
-    redis.expire(key, CART_TTL_SECONDS)
+    val cartOpt = redis.get[Cart](key)
+    cartOpt.foreach { cart =>
+      // Extend TTL for both keys
+      redis.expire(key, CART_TTL_SECONDS)
+      val cartIdKey = s"$REDIS_CART_ID_KEY_PREFIX${cart.cartId}"
+      redis.expire(cartIdKey, CART_TTL_SECONDS)
+    }
+    cartOpt.isDefined
   }
   
   // Delete active cart from Redis
   def deleteActiveCart(buyerId: String): Future[Boolean] = Future {
     val key = s"$REDIS_KEY_PREFIX$buyerId"
-    redis.delete(key)
+    val cartOpt = redis.get[Cart](key)
+    cartOpt.foreach { cart =>
+      // Delete both keys
+      redis.delete(key)
+      val cartIdKey = s"$REDIS_CART_ID_KEY_PREFIX${cart.cartId}"
+      redis.delete(cartIdKey)
+    }
+    cartOpt.isDefined
   }
   
   // Move cart from Redis to PostgreSQL (for checkout/completion)
@@ -128,6 +170,47 @@ class CartRepository @Inject()(
     }
   }
   
+  // Update cart status in PostgreSQL
+  def updateCartStatus(cartId: UUID, status: String): Future[Option[CartEntity]] = Future {
+    db.withConnection { implicit conn =>
+      val now = Instant.now()
+      
+      // Use conditional SQL to handle completed_at properly
+      if (status == "COMPLETED") {
+        SQL"""
+          UPDATE carts
+          SET status = $status,
+              updated_at = $now,
+              completed_at = $now
+          WHERE id = CAST(${cartId.toString} AS uuid)
+          RETURNING id, buyer_id, status, created_at, updated_at, completed_at
+        """.as(cartEntityParser.singleOpt)
+      } else {
+        // For non-COMPLETED status, only update status and updated_at, leave completed_at unchanged
+        SQL"""
+          UPDATE carts
+          SET status = $status,
+              updated_at = $now
+          WHERE id = CAST(${cartId.toString} AS uuid)
+          RETURNING id, buyer_id, status, created_at, updated_at, completed_at
+        """.as(cartEntityParser.singleOpt)
+      }
+    }
+  }
+  
+  // Find abandoned carts (CHECKOUT status, older than specified duration)
+  def findAbandonedCarts(olderThan: Instant): Future[List[CartEntity]] = Future {
+    db.withConnection { implicit conn =>
+      SQL"""
+        SELECT id, buyer_id, status, created_at, updated_at, completed_at
+        FROM carts
+        WHERE status = 'CHECKOUT'
+          AND created_at < $olderThan
+        ORDER BY created_at ASC
+      """.as(cartEntityParser.*)
+    }
+  }
+  
   private val cartEntityParser = {
     get[UUID]("id") ~
     get[String]("buyer_id") ~
@@ -149,12 +232,12 @@ class CartRepository @Inject()(
     get[Int]("quantity") ~
     get[Long]("price_cents") ~
     get[String]("currency") ~
-    get[Option[String]]("reservation_id") ~
+    get[Option[UUID]]("reservation_id") ~
     get[Instant]("created_at") map {
-      case id ~ cartId ~ productId ~ sku ~ sellerId ~ quantity ~ priceCents ~ currency ~ reservationIdStr ~ createdAt =>
+      case id ~ cartId ~ productId ~ sku ~ sellerId ~ quantity ~ priceCents ~ currency ~ reservationId ~ createdAt =>
         CartItemEntity(
           id, cartId, productId, sku, sellerId, quantity, priceCents, currency,
-          reservationIdStr.flatMap(s => Try(UUID.fromString(s)).toOption),
+          reservationId,
           createdAt
         )
     }

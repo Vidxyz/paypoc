@@ -69,6 +69,8 @@ func (c *KafkaConsumer) processMessage(ctx context.Context, data []byte) error {
 		return c.handlePaymentCaptured(ctx, data)
 	case "REFUND_COMPLETED":
 		return c.handleRefundCompleted(ctx, data)
+	case "PAYMENT_FAILED":
+		return c.handlePaymentFailed(ctx, data)
 	default:
 		log.Printf("Skipping event type: %s", eventType.Type)
 		return nil
@@ -108,6 +110,35 @@ func (c *KafkaConsumer) handleRefundCompleted(ctx context.Context, data []byte) 
 	}
 
 	log.Printf("Successfully processed refund %s for order %s", event.RefundID, event.OrderID)
+	return nil
+}
+
+func (c *KafkaConsumer) handlePaymentFailed(ctx context.Context, data []byte) error {
+	// Parse PaymentFailedEvent
+	var event models.PaymentFailedEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return fmt.Errorf("failed to parse PaymentFailedEvent: %w", err)
+	}
+
+	log.Printf("Processing PaymentFailedEvent for payment %s (reason: %s)", event.PaymentID, event.Reason)
+
+	// Get order by payment ID
+	order, err := c.orderService.GetOrderByPaymentID(ctx, event.PaymentID)
+	if err != nil {
+		log.Printf("Warning: failed to get order for payment %s: %v", event.PaymentID, err)
+		return nil // Don't fail - order might not exist or payment might be for a different system
+	}
+
+	// Mark cart as ABANDONED if cart_id exists
+	if order.CartID != nil {
+		if err := c.orderService.MarkCartAbandoned(ctx, *order.CartID, fmt.Sprintf("Payment failed: %s", event.Reason)); err != nil {
+			log.Printf("Warning: failed to mark cart %s as ABANDONED: %v", *order.CartID, err)
+			// Don't fail - cleanup job will catch it later
+		} else {
+			log.Printf("Successfully marked cart %s as ABANDONED due to payment failure", *order.CartID)
+		}
+	}
+
 	return nil
 }
 

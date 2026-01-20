@@ -61,8 +61,10 @@ func (s *OrderService) CreateProvisionalOrder(ctx context.Context, req models.Cr
 	// Create order
 	orderID := uuid.New()
 	now := time.Now()
+	cartID := &req.CartID
 	order := &models.Order{
 		ID:          orderID,
+		CartID:      cartID,
 		BuyerID:     req.BuyerID,
 		Status:      models.OrderStatusPending,
 		Provisional: true,
@@ -225,11 +227,13 @@ func (s *OrderService) ConfirmOrder(ctx context.Context, paymentID uuid.UUID) er
 	}
 
 	// Update cart status (async - don't fail if this fails)
-	go func() {
-		if err := s.cartClient.UpdateCartStatus(context.Background(), order.BuyerID, "COMPLETED"); err != nil {
-			log.Printf("Warning: failed to update cart status: %v", err)
-		}
-	}()
+	if order.CartID != nil {
+		go func() {
+			if err := s.cartClient.UpdateCartStatus(context.Background(), *order.CartID, "COMPLETED"); err != nil {
+				log.Printf("Warning: failed to update cart status: %v", err)
+			}
+		}()
+	}
 
 	// Publish OrderConfirmedEvent
 	event := models.OrderConfirmedEvent{
@@ -398,6 +402,20 @@ func (s *OrderService) GetOrderForInvoice(ctx context.Context, orderID uuid.UUID
 		Items:        items,
 		ProductNames: productNames,
 	}, nil
+}
+
+// GetOrderByPaymentID retrieves an order by payment ID
+func (s *OrderService) GetOrderByPaymentID(ctx context.Context, paymentID uuid.UUID) (*models.Order, error) {
+	order, err := s.repo.GetByPaymentID(ctx, paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get order by payment ID: %w", err)
+	}
+	return order, nil
+}
+
+// MarkCartAbandoned marks a cart as ABANDONED via the cart service
+func (s *OrderService) MarkCartAbandoned(ctx context.Context, cartID uuid.UUID, reason string) error {
+	return s.cartClient.UpdateCartStatus(ctx, cartID, "ABANDONED")
 }
 
 // OrderForInvoice contains order and items for invoice generation

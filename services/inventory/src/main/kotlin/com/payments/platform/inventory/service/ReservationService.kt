@@ -16,6 +16,7 @@ import com.payments.platform.inventory.persistence.InventoryTransactionRepositor
 import com.payments.platform.inventory.persistence.ReservationEntity
 import com.payments.platform.inventory.persistence.ReservationRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.CannotAcquireLockException
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.stereotype.Service
@@ -31,10 +32,12 @@ class ReservationService(
     private val reservationRepository: ReservationRepository,
     private val inventoryRepository: InventoryRepository,
     private val transactionRepository: InventoryTransactionRepository,
-    private val kafkaProducer: InventoryKafkaProducer
+    private val kafkaProducer: InventoryKafkaProducer,
+    @Autowired(required = false) private val cartServiceClient: CartServiceClient? = null  // Optional to avoid circular dependencies
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     
+    // todo-vh: When an order is refunded wholly or partially, inventory is NOT returned. This needs to be implemented
     /**
      * Create a soft reservation (add-to-cart)
      * Moves stock from available to reserved
@@ -274,15 +277,20 @@ class ReservationService(
             
             val inventory = inventoryEntity.toDomain()
             
-            // Release based on reservation type
-            val updated = when (reservation.reservationType) {
-                ReservationType.SOFT -> {
+            // Release based on reservation status, not type
+            // A SOFT reservation that was converted to ALLOCATED still has reservationType=SOFT,
+            // but the stock is in allocated, not reserved
+            val updated = when (reservation.status) {
+                ReservationStatus.ACTIVE -> {
                     // Release soft reservation: move from reserved back to available
                     inventory.releaseReservation(reservation.quantity)
                 }
-                ReservationType.HARD -> {
+                ReservationStatus.ALLOCATED -> {
                     // Release hard allocation: move from allocated back to available
                     inventory.releaseAllocation(reservation.quantity)
+                }
+                else -> {
+                    throw IllegalStateException("Cannot release reservation ${reservation.id} with status ${reservation.status}. Only ACTIVE and ALLOCATED reservations can be released.")
                 }
             }
             
@@ -392,6 +400,147 @@ class ReservationService(
     fun getReservationsByCartId(cartId: UUID): List<Reservation> {
         return reservationRepository.findByCartId(cartId).map { it.toDomain() }
     }
+    
+    /**
+     * Cleanup expired reservations
+     * Finds all expired ACTIVE and ALLOCATED reservations and releases them
+     * Returns summary of cleanup operation
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    fun cleanupExpiredReservations(): CleanupResult {
+        val now = Instant.now()
+        logger.info("Starting cleanup of expired reservations at $now")
+        
+        var expiredCount = 0
+        var releasedCount = 0
+        var errorCount = 0
+        
+        // Find expired ACTIVE reservations (soft reservations)
+        val expiredActive = reservationRepository.findExpiredReservations(ReservationStatus.ACTIVE, now)
+        logger.info("Found ${expiredActive.size} expired ACTIVE reservations")
+        
+        for (reservationEntity in expiredActive) {
+            try {
+                // Check if cart still exists before releasing
+                val cartExists = cartServiceClient?.checkCartExists(reservationEntity.cartId)
+                if (cartExists == true) {
+                    logger.info("Skipping release of expired reservation ${reservationEntity.id} - cart ${reservationEntity.cartId} still exists")
+                    expiredCount++ // Count as expired but not released
+                    continue
+                } else if (cartExists == null) {
+                    // Error checking cart - assume cart exists to be safe
+                    logger.warn("Error checking cart existence for reservation ${reservationEntity.id}, cart ${reservationEntity.cartId}. Skipping release to be safe.")
+                    expiredCount++
+                    continue
+                }
+                
+                // Cart doesn't exist - safe to release
+                // Release the reservation (this will move stock back to available)
+                // This publishes ReservationCancelledEvent automatically
+                releaseReservation(reservationEntity.id)
+                expiredCount++
+                releasedCount++
+                
+                // Publish expired event to indicate it expired (in addition to cancelled event)
+                val inventoryEntity = inventoryRepository.findById(reservationEntity.inventoryId)
+                    .orElse(null)
+                if (inventoryEntity != null) {
+                    kafkaProducer.publishReservationExpiredEvent(
+                        com.payments.platform.inventory.kafka.ReservationExpiredEvent(
+                            reservationId = reservationEntity.id,
+                            orderId = reservationEntity.cartId,
+                            productId = inventoryEntity.productId,
+                            quantity = reservationEntity.quantity,
+                            reservationType = reservationEntity.reservationType.name
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                logger.error("Error releasing expired ACTIVE reservation ${reservationEntity.id}: ${e.message}", e)
+                errorCount++
+                // Mark as expired even if release failed
+                try {
+                    val entity = reservationRepository.findById(reservationEntity.id).orElse(null)
+                    if (entity != null) {
+                        entity.status = ReservationStatus.EXPIRED
+                        reservationRepository.save(entity)
+                        expiredCount++
+                    }
+                } catch (saveError: Exception) {
+                    logger.error("Error marking reservation ${reservationEntity.id} as EXPIRED: ${saveError.message}", saveError)
+                }
+            }
+        }
+        
+        // Find expired ALLOCATED reservations (hard allocations)
+        val expiredAllocated = reservationRepository.findExpiredReservations(ReservationStatus.ALLOCATED, now)
+        logger.info("Found ${expiredAllocated.size} expired ALLOCATED reservations")
+        
+        for (reservationEntity in expiredAllocated) {
+            try {
+                // Check if cart still exists before releasing
+                val cartExists = cartServiceClient?.checkCartExists(reservationEntity.cartId)
+                if (cartExists == true) {
+                    logger.info("Skipping release of expired ALLOCATED reservation ${reservationEntity.id} - cart ${reservationEntity.cartId} still exists")
+                    expiredCount++ // Count as expired but not released
+                    continue
+                } else if (cartExists == null) {
+                    // Error checking cart - assume cart exists to be safe
+                    logger.warn("Error checking cart existence for ALLOCATED reservation ${reservationEntity.id}, cart ${reservationEntity.cartId}. Skipping release to be safe.")
+                    expiredCount++
+                    continue
+                }
+                
+                // Cart doesn't exist - safe to release
+                // Release the reservation (this will move stock back to available)
+                // This publishes ReservationCancelledEvent automatically
+                releaseReservation(reservationEntity.id)
+                expiredCount++
+                releasedCount++
+                
+                // Publish expired event to indicate it expired (in addition to cancelled event)
+                val inventoryEntity = inventoryRepository.findById(reservationEntity.inventoryId)
+                    .orElse(null)
+                if (inventoryEntity != null) {
+                    kafkaProducer.publishReservationExpiredEvent(
+                        com.payments.platform.inventory.kafka.ReservationExpiredEvent(
+                            reservationId = reservationEntity.id,
+                            orderId = reservationEntity.cartId,
+                            productId = inventoryEntity.productId,
+                            quantity = reservationEntity.quantity,
+                            reservationType = reservationEntity.reservationType.name
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                logger.error("Error releasing expired ALLOCATED reservation ${reservationEntity.id}: ${e.message}", e)
+                errorCount++
+                // Mark as expired even if release failed
+                try {
+                    val entity = reservationRepository.findById(reservationEntity.id).orElse(null)
+                    if (entity != null) {
+                        entity.status = ReservationStatus.EXPIRED
+                        reservationRepository.save(entity)
+                        expiredCount++
+                    }
+                } catch (saveError: Exception) {
+                    logger.error("Error marking reservation ${reservationEntity.id} as EXPIRED: ${saveError.message}", saveError)
+                }
+            }
+        }
+        
+        logger.info("Cleanup completed: expired=$expiredCount, released=$releasedCount, errors=$errorCount")
+        return CleanupResult(expiredCount, releasedCount, errorCount)
+    }
+    
+    /**
+     * Result of cleanup operation
+     */
+    data class CleanupResult(
+        val expiredCount: Int,
+        val releasedCount: Int,
+        val errorCount: Int
+    )
     
     /**
      * Execute a function with retry logic for optimistic locking failures.

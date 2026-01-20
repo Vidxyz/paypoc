@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -288,9 +290,175 @@ func NewCartClient(baseURL string) *CartClient {
 	}
 }
 
-func (c *CartClient) UpdateCartStatus(ctx context.Context, buyerID, status string) error {
-	// This would call the cart service to update cart status
-	// For now, we'll just log it
-	// In production, you'd make an HTTP call
+func (c *CartClient) UpdateCartStatus(ctx context.Context, cartID uuid.UUID, status string) error {
+	// Get internal API token from environment
+	internalToken := os.Getenv("CART_INTERNAL_API_TOKEN")
+	if internalToken == "" {
+		return fmt.Errorf("CART_INTERNAL_API_TOKEN not configured")
+	}
+
+	// Create request body
+	requestBody := map[string]string{
+		"status": status,
+	}
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "PUT",
+		fmt.Sprintf("%s/internal/carts/%s/status", c.baseURL, cartID.String()),
+		bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+internalToken)
+
+	// Make request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cart service endpoint not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("cart not found: %s", cartID)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("cart service returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
 	return nil
+}
+
+// UserClient handles communication with user service
+type UserClient struct {
+	baseURL string
+	client  *http.Client
+}
+
+func NewUserClient(baseURL string) *UserClient {
+	return &UserClient{
+		baseURL: baseURL,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// UserResponse represents the user response from user service
+// Note: The actual UserResponse from user service doesn't include auth0_user_id
+// We need to fetch the full User object or use a different endpoint
+type UserResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	Auth0UserID string    `json:"auth0_user_id,omitempty"` // May not be in response
+	FirstName   string    `json:"firstname"`
+	LastName    string    `json:"lastname"`
+	AccountType string    `json:"account_type"`
+}
+
+// GetUserByEmail looks up a user by email and returns their UUID (id)
+// This is used for filtering orders by email when buyer_id stores UUID
+// CatalogClient handles communication with catalog service
+type CatalogClient struct {
+	baseURL string
+	client  *http.Client
+}
+
+func NewCatalogClient(baseURL string) *CatalogClient {
+	return &CatalogClient{
+		baseURL: baseURL,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// ProductResponse represents a product from catalog service
+type ProductResponse struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	SKU   string    `json:"sku"`
+}
+
+// GetProduct retrieves a product by ID from catalog service
+func (c *CatalogClient) GetProduct(ctx context.Context, productID uuid.UUID) (*ProductResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/api/catalog/products/%s", c.baseURL, productID.String()), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("catalog service endpoint not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("product not found: %s", productID)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("catalog service returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var productResp ProductResponse
+	if err := json.Unmarshal(bodyBytes, &productResp); err != nil {
+		return nil, fmt.Errorf("failed to decode product response: %w, body: %s", err, string(bodyBytes))
+	}
+
+	return &productResp, nil
+}
+
+// GetUserByEmail looks up a user by email and returns their UUID (id)
+// This is used for filtering orders by email when buyer_id stores UUID
+func (c *UserClient) GetUserByEmail(ctx context.Context, email string, authToken string) (*UserResponse, error) {
+	// URL encode the email to handle special characters
+	encodedEmail := url.QueryEscape(email)
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/users/by-email/%s", c.baseURL, encodedEmail), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("user service endpoint not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("user not found with email: %s", email)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("user service returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var userResp UserResponse
+	if err := json.Unmarshal(bodyBytes, &userResp); err != nil {
+		return nil, fmt.Errorf("failed to decode user response: %w, body: %s", err, string(bodyBytes))
+	}
+
+	if userResp.ID == uuid.Nil {
+		return nil, fmt.Errorf("user response missing ID field, body: %s", string(bodyBytes))
+	}
+
+	return &userResp, nil
 }

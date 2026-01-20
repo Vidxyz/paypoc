@@ -24,6 +24,14 @@ data:
         api:
           token: ${INTERNAL_API_TOKEN:internal-test-token-change-in-production}
     
+    # Cart Service Configuration (for checking cart existence)
+    cart:
+      service:
+        url: ${CART_SERVICE_URL:http://cart-service.cart.svc.cluster.local:9002}
+        internal:
+          api:
+            token: ${CART_INTERNAL_API_TOKEN:internal-test-token-change-in-production}
+    
     # Kafka Topics Configuration
     kafka:
       topics:

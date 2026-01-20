@@ -476,6 +476,22 @@ class RefundService(
     }
     
     /**
+     * Gets all refunds for multiple payments in a single query.
+     * Returns a map of paymentId -> List<Refund>.
+     * 
+     * @param paymentIds List of payment IDs
+     * @return Map of payment ID to list of refunds
+     */
+    fun getRefundsByPaymentIds(paymentIds: List<UUID>): Map<UUID, List<Refund>> {
+        if (paymentIds.isEmpty()) {
+            return emptyMap()
+        }
+        val refunds = refundRepository.findByPaymentIdIn(paymentIds)
+        return refunds.groupBy { it.paymentId }
+            .mapValues { (_, entities) -> entities.map { it.toDomain() } }
+    }
+    
+    /**
      * Updates the ledger transaction ID for a refund.
      * 
      * This is called after the ledger service has created a transaction for the refund.

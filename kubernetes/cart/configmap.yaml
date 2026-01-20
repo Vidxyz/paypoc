@@ -102,4 +102,18 @@ data:
         }
       }
     }
+    
+    cart {
+      internal {
+        api {
+          token = ${?CART_INTERNAL_API_TOKEN}
+        }
+      }
+      abandonment {
+        timeout {
+          seconds = 3600
+          seconds = ${?CART_ABANDONMENT_TIMEOUT_SECONDS}
+        }
+      }
+    }
 

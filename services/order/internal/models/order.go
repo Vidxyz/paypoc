@@ -21,6 +21,7 @@ const (
 // Order represents an order in the system
 type Order struct {
 	ID           uuid.UUID
+	CartID       *uuid.UUID // Cart ID that this order was created from
 	BuyerID      string
 	Status       OrderStatus
 	Provisional  bool

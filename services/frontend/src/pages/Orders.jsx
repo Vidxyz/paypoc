@@ -329,9 +329,36 @@ function Orders({ buyerId, userEmail }) {
                           {getStatusChip(order.status)}
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body1" fontWeight="bold">
-                            {formatAmount(order.total_cents || order.totalCents, order.currency)}
-                          </Typography>
+                          {(() => {
+                            // Calculate adjusted total (after refunds)
+                            const totalRefundedCents = order.items?.reduce((sum, item) => {
+                              const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                              const priceCents = item.price_cents || item.priceCents
+                              return sum + (refundedQty * priceCents)
+                            }, 0) || 0
+                            const originalTotalCents = order.total_cents || order.totalCents || 0
+                            const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                            const currency = order.currency || 'CAD'
+                            
+                            return (
+                              <Box>
+                                {totalRefundedCents > 0 ? (
+                                  <>
+                                    <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                      {formatAmount(originalTotalCents, currency)}
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="success.main">
+                                      {formatAmount(adjustedTotalCents, currency)}
+                                    </Typography>
+                                  </>
+                                ) : (
+                                  <Typography variant="body1" fontWeight="bold">
+                                    {formatAmount(originalTotalCents, currency)}
+                                  </Typography>
+                                )}
+                              </Box>
+                            )
+                          })()}
                         </TableCell>
                         <TableCell>
                           {order.payment_id || order.paymentId ? (
@@ -435,12 +462,47 @@ function Orders({ buyerId, userEmail }) {
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Total Amount
+                    Original Total
                   </Typography>
                   <Typography variant="h6">
                     {formatAmount(orderDetails.total_cents || orderDetails.totalCents, orderDetails.currency)}
                   </Typography>
                 </Grid>
+                {(() => {
+                  // Calculate total refunded amount
+                  const totalRefundedCents = orderDetails.items?.reduce((sum, item) => {
+                    const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                    const priceCents = item.price_cents || item.priceCents
+                    return sum + (refundedQty * priceCents)
+                  }, 0) || 0
+                  const originalTotalCents = orderDetails.total_cents || orderDetails.totalCents || 0
+                  const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                  const currency = orderDetails.currency || 'CAD'
+                  
+                  if (totalRefundedCents > 0) {
+                    return (
+                      <>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Refunded Amount
+                          </Typography>
+                          <Typography variant="h6" color="error.main">
+                            -{formatAmount(totalRefundedCents, currency)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Adjusted Total
+                          </Typography>
+                          <Typography variant="h6" color="success.main" fontWeight="bold">
+                            {formatAmount(adjustedTotalCents, currency)}
+                          </Typography>
+                        </Grid>
+                      </>
+                    )
+                  }
+                  return null
+                })()}
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                     Payment Status
@@ -484,6 +546,66 @@ function Orders({ buyerId, userEmail }) {
                   </Grid>
                 )}
               </Grid>
+
+              {(() => {
+                // Calculate totals for summary
+                const totalRefundedCents = orderDetails.items?.reduce((sum, item) => {
+                  const refundedQty = item.refunded_quantity || item.refundedQuantity || 0
+                  const priceCents = item.price_cents || item.priceCents
+                  return sum + (refundedQty * priceCents)
+                }, 0) || 0
+                const originalTotalCents = orderDetails.total_cents || orderDetails.totalCents || 0
+                const adjustedTotalCents = originalTotalCents - totalRefundedCents
+                const currency = orderDetails.currency || 'CAD'
+                
+                if (totalRefundedCents > 0) {
+                  return (
+                    <>
+                      <Divider sx={{ my: 3 }} />
+                      <Box sx={{ 
+                        bgcolor: 'grey.50', 
+                        p: 2, 
+                        borderRadius: 2, 
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        mb: 3
+                      }}>
+                        <Typography variant="h6" gutterBottom>
+                          Order Summary
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Original Order Total:
+                            </Typography>
+                            <Typography variant="body2" fontWeight="medium">
+                              {formatAmount(originalTotalCents, currency)}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Total Refunded:
+                            </Typography>
+                            <Typography variant="body2" fontWeight="medium" color="error.main">
+                              -{formatAmount(totalRefundedCents, currency)}
+                            </Typography>
+                          </Box>
+                          <Divider />
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <Typography variant="body1" fontWeight="bold">
+                              Final Amount:
+                            </Typography>
+                            <Typography variant="body1" fontWeight="bold" color="success.main">
+                              {formatAmount(adjustedTotalCents, currency)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Box>
+                    </>
+                  )
+                }
+                return null
+              })()}
 
               <Divider sx={{ my: 3 }} />
 
@@ -532,24 +654,50 @@ function Orders({ buyerId, userEmail }) {
                                   SKU: {item.sku}
                                 </Typography>
                               </Box>
-                              <Typography variant="body1" fontWeight="bold">
-                                {formatAmount(priceCents * quantity, currency)}
-                              </Typography>
+                              <Box sx={{ textAlign: 'right' }}>
+                                {refundedQuantity > 0 ? (
+                                  <>
+                                    <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                      {formatAmount(priceCents * quantity, currency)}
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="error.main">
+                                      -{formatAmount(priceCents * refundedQuantity, currency)} refunded
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="success.main">
+                                      {formatAmount(priceCents * (quantity - refundedQuantity), currency)} remaining
+                                    </Typography>
+                                  </>
+                                ) : (
+                                  <Typography variant="body1" fontWeight="bold">
+                                    {formatAmount(priceCents * quantity, currency)}
+                                  </Typography>
+                                )}
+                              </Box>
                             </Box>
                           }
                           secondary={
                             <Box sx={{ mt: 1 }}>
-                              <Typography variant="body2" color="text.secondary">
-                                Quantity: {quantity}
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Quantity: {quantity}
+                                </Typography>
                                 {refundedQuantity > 0 && (
-                                  <Chip
-                                    label={`${refundedQuantity} refunded`}
-                                    color="warning"
-                                    size="small"
-                                    sx={{ ml: 1 }}
-                                  />
+                                  <>
+                                    <Chip
+                                      label={`${refundedQuantity} refunded`}
+                                      color="error"
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                    <Chip
+                                      label={`${quantity - refundedQuantity} remaining`}
+                                      color="success"
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                  </>
                                 )}
-                              </Typography>
+                              </Box>
                               <Typography variant="caption" color="text.secondary">
                                 Price: {formatAmount(priceCents, currency)} each
                               </Typography>

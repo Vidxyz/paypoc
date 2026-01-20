@@ -7,6 +7,7 @@ import java.util.UUID
 @Repository
 interface RefundRepository : JpaRepository<RefundEntity, UUID> {
     fun findByPaymentId(paymentId: UUID): List<RefundEntity>
+    fun findByPaymentIdIn(paymentIds: List<UUID>): List<RefundEntity>
     fun findByStripeRefundId(stripeRefundId: String): RefundEntity?
     fun findByIdempotencyKey(idempotencyKey: String): RefundEntity?
 }

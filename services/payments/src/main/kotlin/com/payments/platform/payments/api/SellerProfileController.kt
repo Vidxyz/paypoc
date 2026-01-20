@@ -4,6 +4,7 @@ import com.payments.platform.payments.config.AuthenticationInterceptor
 import com.payments.platform.payments.models.User
 import com.payments.platform.payments.service.SellerService
 import com.payments.platform.payments.service.PayoutService
+import com.payments.platform.payments.service.RefundService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
@@ -28,7 +29,8 @@ import java.util.UUID
 @Tag(name = "Seller Profile", description = "Seller profile and Stripe account information")
 class SellerProfileController(
     private val sellerService: SellerService,
-    private val payoutService: PayoutService
+    private val payoutService: PayoutService,
+    private val refundService: RefundService
 ) {
     
     /**
@@ -213,6 +215,99 @@ class SellerProfileController(
         return ResponseEntity.ok(
             ListPayoutsResponseDto(payouts = payoutResponses)
         )
+    }
+    
+    /**
+     * POST /seller/profile/refunds/batch
+     * Gets refunds for multiple payments for the authenticated seller.
+     * 
+     * This endpoint returns refunds filtered to only include the seller's portion
+     * from each payment's seller breakdown. Only refunds where the seller is part
+     * of the payment's seller breakdown are returned.
+     * 
+     * Requires: Bearer token with SELLER account_type claim
+     * Returns: Map of payment ID to list of refunds (filtered for this seller)
+     */
+    @Operation(
+        summary = "Get refunds for multiple payments (Seller) - Batch",
+        description = "Retrieves refunds for multiple payments for the authenticated seller. Returns a map of payment ID to list of refunds, filtered to only include the seller's portion. Requires JWT bearer token with SELLER account_type claim.",
+        security = [SecurityRequirement(name = "bearerAuth")]
+    )
+    @ApiResponses(
+        ApiResponse(
+            responseCode = "200",
+            description = "Successfully retrieved seller refunds",
+            content = [Content(schema = Schema(implementation = BatchRefundsResponseDto::class))]
+        ),
+        ApiResponse(
+            responseCode = "400",
+            description = "Bad Request - Invalid payment IDs list",
+            content = [Content(schema = Schema(implementation = BatchRefundsResponseDto::class))]
+        ),
+        ApiResponse(
+            responseCode = "401",
+            description = "Unauthorized - Missing, invalid, or expired bearer token"
+        ),
+        ApiResponse(
+            responseCode = "403",
+            description = "Forbidden - Only SELLER accounts can access this endpoint"
+        )
+    )
+    @PostMapping("/refunds/batch")
+    fun getSellerRefundsForPayments(
+        @RequestBody request: BatchRefundsRequestDto,
+        httpRequest: HttpServletRequest
+    ): ResponseEntity<BatchRefundsResponseDto> {
+        // Get authenticated user from request attribute (set by AuthenticationInterceptor)
+        val user = httpRequest.getAttribute(AuthenticationInterceptor.USER_ATTRIBUTE) as? User
+            ?: return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                BatchRefundsResponseDto(
+                    refundsByPaymentId = emptyMap(),
+                    error = "Unauthorized: user not authenticated"
+                )
+            )
+        
+        // Use email as seller_id (as per requirement: seller_id = email)
+        val sellerId = user.email
+        
+        return try {
+            if (request.paymentIds.isEmpty()) {
+                return ResponseEntity.ok(
+                    BatchRefundsResponseDto(
+                        refundsByPaymentId = emptyMap(),
+                        error = null
+                    )
+                )
+            }
+            
+            // Get all refunds for the requested payments
+            val refundsMap = refundService.getRefundsByPaymentIds(request.paymentIds)
+            
+            // Filter refunds to only include refunds where this seller is part of the seller breakdown
+            // Each refund's sellerRefundBreakdown contains per-seller amounts
+            val filteredRefundsMap = refundsMap.mapValues { (_, refunds) ->
+                refunds.filter { refund ->
+                    // Only include refunds where this seller is in the seller breakdown
+                    refund.sellerRefundBreakdown?.any { it.sellerId == sellerId } == true
+                }.map { RefundResponseDto.fromDomain(it) }
+            }.filterValues { it.isNotEmpty() }
+            
+            val responseMap = filteredRefundsMap.mapKeys { it.key.toString() }
+            
+            ResponseEntity.ok(
+                BatchRefundsResponseDto(
+                    refundsByPaymentId = responseMap,
+                    error = null
+                )
+            )
+        } catch (e: Exception) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                BatchRefundsResponseDto(
+                    refundsByPaymentId = emptyMap(),
+                    error = "Failed to retrieve refunds: ${e.message}"
+                )
+            )
+        }
     }
     
 }

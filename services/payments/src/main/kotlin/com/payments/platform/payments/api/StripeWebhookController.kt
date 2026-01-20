@@ -10,6 +10,7 @@ import com.payments.platform.payments.kafka.ChargebackCreatedEvent
 import com.payments.platform.payments.kafka.ChargebackLostEvent
 import com.payments.platform.payments.kafka.ChargebackWarningClosedEvent
 import com.payments.platform.payments.kafka.ChargebackWonEvent
+import com.payments.platform.payments.kafka.PaymentFailedEvent
 import com.payments.platform.payments.kafka.PaymentKafkaProducer
 import com.payments.platform.payments.kafka.PayoutCompletedEvent
 import com.payments.platform.payments.kafka.RefundCompletedEvent
@@ -196,6 +197,17 @@ class StripeWebhookController(
         try {
             paymentService.transitionPayment(payment.id, PaymentState.FAILED)
             logger.info("Payment ${payment.id} transitioned to FAILED (PaymentIntent: $paymentIntentId)")
+            
+            // Publish PaymentFailedEvent so other services (e.g., order service) can handle it
+            kafkaProducer.publishEvent(
+                PaymentFailedEvent(
+                    paymentId = payment.id,
+                    idempotencyKey = payment.idempotencyKey,
+                    reason = "PaymentIntent failed: $paymentIntentId",
+                    attempt = 1
+                )
+            )
+            logger.info("Published PaymentFailedEvent for payment ${payment.id}")
         } catch (e: Exception) {
             logger.error("Failed to transition payment ${payment.id} to FAILED", e)
         }

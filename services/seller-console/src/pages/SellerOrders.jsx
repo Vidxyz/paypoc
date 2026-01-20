@@ -538,24 +538,50 @@ function SellerOrders({ userEmail }) {
                                   SKU: {item.sku}
                                 </Typography>
                               </Box>
-                              <Typography variant="body1" fontWeight="bold">
-                                {formatAmount(priceCents * quantity, currency)}
-                              </Typography>
+                              <Box sx={{ textAlign: 'right' }}>
+                                {refundedQuantity > 0 ? (
+                                  <>
+                                    <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                      {formatAmount(priceCents * quantity, currency)}
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="error.main">
+                                      -{formatAmount(priceCents * refundedQuantity, currency)} refunded
+                                    </Typography>
+                                    <Typography variant="body1" fontWeight="bold" color="success.main">
+                                      {formatAmount(priceCents * (quantity - refundedQuantity), currency)} remaining
+                                    </Typography>
+                                  </>
+                                ) : (
+                                  <Typography variant="body1" fontWeight="bold">
+                                    {formatAmount(priceCents * quantity, currency)}
+                                  </Typography>
+                                )}
+                              </Box>
                             </Box>
                           }
                           secondary={
                             <Box sx={{ mt: 1 }}>
-                              <Typography variant="body2" color="text.secondary">
-                                Quantity: {quantity}
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Quantity: {quantity}
+                                </Typography>
                                 {refundedQuantity > 0 && (
-                                  <Chip
-                                    label={`${refundedQuantity} refunded`}
-                                    color="warning"
-                                    size="small"
-                                    sx={{ ml: 1 }}
-                                  />
+                                  <>
+                                    <Chip
+                                      label={`${refundedQuantity} refunded`}
+                                      color="error"
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                    <Chip
+                                      label={`${quantity - refundedQuantity} remaining`}
+                                      color="success"
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                  </>
                                 )}
-                              </Typography>
+                              </Box>
                               <Typography variant="caption" color="text.secondary">
                                 Price: {formatAmount(priceCents, currency)} each
                               </Typography>

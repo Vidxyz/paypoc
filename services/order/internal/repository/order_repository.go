@@ -21,9 +21,9 @@ func NewOrderRepository(pool *pgxpool.Pool) *OrderRepository {
 
 func (r *OrderRepository) Create(ctx context.Context, order *models.Order) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO orders (id, buyer_id, status, provisional, payment_id, total_cents, currency, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		order.ID, order.BuyerID, order.Status, order.Provisional, order.PaymentID,
+		`INSERT INTO orders (id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		order.ID, order.CartID, order.BuyerID, order.Status, order.Provisional, order.PaymentID,
 		order.TotalCents, order.Currency, order.CreatedAt, order.UpdatedAt,
 	)
 	return err
@@ -64,16 +64,18 @@ func (r *OrderRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Or
 	var confirmedAt, cancelledAt *time.Time
 	var refundStatus string
 
+	var cartID *uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 		        created_at, updated_at, confirmed_at, cancelled_at
 		 FROM orders WHERE id = $1`,
 		id,
 	).Scan(
-		&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
 		&confirmedAt, &cancelledAt,
 	)
+	order.CartID = cartID
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +147,15 @@ func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUI
 	var order models.Order
 	var confirmedAt, cancelledAt *time.Time
 	var refundStatus string
+	var cartID *uuid.UUID
 
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 		        created_at, updated_at, confirmed_at, cancelled_at
 		 FROM orders WHERE payment_id = $1`,
 		paymentID,
 	).Scan(
-		&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
 		&confirmedAt, &cancelledAt,
 	)
@@ -160,6 +163,7 @@ func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUI
 		return nil, err
 	}
 
+	order.CartID = cartID
 	order.ConfirmedAt = confirmedAt
 	order.CancelledAt = cancelledAt
 	order.RefundStatus = refundStatus
@@ -412,15 +416,18 @@ func (r *OrderRepository) CheckRefundExists(ctx context.Context, refundID uuid.U
 }
 
 // ListOrders retrieves orders with optional buyer filtering and pagination
+// buyerID filter uses STARTSWITH matching to support both email and UUID partial matches
 func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit, offset int) ([]models.Order, error) {
 	var query string
 	var args []interface{}
-	
+
 	if buyerID != nil {
+		// Use STARTSWITH (LIKE pattern) to match both email and UUID patterns
+		// This allows filtering by partial email (e.g., "buyer@") or partial UUID (e.g., "550e8400")
 		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 		                created_at, updated_at, confirmed_at, cancelled_at
 		         FROM orders 
-		         WHERE buyer_id = $1
+		         WHERE buyer_id LIKE $1 || '%'
 		         ORDER BY created_at DESC
 		         LIMIT $2 OFFSET $3`
 		args = []interface{}{*buyerID, limit, offset}
@@ -432,19 +439,19 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		         LIMIT $1 OFFSET $2`
 		args = []interface{}{limit, offset}
 	}
-	
+
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var orders []models.Order
 	for rows.Next() {
 		var order models.Order
 		var confirmedAt, cancelledAt *time.Time
 		var refundStatus string
-		
+
 		err := rows.Scan(
 			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
@@ -453,7 +460,7 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if confirmedAt != nil {
 			order.ConfirmedAt = confirmedAt
 		}
@@ -461,21 +468,23 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 			order.CancelledAt = cancelledAt
 		}
 		order.RefundStatus = refundStatus
-		
+
 		orders = append(orders, order)
 	}
-	
+
 	return orders, rows.Err()
 }
 
 // CountOrders counts total orders with optional buyer filtering
+// buyerID filter uses STARTSWITH matching to support both email and UUID partial matches
 func (r *OrderRepository) CountOrders(ctx context.Context, buyerID *string) (int, error) {
 	var count int
 	var err error
-	
+
 	if buyerID != nil {
+		// Use STARTSWITH (LIKE pattern) to match both email and UUID patterns
 		err = r.pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM orders WHERE buyer_id = $1`,
+			`SELECT COUNT(*) FROM orders WHERE buyer_id LIKE $1 || '%'`,
 			*buyerID,
 		).Scan(&count)
 	} else {
@@ -483,7 +492,7 @@ func (r *OrderRepository) CountOrders(ctx context.Context, buyerID *string) (int
 			`SELECT COUNT(*) FROM orders`,
 		).Scan(&count)
 	}
-	
+
 	return count, err
 }
 
@@ -503,7 +512,7 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 		return nil, err
 	}
 	defer orderIDRows.Close()
-	
+
 	var orderIDs []uuid.UUID
 	for orderIDRows.Next() {
 		var orderID uuid.UUID
@@ -512,30 +521,30 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 		}
 		orderIDs = append(orderIDs, orderID)
 	}
-	
+
 	if len(orderIDs) == 0 {
 		return []models.Order{}, nil
 	}
-	
+
 	// Get orders for these IDs
 	query := `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
 	                 created_at, updated_at, confirmed_at, cancelled_at
 	          FROM orders 
 	          WHERE id = ANY($1)
 	          ORDER BY created_at DESC`
-	
+
 	rows, err := r.pool.Query(ctx, query, orderIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var orders []models.Order
 	for rows.Next() {
 		var order models.Order
 		var confirmedAt, cancelledAt *time.Time
 		var refundStatus string
-		
+
 		err := rows.Scan(
 			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
 			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
@@ -544,7 +553,7 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if confirmedAt != nil {
 			order.ConfirmedAt = confirmedAt
 		}
@@ -552,10 +561,10 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 			order.CancelledAt = cancelledAt
 		}
 		order.RefundStatus = refundStatus
-		
+
 		orders = append(orders, order)
 	}
-	
+
 	return orders, rows.Err()
 }
 

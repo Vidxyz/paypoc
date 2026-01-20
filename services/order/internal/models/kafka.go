@@ -82,3 +82,14 @@ type RefundedOrderItem struct {
 	RefundedAt  time.Time
 	CreatedAt   time.Time
 }
+
+// PaymentFailedEvent represents the Kafka event when payment fails
+type PaymentFailedEvent struct {
+	EventID        uuid.UUID `json:"eventId"`
+	PaymentID      uuid.UUID `json:"paymentId"`
+	IdempotencyKey string    `json:"idempotencyKey"`
+	Type           string    `json:"type"`
+	Reason         string    `json:"reason"`
+	Attempt        int       `json:"attempt"`
+	CreatedAt      time.Time `json:"createdAt"`
+}

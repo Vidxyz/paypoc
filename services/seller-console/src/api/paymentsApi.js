@@ -116,6 +116,31 @@ export const createPaymentsApiClient = (getAccessToken) => {
       return response.data
     },
     
+    /**
+     * Get refunds for a payment
+     * @param {string} paymentId - Payment ID
+     * @returns {Promise<Object>} Response with refunds array
+     */
+    getRefundsForPayment: async (paymentId) => {
+      const response = await paymentsApi.get(`/admin/payments/${paymentId}/refunds`)
+      return response.data
+    },
+    
+    /**
+     * Get refunds for multiple payments in a single batch call (seller-specific)
+     * @param {Array<string>} paymentIds - Array of payment IDs
+     * @returns {Promise<Object>} Response with refundsByPaymentId map (filtered for this seller)
+     */
+    getRefundsForPayments: async (paymentIds) => {
+      if (!paymentIds || paymentIds.length === 0) {
+        return {}
+      }
+      const response = await paymentsApi.post('/seller/profile/refunds/batch', {
+        paymentIds: paymentIds,
+      })
+      return response.data.refundsByPaymentId || {}
+    },
+    
     // Cleanup function to remove interceptor if needed
     cleanup: () => {
       paymentsApi.interceptors.request.eject(requestInterceptor)

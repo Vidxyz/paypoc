@@ -55,6 +55,11 @@ spec:
             configMapKeyRef:
               name: order-service-config
               key: CART_SERVICE_URL
+        - name: CART_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: CART_INTERNAL_API_TOKEN
         - name: KAFKA_BOOTSTRAP_SERVERS
           valueFrom:
             configMapKeyRef:

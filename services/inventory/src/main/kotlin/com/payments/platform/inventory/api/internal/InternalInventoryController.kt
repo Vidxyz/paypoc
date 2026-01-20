@@ -23,11 +23,13 @@ import java.util.UUID
  * This API is intended for use by other services (e.g., Catalog Service, Cart Service)
  * and requires authentication via an opaque token.
  * 
- * Endpoints:
- * - POST /internal/stock/batch - Get stock information for multiple products
- * - GET /internal/stock/{productId} - Get stock by product ID
- * - POST /internal/reservations - Create soft reservation
- * - POST /internal/reservations/{reservationId}/release - Release reservation
+     * Endpoints:
+     * - POST /internal/stock/batch - Get stock information for multiple products
+     * - GET /internal/stock/{productId} - Get stock by product ID
+     * - POST /internal/reservations - Create soft reservation
+     * - POST /internal/reservations/{reservationId}/allocate - Allocate reservation
+     * - POST /internal/reservations/{reservationId}/release - Release reservation
+     * - POST /internal/reservations/{reservationId}/confirm-sale - Confirm sale
  */
 @RestController
 @RequestMapping("/internal")
@@ -215,6 +217,41 @@ class InternalInventoryController(
         
         return try {
             val reservation = reservationService.releaseReservation(reservationId)
+            ResponseEntity.ok(reservation)
+        } catch (e: NoSuchElementException) {
+            ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        } catch (e: IllegalStateException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
+        }
+    }
+    
+    /**
+     * POST /internal/reservations/{reservationId}/confirm-sale
+     * Confirms a sale after payment completion.
+     * 
+     * Requires: Authorization: Bearer {token}
+     */
+    @PostMapping("/reservations/{reservationId}/confirm-sale")
+    @Operation(
+        summary = "Confirm sale - Internal",
+        description = "Confirms a sale after payment completion. Moves stock from allocated to sold (deducts from total). Service-to-service only."
+    )
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Sale confirmed successfully"),
+        ApiResponse(responseCode = "400", description = "Reservation not in allocated state"),
+        ApiResponse(responseCode = "401", description = "Unauthorized: Invalid or missing token"),
+        ApiResponse(responseCode = "404", description = "Reservation not found")
+    ])
+    fun confirmSale(
+        @PathVariable reservationId: UUID,
+        httpRequest: HttpServletRequest
+    ): ResponseEntity<Reservation> {
+        if (!validateToken(httpRequest)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
+        }
+        
+        return try {
+            val reservation = reservationService.confirmSale(reservationId)
             ResponseEntity.ok(reservation)
         } catch (e: NoSuchElementException) {
             ResponseEntity.status(HttpStatus.NOT_FOUND).build()

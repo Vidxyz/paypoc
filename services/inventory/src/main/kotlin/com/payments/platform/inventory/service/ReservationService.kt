@@ -394,6 +394,119 @@ class ReservationService(
     }
     
     /**
+     * Cleanup expired reservations
+     * Finds all expired ACTIVE and ALLOCATED reservations and releases them
+     * Returns summary of cleanup operation
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    fun cleanupExpiredReservations(): CleanupResult {
+        val now = Instant.now()
+        logger.info("Starting cleanup of expired reservations at $now")
+        
+        var expiredCount = 0
+        var releasedCount = 0
+        var errorCount = 0
+        
+        // Find expired ACTIVE reservations (soft reservations)
+        val expiredActive = reservationRepository.findExpiredReservations(ReservationStatus.ACTIVE, now)
+        logger.info("Found ${expiredActive.size} expired ACTIVE reservations")
+        
+        for (reservationEntity in expiredActive) {
+            try {
+                // Release the reservation (this will move stock back to available)
+                // This publishes ReservationCancelledEvent automatically
+                releaseReservation(reservationEntity.id)
+                expiredCount++
+                releasedCount++
+                
+                // Publish expired event to indicate it expired (in addition to cancelled event)
+                val inventoryEntity = inventoryRepository.findById(reservationEntity.inventoryId)
+                    .orElse(null)
+                if (inventoryEntity != null) {
+                    kafkaProducer.publishReservationExpiredEvent(
+                        com.payments.platform.inventory.kafka.ReservationExpiredEvent(
+                            reservationId = reservationEntity.id,
+                            orderId = reservationEntity.cartId,
+                            productId = inventoryEntity.productId,
+                            quantity = reservationEntity.quantity,
+                            reservationType = reservationEntity.reservationType.name
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                logger.error("Error releasing expired ACTIVE reservation ${reservationEntity.id}: ${e.message}", e)
+                errorCount++
+                // Mark as expired even if release failed
+                try {
+                    val entity = reservationRepository.findById(reservationEntity.id).orElse(null)
+                    if (entity != null) {
+                        entity.status = ReservationStatus.EXPIRED
+                        reservationRepository.save(entity)
+                        expiredCount++
+                    }
+                } catch (saveError: Exception) {
+                    logger.error("Error marking reservation ${reservationEntity.id} as EXPIRED: ${saveError.message}", saveError)
+                }
+            }
+        }
+        
+        // Find expired ALLOCATED reservations (hard allocations)
+        val expiredAllocated = reservationRepository.findExpiredReservations(ReservationStatus.ALLOCATED, now)
+        logger.info("Found ${expiredAllocated.size} expired ALLOCATED reservations")
+        
+        for (reservationEntity in expiredAllocated) {
+            try {
+                // Release the reservation (this will move stock back to available)
+                // This publishes ReservationCancelledEvent automatically
+                releaseReservation(reservationEntity.id)
+                expiredCount++
+                releasedCount++
+                
+                // Publish expired event to indicate it expired (in addition to cancelled event)
+                val inventoryEntity = inventoryRepository.findById(reservationEntity.inventoryId)
+                    .orElse(null)
+                if (inventoryEntity != null) {
+                    kafkaProducer.publishReservationExpiredEvent(
+                        com.payments.platform.inventory.kafka.ReservationExpiredEvent(
+                            reservationId = reservationEntity.id,
+                            orderId = reservationEntity.cartId,
+                            productId = inventoryEntity.productId,
+                            quantity = reservationEntity.quantity,
+                            reservationType = reservationEntity.reservationType.name
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                logger.error("Error releasing expired ALLOCATED reservation ${reservationEntity.id}: ${e.message}", e)
+                errorCount++
+                // Mark as expired even if release failed
+                try {
+                    val entity = reservationRepository.findById(reservationEntity.id).orElse(null)
+                    if (entity != null) {
+                        entity.status = ReservationStatus.EXPIRED
+                        reservationRepository.save(entity)
+                        expiredCount++
+                    }
+                } catch (saveError: Exception) {
+                    logger.error("Error marking reservation ${reservationEntity.id} as EXPIRED: ${saveError.message}", saveError)
+                }
+            }
+        }
+        
+        logger.info("Cleanup completed: expired=$expiredCount, released=$releasedCount, errors=$errorCount")
+        return CleanupResult(expiredCount, releasedCount, errorCount)
+    }
+    
+    /**
+     * Result of cleanup operation
+     */
+    data class CleanupResult(
+        val expiredCount: Int,
+        val releasedCount: Int,
+        val errorCount: Int
+    )
+    
+    /**
      * Execute a function with retry logic for optimistic locking failures.
      * Handles OptimisticLockingFailureException and serialization failures (SQL state 40001).
      */

@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: inventory-cleanup-cronjob
+  namespace: inventory
+spec:
+  # Run every 15 minutes
+  schedule: "*/15 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: kafka-producer
+            image: bitnami/kafka:3.6
+            command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Publishing cleanup command to Kafka..."
+              TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              echo "{\"type\":\"CLEANUP_EXPIRED_RESERVATIONS\",\"timestamp\":\"${TIMESTAMP}\"}" | \
+              /opt/bitnami/kafka/bin/kafka-console-producer.sh \
+                --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
+                --topic inventory.commands
+              echo "Cleanup command published successfully"
+            env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+          restartPolicy: OnFailure

@@ -55,6 +55,12 @@ class InventoryKafkaProducer(
         logger.info("Published ReservationFulfilledEvent for order ${event.orderId}, product ${event.productId}")
     }
     
+    fun publishReservationExpiredEvent(event: ReservationExpiredEvent) {
+        val message = buildMessage(event, "ReservationExpiredEvent", event.orderId.toString())
+        kafkaTemplate.send(message)
+        logger.info("Published ReservationExpiredEvent for reservation ${event.reservationId}, order ${event.orderId}, product ${event.productId}")
+    }
+    
     private fun buildMessage(event: Any, eventType: String, key: String): Message<Any> {
         // Convert event data class to map for JSON serialization
         val eventMap = objectMapper.convertValue(event, Map::class.java) as Map<String, Any>
@@ -122,4 +128,12 @@ data class ReservationFulfilledEvent(
     val orderId: UUID,
     val productId: UUID,
     val quantity: Int
+)
+
+data class ReservationExpiredEvent(
+    val reservationId: UUID,
+    val orderId: UUID,
+    val productId: UUID,
+    val quantity: Int,
+    val reservationType: String  // "SOFT" or "HARD"
 )

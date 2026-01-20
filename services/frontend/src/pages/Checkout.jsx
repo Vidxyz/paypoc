@@ -289,6 +289,12 @@ function CheckoutForm({ buyerId }) {
     }).format(cents / 100)
   }
 
+  const truncateProductName = (name, maxLength = 50) => {
+    if (!name) return name
+    if (name.length <= maxLength) return name
+    return name.substring(0, maxLength).trim() + '...'
+  }
+
   const totalItems = getTotalItems()
   const totalPrice = getTotalPrice()
   const currency = cartItems.length > 0 && cartItems[0].currency ? cartItems[0].currency : 'CAD'
@@ -473,8 +479,20 @@ function CheckoutForm({ buyerId }) {
                         )}
                         <ListItemText
                           primary={
-                            <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
-                              {item.productName || `Product ${item.sku || item.productId}`}
+                            <Typography 
+                              variant="body1" 
+                              sx={{ 
+                                fontWeight: 'medium',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                lineHeight: 1.4,
+                              }}
+                              title={item.productName || `Product ${item.sku || item.productId}`}
+                            >
+                              {truncateProductName(item.productName || `Product ${item.sku || item.productId}`, 60)}
                             </Typography>
                           }
                           secondary={

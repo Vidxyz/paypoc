@@ -12,6 +12,7 @@ import {
   Chip,
   Breadcrumbs,
   Link,
+  CircularProgress,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos'
@@ -33,6 +34,7 @@ function ProductModal({ open, onClose, product }) {
   const [quantity, setQuantity] = useState(1)
   const [categoryBreadcrumbs, setCategoryBreadcrumbs] = useState([])
   const [loadingCategory, setLoadingCategory] = useState(false)
+  const [addingToCart, setAddingToCart] = useState(false)
   const { addToCart, isInCart, getQuantity } = useCart()
 
   // Load category breadcrumbs when product changes
@@ -124,10 +126,18 @@ function ProductModal({ open, onClose, product }) {
     setQuantity(Math.max(1, value))
   }
 
-  const handleAddToCart = () => {
-    addToCart(product, quantity)
-    setQuantity(1)
-    // Optionally show a success message or close modal
+  const handleAddToCart = async () => {
+    setAddingToCart(true)
+    try {
+      await addToCart(product, quantity)
+      setQuantity(1)
+      // Optionally show a success message or close modal
+    } catch (err) {
+      console.error('Failed to add to cart:', err)
+      // Error is already handled in CartContext
+    } finally {
+      setAddingToCart(false)
+    }
   }
 
   const handleClose = () => {
@@ -417,18 +427,18 @@ function ProductModal({ open, onClose, product }) {
                         sx={{ width: 100 }}
                         size="small"
                         helperText={availableQty > 0 ? `${availableQty} available` : ''}
-                        disabled={isOutOfStock}
+                        disabled={isOutOfStock || addingToCart}
                         error={isLowStock}
                       />
                       <Button
                         variant="contained"
-                        startIcon={<ShoppingCartIcon />}
+                        startIcon={addingToCart ? <CircularProgress size={20} color="inherit" /> : <ShoppingCartIcon />}
                         onClick={handleAddToCart}
                         fullWidth
                         size="large"
-                        disabled={isOutOfStock || quantity > availableQty}
+                        disabled={isOutOfStock || quantity > availableQty || addingToCart}
                       >
-                        {inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart'}
+                        {addingToCart ? 'Adding to Cart...' : (inCart ? `Add More (${cartQuantity} in cart)` : 'Add to Cart')}
                       </Button>
                     </Box>
                     {inCart && (

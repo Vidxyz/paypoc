@@ -106,6 +106,7 @@ class ChargebackCreatedEventConsumer(
             // We hold it in CHARGEBACK_CLEARING until dispute is resolved
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
+                transactionType = "CHARGEBACK_CREATED",
                 idempotencyKey = event.idempotencyKey,
                 description = "Chargeback created: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s), Reason: ${event.reason ?: "unknown"}",
                 entries = listOf(

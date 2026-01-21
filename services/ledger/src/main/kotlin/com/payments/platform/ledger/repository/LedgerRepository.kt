@@ -139,11 +139,12 @@ class LedgerRepository(
         try {
             jdbcTemplate.update(
                 """
-                INSERT INTO ledger_transactions (id, reference_id, idempotency_key, description, created_at)
-                VALUES (?, ?, ?, ?, now())
+                INSERT INTO ledger_transactions (id, reference_id, transaction_type, idempotency_key, description, created_at)
+                VALUES (?, ?, ?, ?, ?, now())
                 """.trimIndent(),
                 transactionId,
                 request.referenceId,
+                request.transactionType,
                 request.idempotencyKey,
                 request.description
             )
@@ -415,7 +416,7 @@ class LedgerRepository(
         }
         
         val sql = """
-            SELECT DISTINCT lt.id, lt.reference_id, lt.idempotency_key, lt.description, lt.created_at
+            SELECT DISTINCT lt.id, lt.reference_id, lt.transaction_type, lt.idempotency_key, lt.description, lt.created_at
             FROM ledger_transactions lt
             WHERE lt.created_at >= ? AND lt.created_at <= ?
             $currencyFilter
@@ -443,7 +444,7 @@ class LedgerRepository(
 
     private fun findTransactionById(transactionId: UUID): Transaction? {
         val sql = """
-            SELECT id, reference_id, idempotency_key, description, created_at
+            SELECT id, reference_id, transaction_type, idempotency_key, description, created_at
             FROM ledger_transactions
             WHERE id = ?
         """.trimIndent()
@@ -457,7 +458,7 @@ class LedgerRepository(
 
     private fun findTransactionByIdempotencyKey(idempotencyKey: String): Transaction? {
         val sql = """
-            SELECT id, reference_id, idempotency_key, description, created_at
+            SELECT id, reference_id, transaction_type, idempotency_key, description, created_at
             FROM ledger_transactions
             WHERE idempotency_key = ?
         """.trimIndent()
@@ -483,6 +484,7 @@ class LedgerRepository(
         Transaction(
             id = UUID.fromString(rs.getString("id")),
             referenceId = rs.getString("reference_id"),
+            transactionType = rs.getString("transaction_type"),
             idempotencyKey = rs.getString("idempotency_key"),
             description = rs.getString("description"),
             createdAt = rs.getTimestamp("created_at").toInstant()

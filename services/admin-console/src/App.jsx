@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { Box, Typography } from '@mui/material'
 import { useAuth0 } from './auth/Auth0Provider'
-import AdminRefunds from './pages/AdminRefunds'
 import AdminReconciliation from './pages/AdminReconciliation'
 import AdminPayouts from './pages/AdminPayouts'
 import AdminProducts from './pages/AdminProducts'
@@ -131,17 +130,7 @@ function App() {
             path="/login"
             element={
               isAdminAuthenticated ? (
-                <Navigate to="/refunds" replace />
-              ) : (
-                <Navigate to="/" replace />
-              )
-            }
-          />
-          <Route
-            path="/refunds"
-            element={
-              isAdminAuthenticated ? (
-                <AdminRefunds />
+                <Navigate to="/orders" replace />
               ) : (
                 <Navigate to="/" replace />
               )
@@ -191,7 +180,7 @@ function App() {
             path="/"
             element={
               isAdminAuthenticated ? (
-                <Navigate to="/refunds" replace />
+                <Navigate to="/orders" replace />
               ) : (
                 <Navigate to="/" replace />
               )

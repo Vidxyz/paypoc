@@ -15,6 +15,7 @@ import java.util.UUID
 data class Transaction(
     val id: UUID,
     val referenceId: String,  // External reference (e.g., Stripe paymentIntent ID)
+    val transactionType: String,  // Type of transaction (e.g., PAYMENT_CAPTURED, CHARGEBACK_CREATED)
     val idempotencyKey: String,
     val description: String,
     val createdAt: Instant
@@ -47,6 +48,7 @@ enum class EntryDirection {
  */
 data class CreateDoubleEntryTransactionRequest(
     val referenceId: String,  // External reference (e.g., Stripe paymentIntent ID)
+    val transactionType: String,  // Type of transaction (e.g., PAYMENT_CAPTURED, CHARGEBACK_CREATED)
     val idempotencyKey: String,
     val description: String,
     val entries: List<EntryRequest>

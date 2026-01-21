@@ -139,6 +139,7 @@ class ChargebackLostEventConsumer(
             // Dispute fee stays in CHARGEBACK_CLEARING as expense
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
+                transactionType = "CHARGEBACK_LOST",
                 idempotencyKey = event.idempotencyKey,
                 description = "Chargeback lost: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s)",
                 entries = sellerEntries + platformFeeEntries + listOf(

@@ -184,6 +184,7 @@ class RefundCompletedEventConsumer(
             val sellerIds = sellerRefundBreakdown.joinToString(", ") { it.sellerId }
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeRefundId,  // External reference (Stripe Refund ID)
+                transactionType = "REFUND_COMPLETED",
                 idempotencyKey = event.idempotencyKey,
                 description = "Refund: ${event.refundId} (order: ${event.orderId}) for payment ${event.paymentId} - Buyer: ${event.buyerId}, Sellers: $sellerIds",
                 entries = entries

@@ -71,6 +71,7 @@ class LedgerController(
             val transaction = ledgerService.createDoubleEntryTransaction(
                 CreateDoubleEntryTransactionRequest(
                     referenceId = request.referenceId,
+                    transactionType = request.transactionType,
                     idempotencyKey = request.idempotencyKey,
                     description = request.description,
                     entries = entryRequests
@@ -81,6 +82,7 @@ class LedgerController(
                 TransactionResponseDto(
                     transactionId = transaction.id,
                     referenceId = transaction.referenceId,
+                    transactionType = transaction.transactionType,
                     idempotencyKey = transaction.idempotencyKey,
                     description = transaction.description,
                     createdAt = transaction.createdAt.toString()
@@ -207,6 +209,7 @@ class LedgerController(
                             transaction = TransactionDto(
                                 transactionId = transactionWithEntries.transaction.id,
                                 referenceId = transactionWithEntries.transaction.referenceId,
+                                transactionType = transactionWithEntries.transaction.transactionType,
                                 idempotencyKey = transactionWithEntries.transaction.idempotencyKey,
                                 description = transactionWithEntries.transaction.description,
                                 createdAt = transactionWithEntries.transaction.createdAt.toString()
@@ -318,6 +321,9 @@ data class CreateDoubleEntryTransactionRequestDto(
     @Schema(description = "External reference ID (e.g., Stripe paymentIntent ID)", example = "pi_1234567890")
     val referenceId: String,
     
+    @Schema(description = "Type of transaction (e.g., PAYMENT_CAPTURED, CHARGEBACK_CREATED)", example = "PAYMENT_CAPTURED")
+    val transactionType: String,
+    
     @Schema(description = "Idempotency key to prevent duplicate processing", example = "payment_abc_123")
     val idempotencyKey: String,
     
@@ -356,6 +362,9 @@ data class TransactionResponseDto(
     
     @Schema(description = "External reference ID", example = "pi_1234567890")
     val referenceId: String? = null,
+    
+    @Schema(description = "Type of transaction", example = "PAYMENT_CAPTURED")
+    val transactionType: String? = null,
     
     @Schema(description = "Idempotency key used for this transaction", example = "payment_abc_123")
     val idempotencyKey: String? = null,
@@ -401,6 +410,10 @@ data class TransactionDto(
     @JsonProperty("referenceId")
     @Schema(description = "External reference ID", example = "pi_1234567890")
     val referenceId: String,
+    
+    @JsonProperty("transactionType")
+    @Schema(description = "Type of transaction", example = "PAYMENT_CAPTURED")
+    val transactionType: String,
     
     @JsonProperty("idempotencyKey")
     @Schema(description = "Idempotency key", example = "payment_abc_123")

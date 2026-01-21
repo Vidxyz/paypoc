@@ -165,6 +165,7 @@ class PaymentCapturedEventConsumer(
             val sellerIds = event.sellerBreakdown.joinToString(", ") { it.sellerId }
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripePaymentIntentId,  // External reference (Stripe PaymentIntent ID)
+                transactionType = "PAYMENT_CAPTURED",
                 idempotencyKey = event.idempotencyKey,
                 description = "Payment capture: ${event.paymentId} (order: ${event.orderId}) - Buyer: ${event.buyerId}, Sellers: $sellerIds",
                 entries = entries

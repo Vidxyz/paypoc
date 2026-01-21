@@ -106,6 +106,7 @@ class ChargebackWonEventConsumer(
             // Only the chargeback amount is returned - dispute fee stays as expense
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
+                transactionType = "CHARGEBACK_WON",
                 idempotencyKey = event.idempotencyKey,
                 description = "Chargeback won: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s)",
                 entries = listOf(

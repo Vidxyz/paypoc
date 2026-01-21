@@ -782,7 +782,7 @@ class StripeWebhookController(
             reason = chargeback.reason,
             buyerId = payment.buyerId,
             sellerBreakdown = sellerBreakdown,
-            idempotencyKey = chargeback.idempotencyKey
+            idempotencyKey = "${chargeback.idempotencyKey}_CREATED"
         )
         kafkaProducer.publishChargebackCreatedEvent(chargebackCreatedEvent)
         
@@ -975,7 +975,7 @@ class StripeWebhookController(
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
                         sellerBreakdown = sellerBreakdown,
-                        idempotencyKey = chargeback.idempotencyKey
+                        idempotencyKey = "${chargeback.idempotencyKey}_WON"
                     )
                     kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
                     logger.info("Published ChargebackWonEvent for chargeback ${chargeback.id} - money returned")
@@ -993,7 +993,7 @@ class StripeWebhookController(
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
                         sellerBreakdown = sellerBreakdown,
-                        idempotencyKey = chargeback.idempotencyKey
+                        idempotencyKey = "${chargeback.idempotencyKey}_WARNING_CLOSED"
                     )
                     kafkaProducer.publishChargebackWarningClosedEvent(chargebackWarningClosedEvent)
                     logger.info("Published ChargebackWarningClosedEvent for chargeback ${chargeback.id} (warning_closed) - amount and fee returned")
@@ -1011,7 +1011,7 @@ class StripeWebhookController(
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
                         sellerBreakdown = chargebackSellerBreakdown,
-                        idempotencyKey = chargeback.idempotencyKey
+                        idempotencyKey = "${chargeback.idempotencyKey}_LOST"
                     )
                     kafkaProducer.publishChargebackLostEvent(chargebackLostEvent)
                     logger.info("Published ChargebackLostEvent for chargeback ${chargeback.id} - money permanently debited (distributed across ${chargebackSellerBreakdown.size} sellers)")
@@ -1027,7 +1027,7 @@ class StripeWebhookController(
                         stripePaymentIntentId = payment.stripePaymentIntentId ?: "",
                         buyerId = payment.buyerId,
                         sellerBreakdown = sellerBreakdown,
-                        idempotencyKey = chargeback.idempotencyKey
+                        idempotencyKey = "${chargeback.idempotencyKey}_WITHDRAWN"
                     )
                     kafkaProducer.publishChargebackWonEvent(chargebackWonEvent)
                     logger.info("Published ChargebackWonEvent for chargeback ${chargeback.id} (withdrawn) - money returned")

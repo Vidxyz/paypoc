@@ -104,8 +104,9 @@ class ChargebackWarningClosedEventConsumer(
             // BOTH chargeback amount AND dispute fee are returned to STRIPE_CLEARING
             // This is different from WON where only the amount is returned
             val transactionRequest = CreateDoubleEntryTransactionRequest(
-                referenceId = "${event.stripeDisputeId}_WARNING_CLOSED", // Unique reference for warning_closed outcome
-                idempotencyKey = "${event.idempotencyKey}_WARNING_CLOSED",
+                referenceId = event.stripeDisputeId,  // External reference (Stripe Dispute ID)
+                transactionType = "CHARGEBACK_WARNING_CLOSED",
+                idempotencyKey = event.idempotencyKey,
                 description = "Chargeback warning_closed: ${event.chargebackId} for payment ${event.paymentId} - Buyer: ${event.buyerId}, ${event.sellerBreakdown.size} seller(s) (both amount and fee returned)",
                 entries = listOf(
                     EntryRequest(
@@ -138,7 +139,7 @@ class ChargebackWarningClosedEventConsumer(
                 refundId = null,  // This is a chargeback, not a refund
                 chargebackId = event.chargebackId,
                 ledgerTransactionId = transaction.id,
-                idempotencyKey = "${event.idempotencyKey}_WARNING_CLOSED"
+                idempotencyKey = event.idempotencyKey
             )
             ledgerKafkaProducer.publishLedgerTransactionCreated(ledgerTransactionCreatedEvent)
             

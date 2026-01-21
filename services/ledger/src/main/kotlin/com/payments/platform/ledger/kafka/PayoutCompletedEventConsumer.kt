@@ -101,6 +101,7 @@ class PayoutCompletedEventConsumer(
             // CR STRIPE_CLEARING (money transferred out)
             val transactionRequest = CreateDoubleEntryTransactionRequest(
                 referenceId = event.stripeTransferId,  // External reference (Stripe Transfer ID)
+                transactionType = "PAYOUT_COMPLETED",
                 idempotencyKey = event.idempotencyKey,
                 description = "Payout: ${event.payoutId} - Seller: ${event.sellerId}",
                 entries = listOf(

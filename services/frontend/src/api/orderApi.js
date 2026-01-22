@@ -86,6 +86,34 @@ export const orderApiClient = {
     })
     return response.data
   },
+
+  /**
+   * Update delivery details for a PENDING order
+   * @param {string} orderId - Order UUID
+   * @param {Object} deliveryDetails - Delivery details object
+   * @param {string} token - JWT access token
+   * @returns {Promise<Object>} Success response
+   */
+  updateDeliveryDetails: async (orderId, deliveryDetails, token) => {
+    const response = await orderApi.put(
+      `/api/orders/${orderId}/delivery-details`,
+      {
+        full_name: (deliveryDetails.fullName || '').trim(),
+        address: (deliveryDetails.address || '').trim(),
+        city: (deliveryDetails.city || '').trim(),
+        province: (deliveryDetails.province || '').trim(),
+        postal_code: (deliveryDetails.postalCode || '').trim(),
+        country: (deliveryDetails.country || '').trim(),
+        phone: (deliveryDetails.phone || '').trim(),
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    )
+    return response.data
+  },
 }
 
 export default orderApiClient

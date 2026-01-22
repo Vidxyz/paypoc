@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { loadStripe } from '@stripe/stripe-js'
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import {
@@ -29,11 +29,15 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import { useCart } from '../context/CartContext'
 import { useAuth0 } from '../auth/Auth0Provider'
 import { cartApiClient } from '../api/cartApi'
+import { orderApiClient } from '../api/orderApi'
 import { useNavigate } from 'react-router-dom'
 import ProductModal from '../components/ProductModal'
 import { catalogApiClient } from '../api/catalogApi'
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'missing_stripe_publishable_key')
+
+// Production mode flag - set to false for nonproduction (development/testing)
+const IS_PRODUCTION = import.meta.env.VITE_IS_PRODUCTION === 'true' || false
 
 function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
   const stripe = useStripe()
@@ -41,23 +45,6 @@ function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
   const { user } = useAuth0()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [deliveryInfo, setDeliveryInfo] = useState({
-    fullName: '',
-    address: '',
-    city: '',
-    province: '',
-    postalCode: '',
-    country: 'Canada',
-    phone: '',
-  })
-
-  const handleDeliveryInfoChange = (e) => {
-    const { name, value } = e.target
-    setDeliveryInfo((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
-  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -127,88 +114,6 @@ function PaymentForm({ buyerId, clientSecret, orderId, paymentId, onSuccess }) {
   return (
     <Card variant="outlined" sx={{ mt: 3 }}>
       <CardContent>
-        <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
-          Delivery Information
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          This information is not persisted and is optional. It will be used for billing details only.
-        </Typography>
-
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Full Name"
-              name="fullName"
-              value={deliveryInfo.fullName}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Address"
-              name="address"
-              value={deliveryInfo.address}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="City"
-              name="city"
-              value={deliveryInfo.city}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Province/State"
-              name="province"
-              value={deliveryInfo.province}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Postal Code"
-              name="postalCode"
-              value={deliveryInfo.postalCode}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Country"
-              name="country"
-              value={deliveryInfo.country}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Phone (optional)"
-              name="phone"
-              value={deliveryInfo.phone}
-              onChange={handleDeliveryInfoChange}
-              margin="normal"
-            />
-          </Grid>
-        </Grid>
-
-        <Divider sx={{ my: 3 }} />
-
         <Typography variant="h6" gutterBottom sx={{ mb: 2 }}>
           Payment Details
         </Typography>
@@ -281,6 +186,135 @@ function CheckoutForm({ buyerId }) {
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [loadingProduct, setLoadingProduct] = useState(false)
+  const paymentFormRef = useRef(null)
+  const [deliveryInfo, setDeliveryInfo] = useState({
+    fullName: '',
+    address: '',
+    city: '',
+    province: '',
+    postalCode: '',
+    country: 'Canada',
+    phone: '',
+  })
+  const [deliveryErrors, setDeliveryErrors] = useState({})
+  const [updatingDeliveryDetails, setUpdatingDeliveryDetails] = useState(false)
+  const [deliveryUpdateError, setDeliveryUpdateError] = useState('')
+  const deliveryUpdateTimeoutRef = useRef(null)
+  const initialDeliveryInfoRef = useRef(null)
+  const deliveryInfoRef = useRef(deliveryInfo)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    deliveryInfoRef.current = deliveryInfo
+  }, [deliveryInfo])
+
+  const handleDeliveryInfoChange = (e) => {
+    const { name, value } = e.target
+    const updatedInfo = {
+      ...deliveryInfo,
+      [name]: value,
+    }
+    setDeliveryInfo(updatedInfo)
+    // Update ref immediately so debounced function has latest value
+    deliveryInfoRef.current = updatedInfo
+    
+    // Clear error for this field when user starts typing
+    if (deliveryErrors[name]) {
+      setDeliveryErrors((prev) => {
+        const newErrors = { ...prev }
+        delete newErrors[name]
+        return newErrors
+      })
+    }
+    
+    // If order is already created and payment form is shown, update delivery details
+    if (showPayment && orderId) {
+      // Clear existing timeout
+      if (deliveryUpdateTimeoutRef.current) {
+        clearTimeout(deliveryUpdateTimeoutRef.current)
+      }
+      
+      // Debounce the API call (wait 1 second after user stops typing)
+      deliveryUpdateTimeoutRef.current = setTimeout(async () => {
+        await updateDeliveryDetailsInOrder()
+      }, 1000)
+    }
+  }
+
+  const updateDeliveryDetailsInOrder = async () => {
+    if (!orderId || !showPayment) return
+    
+    // Use ref to get the latest deliveryInfo value (avoids closure stale value issue)
+    const currentDeliveryInfo = deliveryInfoRef.current
+    
+    // Validate delivery details before updating
+    const errors = {}
+    if (!currentDeliveryInfo.fullName || currentDeliveryInfo.fullName.trim() === '') {
+      errors.fullName = 'Full name is required'
+    }
+    if (!currentDeliveryInfo.address || currentDeliveryInfo.address.trim() === '') {
+      errors.address = 'Address is required'
+    }
+    if (!currentDeliveryInfo.city || currentDeliveryInfo.city.trim() === '') {
+      errors.city = 'City is required'
+    }
+    if (!currentDeliveryInfo.province || currentDeliveryInfo.province.trim() === '') {
+      errors.province = 'Province/State is required'
+    }
+    if (!currentDeliveryInfo.postalCode || currentDeliveryInfo.postalCode.trim() === '') {
+      errors.postalCode = 'Postal code is required'
+    }
+    if (!currentDeliveryInfo.country || currentDeliveryInfo.country.trim() === '') {
+      errors.country = 'Country is required'
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setDeliveryErrors(errors)
+      setDeliveryUpdateError('Please fill in all required delivery information')
+      return
+    }
+    
+    setUpdatingDeliveryDetails(true)
+    setDeliveryUpdateError('')
+    
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        throw new Error('No access token available. Please log in.')
+      }
+      
+      // Use ref value to ensure we have the latest data
+      await orderApiClient.updateDeliveryDetails(orderId, currentDeliveryInfo, token)
+      // Update the initial reference to the new values
+      initialDeliveryInfoRef.current = { ...currentDeliveryInfo }
+    } catch (err) {
+      console.error('Failed to update delivery details:', err)
+      setDeliveryUpdateError(err.message || 'Failed to update delivery details')
+    } finally {
+      setUpdatingDeliveryDetails(false)
+    }
+  }
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (deliveryUpdateTimeoutRef.current) {
+        clearTimeout(deliveryUpdateTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleAutoFillDelivery = () => {
+    setDeliveryInfo({
+      fullName: 'John Doe',
+      address: '123 Main Street',
+      city: 'Toronto',
+      province: 'Ontario',
+      postalCode: 'M5H 2N2',
+      country: 'Canada',
+      phone: '416-555-1234',
+    })
+  }
 
   const formatPrice = (cents, currency = 'CAD') => {
     return new Intl.NumberFormat('en-CA', {
@@ -299,9 +333,42 @@ function CheckoutForm({ buyerId }) {
   const totalPrice = getTotalPrice()
   const currency = cartItems.length > 0 && cartItems[0].currency ? cartItems[0].currency : 'CAD'
 
+  const validateDeliveryInfo = () => {
+    const errors = {}
+    
+    if (!deliveryInfo.fullName || deliveryInfo.fullName.trim() === '') {
+      errors.fullName = 'Full name is required'
+    }
+    if (!deliveryInfo.address || deliveryInfo.address.trim() === '') {
+      errors.address = 'Address is required'
+    }
+    if (!deliveryInfo.city || deliveryInfo.city.trim() === '') {
+      errors.city = 'City is required'
+    }
+    if (!deliveryInfo.province || deliveryInfo.province.trim() === '') {
+      errors.province = 'Province/State is required'
+    }
+    if (!deliveryInfo.postalCode || deliveryInfo.postalCode.trim() === '') {
+      errors.postalCode = 'Postal code is required'
+    }
+    if (!deliveryInfo.country || deliveryInfo.country.trim() === '') {
+      errors.country = 'Country is required'
+    }
+    // Phone is optional, so no validation needed
+    
+    setDeliveryErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
   const handleProceedToPayment = async () => {
     if (cartItems.length === 0) {
       setCheckoutError('Your cart is empty')
+      return
+    }
+
+    // Validate delivery details before proceeding
+    if (!validateDeliveryInfo()) {
+      setCheckoutError('Please fill in all required delivery information')
       return
     }
 
@@ -314,7 +381,18 @@ function CheckoutForm({ buyerId }) {
         throw new Error('No access token available. Please log in.')
       }
 
-      const checkoutResponse = await cartApiClient.checkout(token)
+      // Prepare delivery details - all fields are required except phone
+      const deliveryDetails = {
+        full_name: deliveryInfo.fullName.trim(),
+        address: deliveryInfo.address.trim(),
+        city: deliveryInfo.city.trim(),
+        province: deliveryInfo.province.trim(),
+        postal_code: deliveryInfo.postalCode.trim(),
+        country: deliveryInfo.country.trim(),
+        phone: deliveryInfo.phone.trim() || '', // Phone is optional, send empty string if not provided
+      }
+
+      const checkoutResponse = await cartApiClient.checkout(token, deliveryDetails)
 
       if (checkoutResponse.error) {
         throw new Error(checkoutResponse.error)
@@ -328,6 +406,16 @@ function CheckoutForm({ buyerId }) {
       setOrderId(checkoutResponse.orderId)
       setPaymentId(checkoutResponse.paymentId)
       setShowPayment(true)
+      
+      // Store initial delivery info for comparison
+      initialDeliveryInfoRef.current = { ...deliveryInfo }
+      
+      // Scroll to payment form after a short delay to allow it to render
+      setTimeout(() => {
+        if (paymentFormRef.current) {
+          paymentFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 100)
     } catch (err) {
       setCheckoutError(err.message || 'Failed to initiate checkout')
     } finally {
@@ -569,6 +657,134 @@ function CheckoutForm({ buyerId }) {
           </CardContent>
         </Card>
 
+        {/* Delivery Information Section - Always visible when cart has items */}
+        {cartItems.length > 0 && (
+          <Card variant="outlined" sx={{ mb: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Delivery Information
+                </Typography>
+                {!IS_PRODUCTION && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleAutoFillDelivery}
+                    sx={{ ml: 2 }}
+                  >
+                    Auto-fill (Dev)
+                  </Button>
+                )}
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                Please provide your delivery address. This information will be saved with your order.
+              </Typography>
+              
+              {showPayment && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  You can still edit your delivery details. Changes will be saved automatically.
+                </Alert>
+              )}
+              
+              {updatingDeliveryDetails && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Updating delivery details...
+                </Alert>
+              )}
+              
+              {deliveryUpdateError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {deliveryUpdateError}
+                </Alert>
+              )}
+
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="Full Name"
+                    name="fullName"
+                    value={deliveryInfo.fullName}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.fullName}
+                    helperText={deliveryErrors.fullName}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="Address"
+                    name="address"
+                    value={deliveryInfo.address}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.address}
+                    helperText={deliveryErrors.address}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="City"
+                    name="city"
+                    value={deliveryInfo.city}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.city}
+                    helperText={deliveryErrors.city}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="Province/State"
+                    name="province"
+                    value={deliveryInfo.province}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.province}
+                    helperText={deliveryErrors.province}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="Postal Code"
+                    name="postalCode"
+                    value={deliveryInfo.postalCode}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.postalCode}
+                    helperText={deliveryErrors.postalCode}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    required
+                    label="Country"
+                    name="country"
+                    value={deliveryInfo.country}
+                    onChange={handleDeliveryInfoChange}
+                    error={!!deliveryErrors.country}
+                    helperText={deliveryErrors.country}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Phone (optional)"
+                    name="phone"
+                    value={deliveryInfo.phone}
+                    onChange={handleDeliveryInfoChange}
+                  />
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Proceed to Payment Button */}
         {!showPayment && cartItems.length > 0 && (
           <Button
@@ -591,19 +807,21 @@ function CheckoutForm({ buyerId }) {
         )}
 
         {/* Payment Form - Only shown after checkout is initiated */}
-        <Collapse in={showPayment}>
-          {clientSecret && (
-            <Elements stripe={stripePromise}>
-              <PaymentForm
-                buyerId={buyerId}
-                clientSecret={clientSecret}
-                orderId={orderId}
-                paymentId={paymentId}
-                onSuccess={handlePaymentSuccess}
-              />
-            </Elements>
-          )}
-        </Collapse>
+        <div ref={paymentFormRef}>
+          <Collapse in={showPayment}>
+            {clientSecret && (
+              <Elements stripe={stripePromise}>
+                <PaymentForm
+                  buyerId={buyerId}
+                  clientSecret={clientSecret}
+                  orderId={orderId}
+                  paymentId={paymentId}
+                  onSuccess={handlePaymentSuccess}
+                />
+              </Elements>
+            )}
+          </Collapse>
+        </div>
       </CardContent>
       <ProductModal open={modalOpen} onClose={handleCloseModal} product={selectedProduct} />
     </Card>

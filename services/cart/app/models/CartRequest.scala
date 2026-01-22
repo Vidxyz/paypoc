@@ -90,6 +90,16 @@ object CartHistoryResponse {
   implicit val writes: Writes[CartHistoryResponse] = Json.writes[CartHistoryResponse]
 }
 
+case class DeliveryDetails(
+  fullName: String,
+  address: String,
+  city: String,
+  province: String,
+  postalCode: String,
+  country: String,
+  phone: String
+)
+
 case class CheckoutResponse(
   orderId: java.util.UUID,
   paymentId: java.util.UUID,

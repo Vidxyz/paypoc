@@ -63,15 +63,16 @@ func (s *OrderService) CreateProvisionalOrder(ctx context.Context, req models.Cr
 	now := time.Now()
 	cartID := &req.CartID
 	order := &models.Order{
-		ID:          orderID,
-		CartID:      cartID,
-		BuyerID:     req.BuyerID,
-		Status:      models.OrderStatusPending,
-		Provisional: true,
-		TotalCents:  totalCents,
-		Currency:    currency,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:              orderID,
+		CartID:          cartID,
+		BuyerID:         req.BuyerID,
+		Status:          models.OrderStatusPending,
+		Provisional:     true,
+		TotalCents:      totalCents,
+		Currency:        currency,
+		DeliveryDetails: req.DeliveryDetails,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	// Group items by seller for shipments
@@ -282,6 +283,129 @@ func (s *OrderService) cancelOrder(ctx context.Context, orderID uuid.UUID) {
 	}
 }
 
+// CleanupResult represents the result of a cleanup operation
+type CleanupResult struct {
+	FoundCount     int
+	ProcessedCount int
+	ErrorCount     int
+}
+
+// CleanupStalePendingOrders finds and cancels stale PENDING orders (abandoned checkouts)
+// Orders older than the specified timeout are considered stale
+func (s *OrderService) CleanupStalePendingOrders(ctx context.Context, timeoutMinutes int) (*CleanupResult, error) {
+	log.Printf("=== Starting cleanup of stale PENDING orders ===")
+	log.Printf("Timeout: %d minutes", timeoutMinutes)
+
+	now := time.Now()
+	timeoutAgo := now.Add(-time.Duration(timeoutMinutes) * time.Minute)
+	log.Printf("Current time: %v", now)
+	log.Printf("Looking for orders older than: %v", timeoutAgo)
+
+	staleOrders, err := s.repo.FindStalePendingOrders(ctx, timeoutAgo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find stale orders: %w", err)
+	}
+
+	log.Printf("=== Found %d stale PENDING order(s) to cleanup ===", len(staleOrders))
+	if len(staleOrders) > 0 {
+		for idx, order := range staleOrders {
+			log.Printf("  Order %d/%d: id=%s, buyerId=%s, createdAt=%v", idx+1, len(staleOrders), order.ID, order.BuyerID, order.CreatedAt)
+		}
+	}
+
+	processedCount := 0
+	errorCount := 0
+
+	for _, order := range staleOrders {
+		log.Printf("Processing stale order: id=%s, buyerId=%s", order.ID, order.BuyerID)
+
+		// Check if cart is already ABANDONED (may have been cleaned up by cart cleanup job)
+		cartAlreadyAbandoned := false
+		if order.CartID != nil {
+			cartStatus, err := s.cartClient.GetCartStatus(ctx, *order.CartID)
+			if err != nil {
+				log.Printf("Warning: failed to get cart status for cart %s: %v", *order.CartID, err)
+				// Continue processing - cart status check is best effort
+			} else if cartStatus == "ABANDONED" {
+				cartAlreadyAbandoned = true
+				log.Printf("Cart %s is already ABANDONED (likely cleaned up by cart cleanup job), skipping reservation release", *order.CartID)
+			}
+		}
+
+		// Get order items to release inventory
+		items, err := s.repo.GetItemsByOrderID(ctx, order.ID)
+		if err != nil {
+			log.Printf("Error getting items for order %s: %v", order.ID, err)
+			errorCount++
+			continue
+		}
+
+		log.Printf("Order %s has %d item(s)", order.ID, len(items))
+
+		// Release inventory reservations (only if cart not already abandoned)
+		// If cart is already abandoned, reservations were likely already released by cart cleanup
+		if !cartAlreadyAbandoned {
+			reservationErrors := 0
+			for _, item := range items {
+				if item.ReservationID != nil {
+					if err := s.inventoryClient.ReleaseReservation(ctx, *item.ReservationID); err != nil {
+						log.Printf("Warning: failed to release reservation %s for order %s: %v", *item.ReservationID, order.ID, err)
+						reservationErrors++
+					} else {
+						log.Printf("✓ Released reservation %s for order %s", *item.ReservationID, order.ID)
+					}
+				}
+			}
+		} else {
+			log.Printf("Skipping reservation release for order %s (cart already ABANDONED)", order.ID)
+		}
+
+		// Mark cart as ABANDONED if cart_id exists and not already abandoned
+		// This is idempotent - if cart is already ABANDONED, we skip the update
+		if order.CartID != nil && !cartAlreadyAbandoned {
+			// Double-check status before updating (defense in depth)
+			currentStatus, err := s.cartClient.GetCartStatus(ctx, *order.CartID)
+			if err != nil {
+				log.Printf("Warning: failed to get cart status before update for cart %s: %v", *order.CartID, err)
+				// Continue with update attempt anyway
+			} else if currentStatus == "ABANDONED" {
+				log.Printf("Cart %s already ABANDONED (status check), skipping status update", *order.CartID)
+				cartAlreadyAbandoned = true
+			}
+
+			if !cartAlreadyAbandoned {
+				if err := s.cartClient.UpdateCartStatus(ctx, *order.CartID, "ABANDONED"); err != nil {
+					log.Printf("Warning: failed to mark cart %s as ABANDONED: %v", *order.CartID, err)
+				} else {
+					log.Printf("✓ Marked cart %s as ABANDONED (PENDING order older than %d minutes)", *order.CartID, timeoutMinutes)
+				}
+			}
+		} else if cartAlreadyAbandoned {
+			log.Printf("Cart %s already ABANDONED, skipping status update", *order.CartID)
+		}
+
+		// Cancel the order
+		if err := s.repo.CancelOrder(ctx, order.ID, now); err != nil {
+			log.Printf("Error cancelling order %s: %v", order.ID, err)
+			errorCount++
+		} else {
+			log.Printf("✓ Successfully cancelled order %s", order.ID)
+			processedCount++
+		}
+	}
+
+	log.Printf("=== Cleanup completed ===")
+	log.Printf("Total orders found: %d", len(staleOrders))
+	log.Printf("Successfully processed: %d", processedCount)
+	log.Printf("Errors: %d", errorCount)
+
+	return &CleanupResult{
+		FoundCount:     len(staleOrders),
+		ProcessedCount: processedCount,
+		ErrorCount:     errorCount,
+	}, nil
+}
+
 // GetOrder retrieves an order by ID
 // For SELLER account type, only returns items and shipments belonging to that seller
 func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID, accountType, userID string) (*models.OrderResponse, error) {
@@ -357,17 +481,18 @@ func (s *OrderService) GetOrder(ctx context.Context, orderID uuid.UUID, accountT
 	}
 
 	return &models.OrderResponse{
-		ID:           order.ID,
-		BuyerID:      order.BuyerID,
-		Status:       string(order.Status),
-		TotalCents:   order.TotalCents,
-		Currency:     order.Currency,
-		PaymentID:    order.PaymentID,
-		RefundStatus: order.RefundStatus,
-		Items:        itemResponses,
-		Shipments:    shipmentResponses,
-		CreatedAt:    order.CreatedAt,
-		ConfirmedAt:  order.ConfirmedAt,
+		ID:              order.ID,
+		BuyerID:         order.BuyerID,
+		Status:          string(order.Status),
+		TotalCents:      order.TotalCents,
+		Currency:        order.Currency,
+		PaymentID:       order.PaymentID,
+		RefundStatus:    order.RefundStatus,
+		DeliveryDetails: order.DeliveryDetails,
+		Items:           itemResponses,
+		Shipments:       shipmentResponses,
+		CreatedAt:       order.CreatedAt,
+		ConfirmedAt:     order.ConfirmedAt,
 	}, nil
 }
 
@@ -690,13 +815,14 @@ func (s *OrderService) ListOrders(ctx context.Context, accountType, userID strin
 		}
 
 	case "BUYER":
-		// BUYER can only see their own orders
+		// BUYER can only see their own orders, excluding PENDING orders (checkout sessions)
+		// PENDING orders are not "real" orders until payment is confirmed
 		buyerID := userID
-		orders, err = s.repo.ListOrders(ctx, &buyerID, pageSize, offset)
+		orders, err = s.repo.ListOrdersExcludingPending(ctx, &buyerID, pageSize, offset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list orders: %w", err)
 		}
-		total, err = s.repo.CountOrders(ctx, &buyerID)
+		total, err = s.repo.CountOrdersExcludingPending(ctx, &buyerID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count orders: %w", err)
 		}
@@ -785,17 +911,18 @@ func (s *OrderService) ListOrders(ctx context.Context, accountType, userID strin
 		}
 
 		orderResponses = append(orderResponses, models.OrderResponse{
-			ID:           order.ID,
-			BuyerID:      order.BuyerID,
-			Status:       string(order.Status),
-			TotalCents:   order.TotalCents,
-			Currency:     order.Currency,
-			PaymentID:    order.PaymentID,
-			RefundStatus: order.RefundStatus,
-			Items:        itemResponses,
-			Shipments:    shipmentResponses,
-			CreatedAt:    order.CreatedAt,
-			ConfirmedAt:  order.ConfirmedAt,
+			ID:              order.ID,
+			BuyerID:         order.BuyerID,
+			Status:          string(order.Status),
+			TotalCents:      order.TotalCents,
+			Currency:        order.Currency,
+			PaymentID:       order.PaymentID,
+			RefundStatus:    order.RefundStatus,
+			DeliveryDetails: order.DeliveryDetails,
+			Items:           itemResponses,
+			Shipments:       shipmentResponses,
+			CreatedAt:       order.CreatedAt,
+			ConfirmedAt:     order.ConfirmedAt,
 		})
 	}
 
@@ -928,6 +1055,34 @@ func (s *OrderService) recalculateOrderStatus(ctx context.Context, orderID uuid.
 		}
 	}
 
+	return nil
+}
+
+// UpdateDeliveryDetails updates delivery details for a PENDING order
+// Only allows updates for PENDING orders (before payment is confirmed)
+func (s *OrderService) UpdateDeliveryDetails(ctx context.Context, orderID uuid.UUID, buyerID string, details *models.DeliveryDetails) error {
+	// Get the order to validate
+	order, err := s.repo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to get order: %w", err)
+	}
+
+	// Verify the buyer owns this order
+	if order.BuyerID != buyerID {
+		return fmt.Errorf("order not found or access denied")
+	}
+
+	// Only allow updates for PENDING orders
+	if order.Status != models.OrderStatusPending {
+		return fmt.Errorf("cannot update delivery details for order with status %s (only PENDING orders can be updated)", order.Status)
+	}
+
+	// Update delivery details
+	if err := s.repo.UpdateDeliveryDetails(ctx, orderID, details); err != nil {
+		return fmt.Errorf("failed to update delivery details: %w", err)
+	}
+
+	log.Printf("Updated delivery details for order %s (buyer: %s)", orderID, buyerID)
 	return nil
 }
 

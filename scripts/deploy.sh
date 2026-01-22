@@ -264,6 +264,7 @@ build_all_images() {
     local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
     local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
     local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+    local vite_is_production="${VITE_IS_PRODUCTION:-false}"
     
     log_info "Building frontend image..."
     (cd "$PROJECT_ROOT/services/frontend" && docker build \
@@ -272,6 +273,7 @@ build_all_images() {
         --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
         --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
         --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+        --build-arg VITE_IS_PRODUCTION="$vite_is_production" \
         -t frontend:latest .) &
     FRONTEND_PID=$!
     
@@ -542,6 +544,7 @@ build_single_image() {
             local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
             local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
             local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+            local vite_is_production="${VITE_IS_PRODUCTION:-false}"
             log_info "Building frontend image..."
             (cd "$PROJECT_ROOT/services/frontend" && docker build \
                 --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
@@ -549,6 +552,7 @@ build_single_image() {
                 --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
                 --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
                 --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+                --build-arg VITE_IS_PRODUCTION="$vite_is_production" \
                 -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
             minikube image load frontend:latest
             log_info "Frontend image built and loaded successfully"
@@ -763,6 +767,7 @@ deploy_order() {
     kubectl apply -f "$K8S_DIR/order/service.yaml" &
     kubectl apply -f "$K8S_DIR/order/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/order/ingress.yaml" &
+    kubectl apply -f "$K8S_DIR/order/cronjob.yaml" &
     wait
 }
 

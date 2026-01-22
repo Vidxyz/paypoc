@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: inventory-cleanup-cronjob
-  namespace: inventory
+  name: order-cleanup-cronjob
+  namespace: order
 spec:
-  # Run every hour at 15 minutes past the hour (staggered to reduce overlap)
-  schedule: "15 * * * *"
+  # Run every hour at 30 minutes past the hour (staggered to reduce overlap with cart/inventory cleanup)
+  schedule: "30 * * * *"
   successfulJobsHistoryLimit: 0
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -21,11 +21,19 @@ spec:
             - |
               echo "Publishing cleanup command to Kafka..."
               TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-              echo "{\"type\":\"CLEANUP_EXPIRED_RESERVATIONS\",\"timestamp\":\"${TIMESTAMP}\"}" | \
+              # Wait a bit for Kafka to be ready and topic to exist
+              sleep 2
+              echo "{\"type\":\"CLEANUP_STALE_ORDERS\",\"timestamp\":\"${TIMESTAMP}\"}" | \
               /opt/kafka/bin/kafka-console-producer.sh \
                 --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} \
-                --topic inventory.commands
-              echo "Cleanup command published successfully"
+                --topic order.commands \
+                --max-block-ms 10000
+              if [ $? -eq 0 ]; then
+                echo "✓ Cleanup command published successfully"
+              else
+                echo "✗ Failed to publish cleanup command"
+                exit 1
+              fi
             env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"

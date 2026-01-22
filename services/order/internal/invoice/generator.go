@@ -3,6 +3,7 @@ package invoice
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,15 @@ func NewInvoiceGenerator() *InvoiceGenerator {
 
 // GenerateInvoice generates a PDF invoice for an order
 func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.OrderItem, productNames map[uuid.UUID]string) (*bytes.Buffer, error) {
+	// Debug: Check if delivery details are present
+	if order.DeliveryDetails == nil {
+		log.Printf("[Invoice] Order %s has no delivery details (nil)", order.ID)
+	} else {
+		log.Printf("[Invoice] Order %s delivery details: FullName=%q, Address=%q, City=%q, Province=%q, PostalCode=%q, Country=%q, Phone=%q",
+			order.ID, order.DeliveryDetails.FullName, order.DeliveryDetails.Address, order.DeliveryDetails.City,
+			order.DeliveryDetails.Province, order.DeliveryDetails.PostalCode, order.DeliveryDetails.Country, order.DeliveryDetails.Phone)
+	}
+
 	pdf := gofpdf.New("P", "mm", "A4", "")
 
 	// Calculate totals and refunds
@@ -83,9 +93,13 @@ func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.O
 	pdf.Ln(3)
 
 	pdf.SetFont("Arial", "", 7)
-	pdf.Cell(38, 3.5, "Invoice:")
+	// Use fixed label width that accommodates "Payment Date:" (longest label)
+	// Right-align "Invoice:" so it aligns with "Payment Date:" on the right edge
+	labelWidth := 50.0
+	// First row: Invoice and Order Date
+	pdf.CellFormat(labelWidth, 3.5, "Invoice:", "", 0, "R", false, 0, "")
 	pdf.SetFont("Arial", "B", 7)
-	pdf.Cell(52, 3.5, order.ID.String())
+	pdf.Cell(45, 3.5, order.ID.String())
 
 	pdf.SetFont("Arial", "", 7)
 	pdf.SetXY(115, pdf.GetY())
@@ -94,14 +108,16 @@ func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.O
 	pdf.Cell(0, 3.5, order.CreatedAt.Format("Jan 2, 2006"))
 	pdf.Ln(3)
 
+	// Second row: Payment Date and Buyer ID - ensure X position matches first row exactly
 	pdf.SetXY(15, pdf.GetY())
 	pdf.SetFont("Arial", "", 7)
-	pdf.Cell(38, 3.5, "Payment Date:")
+	// Use same label width and alignment as "Invoice:" for proper vertical alignment
+	pdf.CellFormat(labelWidth, 3.5, "Payment Date:", "", 0, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 7)
 	if order.ConfirmedAt != nil {
-		pdf.Cell(52, 3.5, order.ConfirmedAt.Format("Jan 2, 2006"))
+		pdf.Cell(45, 3.5, order.ConfirmedAt.Format("Jan 2, 2006"))
 	} else {
-		pdf.Cell(52, 3.5, "—")
+		pdf.Cell(45, 3.5, "—")
 	}
 
 	pdf.SetXY(115, pdf.GetY())
@@ -110,6 +126,94 @@ func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.O
 	pdf.SetFont("Arial", "", 7)
 	pdf.Cell(0, 3.5, order.BuyerID)
 	pdf.Ln(5)
+
+	// Shipping/Delivery Details section
+	if order.DeliveryDetails != nil {
+		deliveryDetails := order.DeliveryDetails
+		// Check if we have any meaningful delivery information
+		hasDeliveryInfo := deliveryDetails.FullName != "" || deliveryDetails.Address != "" ||
+			deliveryDetails.City != "" || deliveryDetails.Province != "" ||
+			deliveryDetails.PostalCode != "" || deliveryDetails.Country != "" ||
+			deliveryDetails.Phone != ""
+
+		if hasDeliveryInfo {
+			boxStartY := pdf.GetY()
+			shippingBoxHeight := 28.0
+			pdf.SetFillColor(245, 245, 245) // Light gray
+			pdf.Rect(10, boxStartY, 190, shippingBoxHeight, "F")
+			pdf.SetXY(15, boxStartY+2.5)
+
+			pdf.SetFont("Arial", "B", 8)
+			pdf.Cell(0, 4, "Shipping Address")
+			pdf.Ln(3.5)
+
+			pdf.SetFont("Arial", "", 7)
+			startX := 15.0
+
+			// Full Name
+			if deliveryDetails.FullName != "" {
+				pdf.SetXY(startX, pdf.GetY())
+				pdf.SetFont("Arial", "B", 7)
+				pdf.Cell(0, 3.5, deliveryDetails.FullName)
+				pdf.Ln(3.5)
+			}
+
+			// Address
+			if deliveryDetails.Address != "" {
+				pdf.SetXY(startX, pdf.GetY())
+				pdf.SetFont("Arial", "", 7)
+				pdf.Cell(0, 3.5, deliveryDetails.Address)
+				pdf.Ln(3.5)
+			}
+
+			// City, Province, Postal Code (on one line if possible)
+			cityProvincePostal := ""
+			if deliveryDetails.City != "" {
+				cityProvincePostal = deliveryDetails.City
+			}
+			if deliveryDetails.Province != "" {
+				if cityProvincePostal != "" {
+					cityProvincePostal += ", " + deliveryDetails.Province
+				} else {
+					cityProvincePostal = deliveryDetails.Province
+				}
+			}
+			if deliveryDetails.PostalCode != "" {
+				if cityProvincePostal != "" {
+					cityProvincePostal += " " + deliveryDetails.PostalCode
+				} else {
+					cityProvincePostal = deliveryDetails.PostalCode
+				}
+			}
+			if cityProvincePostal != "" {
+				pdf.SetXY(startX, pdf.GetY())
+				pdf.SetFont("Arial", "", 7)
+				pdf.Cell(0, 3.5, cityProvincePostal)
+				pdf.Ln(3.5)
+			}
+
+			// Country
+			if deliveryDetails.Country != "" {
+				pdf.SetXY(startX, pdf.GetY())
+				pdf.SetFont("Arial", "", 7)
+				pdf.Cell(0, 3.5, deliveryDetails.Country)
+				pdf.Ln(3.5)
+			}
+
+			// Phone (if provided)
+			if deliveryDetails.Phone != "" {
+				pdf.SetXY(startX, pdf.GetY())
+				pdf.SetFont("Arial", "", 7)
+				pdf.SetTextColor(100, 100, 100) // Gray for phone
+				pdf.Cell(0, 3.5, "Phone: "+deliveryDetails.Phone)
+				pdf.SetTextColor(0, 0, 0) // Reset to black
+			}
+
+			// Move to end of box
+			pdf.SetY(boxStartY + shippingBoxHeight)
+			pdf.Ln(3)
+		}
+	}
 
 	// Items table header - compact
 	const (
@@ -221,16 +325,16 @@ func (g *InvoiceGenerator) GenerateInvoice(order *models.Order, items []models.O
 		totalX := tableX + productW + qtyW + unitPriceW
 		if item.RefundedQuantity > 0 {
 			// Show refund breakdown: original (gray), refunded (red), final (green)
-		pdf.SetXY(totalX, startY+1)
+			pdf.SetXY(totalX, startY+1)
 			pdf.SetTextColor(120, 120, 120)
 			pdf.SetFont("Arial", "", 6)
 			pdf.CellFormat(totalW, lineHeight, formatCurrency(originalItemTotal, item.Currency), "", 0, "R", false, 0, "")
 
-		pdf.SetXY(totalX, startY+1+lineHeight)
+			pdf.SetXY(totalX, startY+1+lineHeight)
 			pdf.SetTextColor(200, 50, 50)
 			pdf.CellFormat(totalW, lineHeight, "-"+formatCurrency(refundedItemTotal, item.Currency), "", 0, "R", false, 0, "")
 
-		pdf.SetXY(totalX, startY+1+lineHeight*2)
+			pdf.SetXY(totalX, startY+1+lineHeight*2)
 			pdf.SetTextColor(50, 150, 50)
 			pdf.SetFont("Arial", "B", 7)
 			pdf.CellFormat(totalW, lineHeight, formatCurrency(remainingItemTotal, item.Currency), "", 0, "R", false, 0, "")

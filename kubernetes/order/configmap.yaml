@@ -6,7 +6,9 @@ metadata:
 data:
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   KAFKA_EVENTS_TOPIC: "payment.events"
+  KAFKA_COMMANDS_TOPIC: "order.commands"
   KAFKA_CONSUMER_GROUP_ID: "order-service"
+  KAFKA_COMMANDS_GROUP_ID: "order-service-commands"
   INVENTORY_SERVICE_URL: "http://inventory-service.inventory.svc.cluster.local:8083"
   PAYMENT_SERVICE_URL: "http://payments-service.payments-platform.svc.cluster.local:8080"
   CART_SERVICE_URL: "http://cart-service.cart.svc.cluster.local:9002"

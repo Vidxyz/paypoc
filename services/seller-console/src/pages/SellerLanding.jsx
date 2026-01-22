@@ -140,6 +140,36 @@ function SellerLanding() {
             })
           }
           
+          // Add chargeback as DEBIT transaction if payment has LOST chargeback
+          // Only LOST chargebacks are shown (WON and WARNING_CLOSED are hidden as money is returned)
+          // Chargebacks reduce the seller's balance (money is debited)
+          if (payment.hasChargeback && payment.chargebackState === 'LOST') {
+            // Use the seller's netSellerAmountCents directly as the chargeback amount
+            // When a chargeback is LOST, the seller is debited their full net amount
+            const sellerChargebackAmount = sellerBreakdown.netSellerAmountCents
+            
+            if (sellerChargebackAmount > 0) {
+              // Use payment updated date as proxy for chargeback date
+              // (ChargebackInfo doesn't include createdAt, so we approximate)
+              const chargebackDate = payment.updatedAt || payment.createdAt
+              
+              transactionsList.push({
+                id: payment.latestChargebackId || `chargeback-${payment.id}`,
+                type: 'DEBIT',
+                date: chargebackDate,
+                description: `Chargeback for payment ${payment.id.substring(0, 8)}... (LOST)`,
+                amountCents: sellerChargebackAmount,
+                currency: payment.currency,
+                paymentId: payment.id,
+                orderId: payment.orderId,
+                chargebackId: payment.latestChargebackId,
+                state: 'LOST',
+                // LOST chargebacks permanently affect balance (money is debited and not returned)
+                affectsBalance: true,
+              })
+            }
+          }
+          
           // Add refunds as DEBIT transactions
           refunds.forEach(refund => {
             if (refund.state === 'REFUNDED' || refund.state === 'REFUNDING') {

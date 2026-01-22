@@ -383,19 +383,37 @@ function Orders({ buyerId, userEmail }) {
                           })()}
                         </TableCell>
                         <TableCell>
-                          {order.payment_id || order.paymentId ? (
-                            <Chip
-                              label="Paid"
-                              color="success"
-                              size="small"
-                            />
-                          ) : (
-                            <Chip
-                              label="Pending"
-                              color="warning"
-                              size="small"
-                            />
-                          )}
+                          {(() => {
+                            // If order is cancelled, payment was never completed
+                            if (order.status === 'CANCELLED') {
+                              return (
+                                <Chip
+                                  label="Cancelled"
+                                  color="error"
+                                  size="small"
+                                />
+                              )
+                            }
+                            // Only show "Paid" if order is confirmed and has payment_id
+                            // PENDING orders with payment_id are not actually paid yet
+                            if ((order.payment_id || order.paymentId) && order.status === 'CONFIRMED') {
+                              return (
+                                <Chip
+                                  label="Paid"
+                                  color="success"
+                                  size="small"
+                                />
+                              )
+                            }
+                            // Default to pending for orders without payment or not confirmed
+                            return (
+                              <Chip
+                                label="Pending"
+                                color="warning"
+                                size="small"
+                              />
+                            )
+                          })()}
                         </TableCell>
                         <TableCell>
                           {getRefundStatusChip(order.refund_status || order.refundStatus)}
@@ -547,25 +565,43 @@ function Orders({ buyerId, userEmail }) {
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                     Payment Status
                   </Typography>
-                  {orderDetails.payment_id || orderDetails.paymentId ? (
-                    <Box>
+                  {(() => {
+                    // If order is cancelled, payment was never completed
+                    if (orderDetails.status === 'CANCELLED') {
+                      return (
+                        <Chip
+                          label="Cancelled"
+                          color="error"
+                          size="small"
+                        />
+                      )
+                    }
+                    // Only show "Paid" if order is confirmed and has payment_id
+                    // PENDING orders with payment_id are not actually paid yet
+                    if ((orderDetails.payment_id || orderDetails.paymentId) && orderDetails.status === 'CONFIRMED') {
+                      return (
+                        <Box>
+                          <Chip
+                            label="Paid"
+                            color="success"
+                            size="small"
+                            sx={{ mb: 0.5 }}
+                          />
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Payment ID: {(orderDetails.payment_id || orderDetails.paymentId).substring(0, 8)}...
+                          </Typography>
+                        </Box>
+                      )
+                    }
+                    // Default to pending for orders without payment or not confirmed
+                    return (
                       <Chip
-                        label="Paid"
-                        color="success"
+                        label="Pending Payment"
+                        color="warning"
                         size="small"
-                        sx={{ mb: 0.5 }}
                       />
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Payment ID: {(orderDetails.payment_id || orderDetails.paymentId).substring(0, 8)}...
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <Chip
-                      label="Pending Payment"
-                      color="warning"
-                      size="small"
-                    />
-                  )}
+                    )
+                  })()}
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -586,6 +622,96 @@ function Orders({ buyerId, userEmail }) {
                   </Grid>
                 )}
               </Grid>
+
+              {/* Delivery Details Section */}
+              {(orderDetails.delivery_details || orderDetails.deliveryDetails) && (() => {
+                const delivery = orderDetails.delivery_details || orderDetails.deliveryDetails
+                const hasDeliveryInfo = delivery.full_name || delivery.fullName || delivery.address || 
+                                       delivery.city || delivery.province || delivery.postal_code || 
+                                       delivery.postalCode || delivery.phone
+                if (!hasDeliveryInfo) return null
+                
+                return (
+                  <Box sx={{ mb: 3 }}>
+                    <Divider sx={{ my: 3 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Delivery Information
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {(delivery.full_name || delivery.fullName) && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Full Name
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.full_name || delivery.fullName}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.address && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Address
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.address}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.city && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            City
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.city}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.province && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Province/State
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.province}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {(delivery.postal_code || delivery.postalCode) && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Postal Code
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.postal_code || delivery.postalCode}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.country && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Country
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.country}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.phone && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Phone
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.phone}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                )
+              })()}
 
               {(() => {
                 // Calculate totals for summary

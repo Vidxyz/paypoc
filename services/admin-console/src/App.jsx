@@ -12,6 +12,9 @@ import SignupModal from './components/SignupModal'
 import SuccessModal from './components/SuccessModal'
 import ErrorModal from './components/ErrorModal'
 
+// Production mode flag - set to false for nonproduction (development/testing)
+export const IS_PRODUCTION = import.meta.env.VITE_IS_PRODUCTION === 'true' || false
+
 function App() {
   const { isLoading, isAuthenticated, user, login, logout, initError, error, setError, clearError } = useAuth0()
   const [showLoginModal, setShowLoginModal] = useState(false)

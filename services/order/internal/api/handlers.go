@@ -481,6 +481,59 @@ func (h *OrderHandler) GetShipmentByTracking(c *gin.Context) {
 	c.JSON(http.StatusOK, shipment)
 }
 
+// UpdateDeliveryDetails handles PUT /api/orders/:id/delivery-details
+// Updates delivery details for a PENDING order (only buyers can update their own orders)
+func (h *OrderHandler) UpdateDeliveryDetails(c *gin.Context) {
+	orderIDStr := c.Param("id")
+	orderID, err := uuid.Parse(orderIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order ID"})
+		return
+	}
+
+	// Get user info from JWT middleware
+	userID, ok := auth.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user ID not found in token"})
+		return
+	}
+
+	accountType, ok := auth.GetAccountType(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "account type not found in token"})
+		return
+	}
+
+	// Only buyers can update their own orders (admins could be added later if needed)
+	if accountType != auth.AccountTypeBuyer && accountType != auth.AccountTypeAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only buyers can update delivery details"})
+		return
+	}
+
+	// Parse delivery details from request body
+	var req models.DeliveryDetails
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+		return
+	}
+
+	// Update delivery details (service validates order status and ownership)
+	if err := h.orderService.UpdateDeliveryDetails(c.Request.Context(), orderID, userID, &req); err != nil {
+		if strings.Contains(err.Error(), "cannot update delivery details") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "access denied") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "delivery details updated successfully"})
+}
+
 // Health handles GET /health
 // Checks if the service is healthy
 func (h *OrderHandler) Health(c *gin.Context) {

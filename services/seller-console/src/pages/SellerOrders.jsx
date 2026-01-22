@@ -512,6 +512,96 @@ function SellerOrders({ userEmail }) {
                 )}
               </Grid>
 
+              {/* Delivery Details Section */}
+              {(orderDetails.delivery_details || orderDetails.deliveryDetails) && (() => {
+                const delivery = orderDetails.delivery_details || orderDetails.deliveryDetails
+                const hasDeliveryInfo = delivery.full_name || delivery.fullName || delivery.address || 
+                                       delivery.city || delivery.province || delivery.postal_code || 
+                                       delivery.postalCode || delivery.phone
+                if (!hasDeliveryInfo) return null
+                
+                return (
+                  <Box sx={{ mb: 3 }}>
+                    <Divider sx={{ my: 3 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Delivery Information
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {(delivery.full_name || delivery.fullName) && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Full Name
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.full_name || delivery.fullName}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.address && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Address
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.address}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.city && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            City
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.city}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.province && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Province/State
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.province}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {(delivery.postal_code || delivery.postalCode) && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Postal Code
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.postal_code || delivery.postalCode}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.country && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Country
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.country}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.phone && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Phone
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.phone}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                )
+              })()}
+
               <Divider sx={{ my: 3 }} />
 
               <Typography variant="h6" gutterBottom>

@@ -186,6 +186,104 @@ func (r *OrderRepository) UpdateShipmentProvisional(ctx context.Context, orderID
 	return err
 }
 
+// GetShipmentByID retrieves a shipment by ID
+func (r *OrderRepository) GetShipmentByID(ctx context.Context, shipmentID uuid.UUID) (*models.Shipment, error) {
+	var shipment models.Shipment
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments WHERE id = $1`,
+		shipmentID,
+	).Scan(
+		&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+		&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+		&shipment.CreatedAt, &shipment.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &shipment, nil
+}
+
+// UpdateShipmentStatus updates the status and timestamps of a shipment
+func (r *OrderRepository) UpdateShipmentStatus(ctx context.Context, shipmentID uuid.UUID, status string, shippedAt, deliveredAt *time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE shipments SET status = $1, shipped_at = $2, delivered_at = $3, updated_at = $4 WHERE id = $5`,
+		status, shippedAt, deliveredAt, time.Now(), shipmentID,
+	)
+	return err
+}
+
+// UpdateShipmentTracking updates the tracking number and carrier of a shipment
+func (r *OrderRepository) UpdateShipmentTracking(ctx context.Context, shipmentID uuid.UUID, trackingNumber, carrier string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE shipments SET tracking_number = $1, carrier = $2, updated_at = $3 WHERE id = $4`,
+		trackingNumber, carrier, time.Now(), shipmentID,
+	)
+	return err
+}
+
+// UpdateOrderStatus updates the status of an order
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status models.OrderStatus) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3`,
+		status, time.Now(), orderID,
+	)
+	return err
+}
+
+// GetShipmentsBySellerID retrieves all shipments for a seller
+func (r *OrderRepository) GetShipmentsBySellerID(ctx context.Context, sellerID string, limit, offset int) ([]models.Shipment, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments 
+		 WHERE seller_id = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2 OFFSET $3`,
+		sellerID, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var shipments []models.Shipment
+	for rows.Next() {
+		var shipment models.Shipment
+		err := rows.Scan(
+			&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+			&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+			&shipment.CreatedAt, &shipment.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		shipments = append(shipments, shipment)
+	}
+
+	return shipments, rows.Err()
+}
+
+// GetShipmentByTrackingNumber retrieves a shipment by tracking number
+func (r *OrderRepository) GetShipmentByTrackingNumber(ctx context.Context, trackingNumber string) (*models.Shipment, error) {
+	var shipment models.Shipment
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments WHERE tracking_number = $1`,
+		trackingNumber,
+	).Scan(
+		&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+		&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+		&shipment.CreatedAt, &shipment.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &shipment, nil
+}
+
 func (r *OrderRepository) CancelOrder(ctx context.Context, orderID uuid.UUID, cancelledAt time.Time) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE orders SET status = $1, cancelled_at = $2, updated_at = $3 WHERE id = $4`,

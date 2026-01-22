@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fulfillment-ingress
+  namespace: fulfillment
+  annotations:
+    cert-manager.io/cluster-issuer: "ca-issuer"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - fulfillment.local
+    secretName: fulfillment-local-tls
+  rules:
+  - host: fulfillment.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fulfillment-service
+            port:
+              number: 9006

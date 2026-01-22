@@ -810,6 +810,127 @@ func (s *OrderService) ListOrders(ctx context.Context, accountType, userID strin
 	}, nil
 }
 
+// GetShipmentByID retrieves a shipment by ID (internal API)
+func (s *OrderService) GetShipmentByID(ctx context.Context, shipmentID uuid.UUID) (*models.Shipment, error) {
+	return s.repo.GetShipmentByID(ctx, shipmentID)
+}
+
+// GetShipmentsByOrderID retrieves all shipments for an order (internal API)
+func (s *OrderService) GetShipmentsByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Shipment, error) {
+	return s.repo.GetShipmentsByOrderID(ctx, orderID)
+}
+
+// GetShipmentsBySellerID retrieves all shipments for a seller (internal API)
+func (s *OrderService) GetShipmentsBySellerID(ctx context.Context, sellerID string, limit, offset int) ([]models.Shipment, error) {
+	return s.repo.GetShipmentsBySellerID(ctx, sellerID, limit, offset)
+}
+
+// GetShipmentByTrackingNumber retrieves a shipment by tracking number (internal API)
+func (s *OrderService) GetShipmentByTrackingNumber(ctx context.Context, trackingNumber string) (*models.Shipment, error) {
+	return s.repo.GetShipmentByTrackingNumber(ctx, trackingNumber)
+}
+
+// UpdateShipmentStatus updates the status of a shipment (internal API)
+func (s *OrderService) UpdateShipmentStatus(ctx context.Context, shipmentID uuid.UUID, status string, shippedAt, deliveredAt *time.Time) (*models.Shipment, error) {
+	// Get current shipment to validate it exists
+	shipment, err := s.repo.GetShipmentByID(ctx, shipmentID)
+	if err != nil {
+		return nil, fmt.Errorf("shipment not found: %w", err)
+	}
+
+	// Update status
+	if err := s.repo.UpdateShipmentStatus(ctx, shipmentID, status, shippedAt, deliveredAt); err != nil {
+		return nil, fmt.Errorf("failed to update shipment status: %w", err)
+	}
+
+	// Get updated shipment
+	updatedShipment, err := s.repo.GetShipmentByID(ctx, shipmentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get updated shipment: %w", err)
+	}
+
+	// Recalculate order status based on shipment statuses
+	if err := s.recalculateOrderStatus(ctx, shipment.OrderID); err != nil {
+		// Log error but don't fail the request
+		log.Printf("Warning: Failed to recalculate order status for order %s: %v", shipment.OrderID, err)
+	}
+
+	return updatedShipment, nil
+}
+
+// UpdateShipmentTracking updates the tracking information for a shipment (internal API)
+func (s *OrderService) UpdateShipmentTracking(ctx context.Context, shipmentID uuid.UUID, trackingNumber, carrier string) (*models.Shipment, error) {
+	// Update tracking
+	if err := s.repo.UpdateShipmentTracking(ctx, shipmentID, trackingNumber, carrier); err != nil {
+		return nil, fmt.Errorf("failed to update shipment tracking: %w", err)
+	}
+
+	// Get updated shipment
+	updatedShipment, err := s.repo.GetShipmentByID(ctx, shipmentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get updated shipment: %w", err)
+	}
+
+	return updatedShipment, nil
+}
+
+// recalculateOrderStatus recalculates the order status based on shipment statuses
+func (s *OrderService) recalculateOrderStatus(ctx context.Context, orderID uuid.UUID) error {
+	shipments, err := s.repo.GetShipmentsByOrderID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to get shipments: %w", err)
+	}
+
+	if len(shipments) == 0 {
+		return nil // No shipments, nothing to recalculate
+	}
+
+	// Determine order status based on shipment statuses
+	allShipped := true
+	allDelivered := true
+	anyShipped := false
+
+	for _, shipment := range shipments {
+		switch shipment.Status {
+		case "SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY":
+			anyShipped = true
+			allDelivered = false
+		case "DELIVERED":
+			anyShipped = true
+		default:
+			allShipped = false
+			allDelivered = false
+		}
+	}
+
+	order, err := s.repo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("failed to get order: %w", err)
+	}
+
+	var newStatus models.OrderStatus
+	if allDelivered {
+		newStatus = models.OrderStatusDelivered
+	} else if allShipped || anyShipped {
+		newStatus = models.OrderStatusShipped
+	} else {
+		// Keep current status if no shipments are shipped
+		return nil
+	}
+
+	// Only update if status changed
+	if order.Status != newStatus {
+		// Use repository method to update order status
+		// Note: We need to add an UpdateOrderStatus method to repository, or use existing ConfirmOrder pattern
+		// For now, we'll add a simple update method
+		if err := s.repo.UpdateOrderStatus(ctx, orderID, newStatus); err != nil {
+			return fmt.Errorf("failed to update order status: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // PartialRefundRequest represents a request for a partial refund
 type PartialRefundRequest struct {
 	OrderItemsToRefund []OrderItemRefundRequest `json:"orderItemsToRefund" binding:"required"`

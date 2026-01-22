@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -287,6 +288,173 @@ func (h *OrderHandler) CreatePartialRefund(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Partial refund created successfully"})
+}
+
+// GetShipment handles GET /internal/shipments/:id
+// Retrieves a shipment by ID (internal API)
+func (h *OrderHandler) GetShipment(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	shipment, err := h.orderService.GetShipmentByID(c.Request.Context(), shipmentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "shipment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// GetShipmentsByOrder handles GET /internal/orders/:id/shipments
+// Retrieves all shipments for an order (internal API)
+func (h *OrderHandler) GetShipmentsByOrder(c *gin.Context) {
+	orderIDStr := c.Param("id")
+	orderID, err := uuid.Parse(orderIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order ID"})
+		return
+	}
+
+	// Get shipments from repository (service doesn't have this method, use repo directly)
+	// Note: This is a simple delegation - in a more complex setup, this would go through service layer
+	shipments, err := h.orderService.GetShipmentsByOrderID(c.Request.Context(), orderID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipments)
+}
+
+// UpdateShipmentStatus handles PUT /internal/shipments/:id/status
+// Updates the status of a shipment (internal API)
+func (h *OrderHandler) UpdateShipmentStatus(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	var req struct {
+		Status      string  `json:"status" binding:"required"`
+		ShippedAt   *string `json:"shipped_at"`
+		DeliveredAt *string `json:"delivered_at"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var shippedAt, deliveredAt *time.Time
+	if req.ShippedAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.ShippedAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipped_at format"})
+			return
+		}
+		shippedAt = &t
+	}
+	if req.DeliveredAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.DeliveredAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid delivered_at format"})
+			return
+		}
+		deliveredAt = &t
+	}
+
+	shipment, err := h.orderService.UpdateShipmentStatus(c.Request.Context(), shipmentID, req.Status, shippedAt, deliveredAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// UpdateShipmentTracking handles PUT /internal/shipments/:id/tracking
+// Updates the tracking information for a shipment (internal API)
+func (h *OrderHandler) UpdateShipmentTracking(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	var req struct {
+		TrackingNumber string `json:"tracking_number" binding:"required"`
+		Carrier        string `json:"carrier" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	shipment, err := h.orderService.UpdateShipmentTracking(c.Request.Context(), shipmentID, req.TrackingNumber, req.Carrier)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// GetShipmentsBySeller handles GET /internal/sellers/:sellerId/shipments
+// Retrieves all shipments for a seller (internal API)
+func (h *OrderHandler) GetShipmentsBySeller(c *gin.Context) {
+	sellerID := c.Param("sellerId")
+	if sellerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "seller ID is required"})
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 50
+	offset := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	shipments, err := h.orderService.GetShipmentsBySellerID(c.Request.Context(), sellerID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipments)
+}
+
+// GetShipmentByTracking handles GET /internal/shipments/by-tracking/:trackingNumber
+// Retrieves a shipment by tracking number (internal API)
+func (h *OrderHandler) GetShipmentByTracking(c *gin.Context) {
+	trackingNumber := c.Param("trackingNumber")
+	if trackingNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tracking number is required"})
+		return
+	}
+
+	shipment, err := h.orderService.GetShipmentByTrackingNumber(c.Request.Context(), trackingNumber)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "shipment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
 }
 
 // Health handles GET /health

@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fulfillment-service
+  namespace: fulfillment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fulfillment-service
+  template:
+    metadata:
+      labels:
+        app: fulfillment-service
+    spec:
+      containers:
+      - name: fulfillment-service
+        image: fulfillment-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9006
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: AUTH0_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: AUTH0_DOMAIN
+        - name: AUTH0_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: AUTH0_AUDIENCE
+        - name: PLAY_HTTP_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: PLAY_HTTP_SECRET_KEY
+        - name: ORDER_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: ORDER_INTERNAL_API_TOKEN
+        - name: FULFILLMENT_INTERNAL_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: fulfillment-secrets
+              key: FULFILLMENT_INTERNAL_API_TOKEN
+        - name: JAVA_OPTS
+          value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9006
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: fulfillment-config

@@ -158,6 +158,13 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	{
 		// Secure with internal API token
 		internal.POST("/orders", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.CreateOrder)
+		// Shipment endpoints for Fulfillment Service
+		internal.GET("/shipments/:id", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipment)
+		internal.GET("/orders/:id/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsByOrder)
+		internal.GET("/sellers/:sellerId/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsBySeller)
+		internal.GET("/shipments/by-tracking/:trackingNumber", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentByTracking)
+		internal.PUT("/shipments/:id/status", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentStatus)
+		internal.PUT("/shipments/:id/tracking", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentTracking)
 	}
 
 	// Public API (requires JWT authentication)

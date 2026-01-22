@@ -8,6 +8,7 @@ import Products from './pages/Products'
 import AddProduct from './pages/AddProduct'
 import SellerOrders from './pages/SellerOrders'
 import Shipments from './pages/Shipments'
+import Payouts from './pages/Payouts'
 import SellerNavbar from './components/SellerNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
@@ -302,6 +303,16 @@ function AppContent() {
           element={
             isSellerAuthenticated ? (
               <Shipments userEmail={userEmail} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/payouts"
+          element={
+            isSellerAuthenticated ? (
+              <Payouts />
             ) : (
               <Navigate to="/" replace />
             )

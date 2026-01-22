@@ -35,9 +35,9 @@ export const orderApiClient = {
     const { page = 0, pageSize = 20, buyerId } = options
     const params = new URLSearchParams()
     params.append('page', page.toString())
-    params.append('pageSize', pageSize.toString())
+    params.append('page_size', pageSize.toString()) // API expects snake_case
     if (buyerId) {
-      params.append('buyerId', buyerId)
+      params.append('buyer_id', buyerId) // API expects snake_case
     }
 
     const response = await orderApi.get(`/api/orders?${params.toString()}`, {
@@ -45,7 +45,15 @@ export const orderApiClient = {
         Authorization: `Bearer ${token}`,
       },
     })
-    return response.data
+    // Normalize response keys to camelCase for frontend consistency
+    const data = response.data
+    if (data.total_pages !== undefined) {
+      data.totalPages = data.total_pages
+    }
+    if (data.page_size !== undefined) {
+      data.pageSize = data.page_size
+    }
+    return data
   },
 
   /**

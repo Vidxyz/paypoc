@@ -99,6 +99,18 @@ data class ListPayoutsResponseDto(
     @Schema(description = "List of payouts")
     val payouts: List<PayoutResponseDto>? = null,
     
+    @Schema(description = "Current page number (0-indexed)", example = "0")
+    val page: Int = 0,
+    
+    @Schema(description = "Page size", example = "20")
+    val size: Int = 0,
+    
+    @Schema(description = "Total number of payouts", example = "45")
+    val total: Long = 0,
+    
+    @Schema(description = "Total number of pages", example = "3")
+    val totalPages: Int = 0,
+    
     @Schema(description = "Error message if the request failed", example = "Failed to retrieve payouts: Seller not found")
     val error: String? = null
 )

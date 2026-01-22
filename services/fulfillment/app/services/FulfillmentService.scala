@@ -36,8 +36,8 @@ class FulfillmentService @Inject()(
   /**
    * Gets all shipments for a seller.
    */
-  def getShipmentsBySeller(sellerId: String, limit: Int = 50): Future[List[Shipment]] = {
-    orderServiceClient.getShipmentsBySeller(sellerId, limit, 0)
+  def getShipmentsBySeller(sellerId: String, limit: Int = 50, offset: Int = 0): Future[List[Shipment]] = {
+    orderServiceClient.getShipmentsBySeller(sellerId, limit, offset)
   }
   
   /**

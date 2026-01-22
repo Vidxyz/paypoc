@@ -118,7 +118,7 @@ func (r *OrderRepository) GetItemsByOrderID(ctx context.Context, orderID uuid.UU
 func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Shipment, error) {
 	// Log the query for debugging
 	log.Printf("[GetShipmentsByOrderID] Querying shipments for order_id: %s", orderID)
-	
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
 		        shipped_at, delivered_at, created_at, updated_at

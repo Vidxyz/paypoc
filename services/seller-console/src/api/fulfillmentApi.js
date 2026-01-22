@@ -58,15 +58,15 @@ export const createFulfillmentApiClient = (getAccessToken) => {
   return {
     /**
      * Get list of shipments for the authenticated seller
-     * @param {Object} options - Query options (limit)
+     * @param {Object} options - Query options (limit, offset)
      * @returns {Promise<Array>} Array of ShipmentResponse objects
      */
     getShipments: async (options = {}) => {
-      const { limit = 50 } = options
+      const { limit = 50, offset = 0 } = options
       const params = new URLSearchParams()
-      if (limit) {
-        params.append('limit', limit.toString())
-      }
+      params.append('limit', limit.toString())
+      // Always append offset, even if 0 (for first page)
+      params.append('offset', offset.toString())
 
       const response = await fulfillmentApi.get(`/api/seller/shipments?${params.toString()}`)
       return response.data

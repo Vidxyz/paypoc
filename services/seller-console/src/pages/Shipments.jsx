@@ -25,6 +25,7 @@ import {
   IconButton,
   Divider,
   Grid,
+  Pagination,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
@@ -63,6 +64,9 @@ function Shipments({ userEmail }) {
   const [editCarrier, setEditCarrier] = useState('')
   const [saving, setSaving] = useState(false)
   const [fulfillmentApiClient, setFulfillmentApiClient] = useState(null)
+  const [page, setPage] = useState(0)
+  const [pageSize] = useState(20)
+  const [total, setTotal] = useState(0)
 
   useEffect(() => {
     const client = createFulfillmentApiClient(getAccessToken)
@@ -77,7 +81,7 @@ function Shipments({ userEmail }) {
     if (fulfillmentApiClient) {
       loadShipments()
     }
-  }, [fulfillmentApiClient])
+  }, [fulfillmentApiClient, page])
 
   const loadShipments = async () => {
     if (!fulfillmentApiClient) return
@@ -86,8 +90,19 @@ function Shipments({ userEmail }) {
     setError('')
     
     try {
-      const data = await fulfillmentApiClient.getShipments({ limit: 100 })
-      setShipments(Array.isArray(data) ? data : [])
+      const offset = page * pageSize
+      const data = await fulfillmentApiClient.getShipments({ limit: pageSize, offset })
+      const newShipments = Array.isArray(data) ? data : []
+      
+      // Always replace shipments (traditional pagination, not infinite scroll)
+      setShipments(newShipments)
+      
+      // Estimate total if we got a full page (might be more)
+      if (newShipments.length === pageSize) {
+        setTotal((page + 1) * pageSize + 1) // At least this many
+      } else {
+        setTotal((page * pageSize) + newShipments.length)
+      }
     } catch (err) {
       if (err.response?.status === 401) {
         setError('Unauthorized. Please log in again.')
@@ -97,6 +112,10 @@ function Shipments({ userEmail }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handlePageChange = (event, value) => {
+    setPage(value - 1) // MUI Pagination is 1-indexed, we use 0-indexed
   }
 
   const handleEditStatus = (shipment) => {
@@ -332,6 +351,34 @@ function Shipments({ userEmail }) {
                 </TableBody>
               </Table>
             </TableContainer>
+          )}
+
+          {/* Pagination Controls */}
+          {shipments.length > 0 && total > pageSize && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Page {page + 1} ({shipments.length} shipments on this page)
+                </Typography>
+                <Pagination
+                  count={Math.ceil(total / pageSize)}
+                  page={page + 1}
+                  onChange={handlePageChange}
+                  color="primary"
+                  showFirstButton
+                  showLastButton
+                />
+              </Box>
+            </Box>
+          )}
+          
+          {/* Show count if no pagination needed */}
+          {shipments.length > 0 && total <= pageSize && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                Showing all {shipments.length} shipment{shipments.length !== 1 ? 's' : ''}
+              </Typography>
+            </Box>
           )}
         </CardContent>
       </Card>

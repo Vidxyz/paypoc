@@ -170,14 +170,18 @@ class SellerProfileController(
     
     /**
      * GET /seller/profile/payouts
-     * Gets the authenticated seller's payouts.
+     * Gets the authenticated seller's payouts with pagination.
      * 
      * Requires: Bearer token with SELLER account_type claim
-     * Returns: List of payouts for the seller
+     * Returns: Paginated list of payouts for the seller
+     * 
+     * Query parameters:
+     * - page: Page number (0-indexed, default: 0)
+     * - size: Page size (default: 20)
      */
     @Operation(
         summary = "Get seller payouts",
-        description = "Gets all payouts for the authenticated seller. Requires JWT bearer token with SELLER account_type claim.",
+        description = "Gets paginated payouts for the authenticated seller. Requires JWT bearer token with SELLER account_type claim. Supports pagination via page and size query parameters.",
         security = [SecurityRequirement(name = "bearerAuth")]
     )
     @ApiResponses(
@@ -197,6 +201,8 @@ class SellerProfileController(
     )
     @GetMapping("/payouts")
     fun getSellerPayouts(
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int,
         httpRequest: HttpServletRequest
     ): ResponseEntity<ListPayoutsResponseDto> {
         // Get authenticated user from request attribute (set by AuthenticationInterceptor)
@@ -208,12 +214,27 @@ class SellerProfileController(
         // Use email as seller_id (as per requirement: seller_id = email)
         val sellerId = user.email
         
-        // Fetch seller's payouts
-        val payouts = payoutService.getPayoutsBySellerId(sellerId)
+        // Validate pagination parameters
+        val validPage = if (page < 0) 0 else page
+        val validSize = when {
+            size < 1 -> 1
+            size > 100 -> 100
+            else -> size
+        }
+        
+        // Fetch seller's payouts with pagination
+        val (payouts, total) = payoutService.getPayoutsBySellerId(sellerId, validPage, validSize)
         val payoutResponses = payouts.map { PayoutResponseDto.fromDomain(it) }
+        val totalPages = if (total > 0) ((total + validSize - 1) / validSize).toInt() else 0
         
         return ResponseEntity.ok(
-            ListPayoutsResponseDto(payouts = payoutResponses)
+            ListPayoutsResponseDto(
+                payouts = payoutResponses,
+                page = validPage,
+                size = validSize,
+                total = total,
+                totalPages = totalPages
+            )
         )
     }
     

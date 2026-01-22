@@ -108,11 +108,20 @@ export const createPaymentsApiClient = (getAccessToken) => {
     },
     
     /**
-     * Get seller's payouts
-     * @returns {Promise<Object>} Response with payouts array
+     * Get seller's payouts with pagination
+     * @param {Object} options - Query options
+     * @param {number} options.page - Page number (0-indexed, default: 0)
+     * @param {number} options.size - Page size (default: 20)
+     * @returns {Promise<Object>} Response with payouts array, page, size, total, totalPages
      */
-    getSellerPayouts: async () => {
-      const response = await paymentsApi.get('/seller/profile/payouts')
+    getSellerPayouts: async (options = {}) => {
+      const { page = 0, size = 20 } = options
+      const response = await paymentsApi.get('/seller/profile/payouts', {
+        params: {
+          page,
+          size,
+        },
+      })
       return response.data
     },
     

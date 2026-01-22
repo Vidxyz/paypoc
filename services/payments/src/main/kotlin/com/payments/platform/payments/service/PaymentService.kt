@@ -395,6 +395,25 @@ class PaymentService(
     }
     
     /**
+     * Gets payments for a seller with total count for pagination.
+     * Returns a Pair of (payments list, total count).
+     */
+    fun getPaymentsBySellerIdWithCount(
+        sellerId: String,
+        page: Int = 0,
+        size: Int = 50,
+        sortBy: String = "createdAt",
+        sortDirection: String = "DESC"
+    ): Pair<List<Payment>, Long> {
+        val limit = size
+        val offset = page.toLong() * size.toLong()
+        val payments = paymentRepository.findBySellerId(sellerId, limit, offset)
+        val total = paymentRepository.countBySellerId(sellerId)
+        
+        return Pair(payments.map { it.toDomain() }, total)
+    }
+    
+    /**
      * Gets the total count of payments for a seller.
      * Used for pagination metadata.
      */

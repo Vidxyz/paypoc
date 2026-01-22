@@ -434,12 +434,21 @@ func (h *OrderHandler) GetShipmentsBySeller(c *gin.Context) {
 			limit = parsedLimit
 		}
 	}
-	if offsetStr := c.Query("offset"); offsetStr != "" {
+	// Always parse offset, even if it's 0 (first page)
+	offsetStr := c.Query("offset")
+	if offsetStr != "" {
 		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
+		} else {
+			log.Printf("[GetShipmentsBySeller] Failed to parse offset '%s': %v, defaulting to 0", offsetStr, err)
+			offset = 0
 		}
+	} else {
+		// If offset is not provided, default to 0 (first page)
+		offset = 0
 	}
 
+	log.Printf("[GetShipmentsBySeller] sellerID: %s, limit: %d, offset: %d", sellerID, limit, offset)
 	shipments, err := h.orderService.GetShipmentsBySellerID(c.Request.Context(), sellerID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

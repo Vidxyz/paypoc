@@ -48,8 +48,9 @@ class FulfillmentController @Inject()(
       requireSellerOrAdmin(accountType)
       
       val limit = request.getQueryString("limit").flatMap(_.toIntOption).getOrElse(50)
+      val offset = request.getQueryString("offset").flatMap(_.toIntOption).getOrElse(0)
       
-      fulfillmentService.getShipmentsBySeller(userId, limit).map { shipments =>
+      fulfillmentService.getShipmentsBySeller(userId, limit, offset).map { shipments =>
         Ok(Json.toJson(shipments.map(ShipmentResponse.fromShipment)))
       }.recover {
         case e: Exception =>

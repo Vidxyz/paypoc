@@ -91,6 +91,7 @@ function SellerOrders({ userEmail }) {
         throw new Error(response.error)
       }
       
+      // Always replace orders (traditional pagination, not infinite scroll)
       setOrders(response.orders || [])
       setTotalPages(response.total_pages || response.totalPages || 0)
       setTotal(response.total || 0)
@@ -375,14 +376,31 @@ function SellerOrders({ userEmail }) {
                 </Table>
               </TableContainer>
 
+              {/* Pagination Controls */}
               {totalPages > 1 && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Page {page + 1} of {totalPages} ({total} total orders)
+                    </Typography>
+                    <Pagination
+                      count={totalPages}
+                      page={page + 1}
+                      onChange={handlePageChange}
+                      color="primary"
+                      showFirstButton
+                      showLastButton
+                    />
+                  </Box>
+                </Box>
+              )}
+              
+              {/* Show total count if no pagination needed */}
+              {totalPages <= 1 && total > 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                  <Pagination
-                    count={totalPages}
-                    page={page + 1}
-                    onChange={handlePageChange}
-                    color="primary"
-                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Showing all {total} orders
+                  </Typography>
                 </Box>
               )}
             </>

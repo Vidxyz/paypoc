@@ -16,6 +16,8 @@ import {
   TableRow,
   Paper,
   Chip,
+  Button,
+  Pagination,
 } from '@mui/material'
 import StoreIcon from '@mui/icons-material/Store'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
@@ -28,11 +30,20 @@ function SellerLanding() {
   const { user, isAuthenticated, getAccessToken } = useAuth0()
   const userEmail = user?.email || user?.['https://buyit.local/email'] || ''
   const [balance, setBalance] = useState(null)
-  const [payments, setPayments] = useState([])
-  const [payouts, setPayouts] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingPayments, setLoadingPayments] = useState(false) // Separate loading state for pagination
   const [error, setError] = useState(null)
+  const [payoutsPage, setPayoutsPage] = useState(0)
+  const [payoutsPageSize] = useState(20)
+  const [payoutsTotal, setPayoutsTotal] = useState(0)
+  const [payoutsTotalPages, setPayoutsTotalPages] = useState(0)
+  const [paymentsPage, setPaymentsPage] = useState(0)
+  const [paymentsPageSize] = useState(20)
+  const [paymentsTotal, setPaymentsTotal] = useState(0)
+  const [paymentsTotalPages, setPaymentsTotalPages] = useState(0)
+  const [payments, setPayments] = useState([]) // Store paginated payments from server
+  const [payouts, setPayouts] = useState([]) // Store paginated payouts from server
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -41,7 +52,12 @@ function SellerLanding() {
 
     const fetchData = async () => {
       try {
-        setLoading(true)
+        // Only show full page loading on initial load, use separate state for pagination
+        if (paymentsPage === 0 && payoutsPage === 0) {
+          setLoading(true)
+        } else {
+          setLoadingPayments(true)
+        }
         setError(null)
 
         const paymentsApi = createPaymentsApiClient(getAccessToken)
@@ -52,22 +68,36 @@ function SellerLanding() {
             console.warn('Failed to fetch balance:', err)
             return { balanceCents: 0, currency: 'CAD', error: err.message }
           }),
-          paymentsApi.getSellerPayments({ page: 0, size: 50, sortBy: 'createdAt', sortDirection: 'DESC' }).catch((err) => {
+          paymentsApi.getSellerPayments({ page: paymentsPage, size: paymentsPageSize, sortBy: 'createdAt', sortDirection: 'DESC' }).catch((err) => {
             console.warn('Failed to fetch payments:', err)
-            return { payments: [], total: 0 }
+            return { payments: [], total: 0, page: paymentsPage, size: paymentsPageSize }
           }),
-          paymentsApi.getSellerPayouts().catch((err) => {
+          paymentsApi.getSellerPayouts({ page: payoutsPage, size: payoutsPageSize }).catch((err) => {
             console.warn('Failed to fetch payouts:', err)
-            return { payouts: [] }
+            return { payouts: [], total: 0, totalPages: 0, page: 0, size: payoutsPageSize }
           }),
         ])
 
         setBalance(balanceData)
-        setPayments(paymentsData.payments || [])
-        setPayouts(payoutsData.payouts || [])
+        
+        // Set paginated payments from server
+        const fetchedPayments = paymentsData.payments || []
+        setPayments(fetchedPayments)
+        setPaymentsTotal(paymentsData.total || 0)
+        // Calculate total pages for payments
+        const paymentsTotalPages = paymentsData.total > 0 ? Math.ceil((paymentsData.total || 0) / paymentsPageSize) : 0
+        setPaymentsTotalPages(paymentsTotalPages)
+        
+        // Set paginated payouts from server
+        const fetchedPayouts = payoutsData.payouts || []
+        setPayouts(fetchedPayouts)
+        setPayoutsTotal(payoutsData.total || 0)
+        setPayoutsTotalPages(payoutsData.totalPages || 0)
 
-        // Fetch refunds for all payments in a single batch call
-        const paymentsList = paymentsData.payments || []
+        // Fetch refunds for current page of payments in a single batch call
+        // Process current page of payments to build transactions list
+        const paymentsList = fetchedPayments
+        console.log(`[SellerLanding] Processing ${paymentsList.length} payments for page ${paymentsPage}, userEmail: ${userEmail}`)
         const paymentIds = paymentsList.map(p => p.id)
         const refundsMap = await paymentsApi.getRefundsForPayments(paymentIds).catch(() => ({}))
         
@@ -85,15 +115,19 @@ function SellerLanding() {
           
           // Find this seller's portion in the payment
           const sellerBreakdown = payment.sellerBreakdown?.find(sb => sb.sellerId === userEmail)
-          if (!sellerBreakdown) return // Skip if seller not in this payment
+          if (!sellerBreakdown) {
+            console.log(`[SellerLanding] Payment ${payment.id} has no seller breakdown for ${userEmail}. Available sellers:`, payment.sellerBreakdown?.map(sb => sb.sellerId))
+            return // Skip if seller not in this payment
+          }
           
-          // Add payment as CREDIT (only if CAPTURED)
-          if (payment.state === 'CAPTURED' || payment.state === 'REFUNDING' || payment.state === 'REFUNDED') {
+          // Add payment as CREDIT transaction
+          // Include all states except FAILED - even CONFIRMING/AUTHORIZED should be visible
+          if (payment.state !== 'FAILED') {
             transactionsList.push({
               id: payment.id,
               type: 'CREDIT',
               date: payment.createdAt,
-              description: `Payment from order ${payment.orderId?.substring(0, 8) || 'N/A'}...`,
+              description: `Payment from order ${payment.orderId?.substring(0, 8) || 'N/A'}... (${payment.state})`,
               amountCents: sellerBreakdown.netSellerAmountCents,
               currency: payment.currency,
               paymentId: payment.id,
@@ -160,6 +194,9 @@ function SellerLanding() {
         // Sort back to newest first for display
         transactionsWithBalance.sort((a, b) => new Date(b.date) - new Date(a.date))
         
+        const creditCount = transactionsWithBalance.filter(t => t.type === 'CREDIT').length
+        const debitCount = transactionsWithBalance.filter(t => t.type === 'DEBIT').length
+        console.log(`[SellerLanding] Built ${transactionsWithBalance.length} transactions (${creditCount} CREDIT, ${debitCount} DEBIT) from ${paymentsList.length} payments on page ${paymentsPage}`)
         setTransactions(transactionsWithBalance)
 
         paymentsApi.cleanup()
@@ -168,11 +205,21 @@ function SellerLanding() {
         setError(err.message || 'Failed to load seller information')
       } finally {
         setLoading(false)
+        setLoadingPayments(false)
       }
     }
 
     fetchData()
-  }, [isAuthenticated, getAccessToken])
+  }, [isAuthenticated, getAccessToken, payoutsPage, paymentsPage])
+
+  const handleTransactionsPageChange = (event, value) => {
+    setPaymentsPage(value - 1) // Use paymentsPage for server-side pagination
+  }
+
+  const handlePayoutsPageChange = (event, value) => {
+    setPayoutsPage(value - 1) // MUI Pagination is 1-indexed, we use 0-indexed
+    // Data will be refetched via useEffect dependency on payoutsPage
+  }
 
   const formatAmount = (cents, currency = 'CAD') => {
     return new Intl.NumberFormat('en-US', {
@@ -300,11 +347,11 @@ function SellerLanding() {
                 <PaymentIcon sx={{ fontSize: 48, color: 'primary.main', mr: 2 }} />
                 <Box>
                   <Typography variant="h6" color="text.secondary">
-                    Total Transactions
-                  </Typography>
-                  <Typography variant="h4" component="div" sx={{ fontWeight: 'bold' }}>
-                    {payments.length}
-                  </Typography>
+                       Total Transactions
+                     </Typography>
+                     <Typography variant="h4" component="div" sx={{ fontWeight: 'bold' }}>
+                       {paymentsTotal}
+                     </Typography>
                 </Box>
               </Box>
             </CardContent>
@@ -318,10 +365,15 @@ function SellerLanding() {
           <Typography variant="h5" component="h2" gutterBottom>
             Recent Transactions
           </Typography>
-          {transactions.length === 0 ? (
+          {loadingPayments && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          )}
+          {!loadingPayments && transactions.length === 0 ? (
             <Alert severity="info">No transactions found.</Alert>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
+            <TableContainer component={Paper} variant="outlined" sx={{ opacity: loadingPayments ? 0.5 : 1 }}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -334,7 +386,7 @@ function SellerLanding() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {transactions.slice(0, 20).map((transaction) => (
+                  {transactions.map((transaction) => (
                     <TableRow key={`${transaction.type}-${transaction.id}`}>
                       <TableCell>{formatDate(transaction.date)}</TableCell>
                       <TableCell>
@@ -384,6 +436,34 @@ function SellerLanding() {
               </Table>
             </TableContainer>
           )}
+
+          {/* Transactions Pagination - based on payments pagination */}
+          {paymentsTotalPages > 1 && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Page {paymentsPage + 1} of {paymentsTotalPages} ({paymentsTotal} total payments)
+                </Typography>
+                <Pagination
+                  count={paymentsTotalPages}
+                  page={paymentsPage + 1}
+                  onChange={(event, value) => setPaymentsPage(value - 1)}
+                  color="primary"
+                  showFirstButton
+                  showLastButton
+                />
+              </Box>
+            </Box>
+          )}
+          
+          {/* Show total count if no pagination needed */}
+          {paymentsTotalPages <= 1 && paymentsTotal > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                Showing all {paymentsTotal} payments
+              </Typography>
+            </Box>
+          )}
         </CardContent>
       </Card>
 
@@ -396,55 +476,85 @@ function SellerLanding() {
               Payouts
             </Typography>
           </Box>
-          {payouts.length === 0 ? (
+          {payouts.length === 0 && payoutsTotal === 0 ? (
             <Alert severity="info">No payouts found.</Alert>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Payout ID</TableCell>
-                    <TableCell>Date</TableCell>
-                    <TableCell>Amount</TableCell>
-                    <TableCell>State</TableCell>
-                    <TableCell>Stripe Transfer ID</TableCell>
-                    <TableCell>Completed At</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {payouts.map((payout) => (
-                    <TableRow key={payout.id}>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {payout.id?.substring(0, 8)}...
-                        </Typography>
-                      </TableCell>
-                      <TableCell>{formatDate(payout.createdAt)}</TableCell>
-                      <TableCell>{formatAmount(payout.amountCents, payout.currency)}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={payout.state}
-                          color={getPayoutStateColor(payout.state)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {payout.stripeTransferId ? (
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                            {payout.stripeTransferId.substring(0, 12)}...
-                          </Typography>
-                        ) : (
-                          <Typography variant="body2" color="text.secondary">
-                            N/A
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>{formatDate(payout.completedAt)}</TableCell>
+            <>
+              <TableContainer component={Paper} variant="outlined">
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Payout ID</TableCell>
+                      <TableCell>Date</TableCell>
+                      <TableCell>Amount</TableCell>
+                      <TableCell>State</TableCell>
+                      <TableCell>Stripe Transfer ID</TableCell>
+                      <TableCell>Completed At</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                  </TableHead>
+                  <TableBody>
+                    {payouts.map((payout) => (
+                      <TableRow key={payout.id}>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                            {payout.id?.substring(0, 8)}...
+                          </Typography>
+                        </TableCell>
+                        <TableCell>{formatDate(payout.createdAt)}</TableCell>
+                        <TableCell>{formatAmount(payout.amountCents, payout.currency)}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={payout.state}
+                            color={getPayoutStateColor(payout.state)}
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {payout.stripeTransferId ? (
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                              {payout.stripeTransferId.substring(0, 12)}...
+                            </Typography>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary">
+                              N/A
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>{formatDate(payout.completedAt)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              {/* Payouts Pagination */}
+              {payoutsTotalPages > 1 && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Page {payoutsPage + 1} of {payoutsTotalPages} ({payoutsTotal} total payouts)
+                    </Typography>
+                    <Pagination
+                      count={payoutsTotalPages}
+                      page={payoutsPage + 1}
+                      onChange={handlePayoutsPageChange}
+                      color="primary"
+                      showFirstButton
+                      showLastButton
+                    />
+                  </Box>
+                </Box>
+              )}
+              
+              {/* Show total count if no pagination needed */}
+              {payoutsTotalPages <= 1 && payoutsTotal > 0 && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Showing all {payoutsTotal} payout{payoutsTotal !== 1 ? 's' : ''}
+                  </Typography>
+                </Box>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

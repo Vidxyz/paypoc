@@ -146,6 +146,15 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	// Health check
 	router.GET("/health", orderHandler.Health)
 
+	// Debug route to test internal API routing (remove in production)
+	router.GET("/debug/routes", func(c *gin.Context) {
+		routes := make([]string, 0)
+		for _, route := range router.Routes() {
+			routes = append(routes, fmt.Sprintf("%s %s", route.Method, route.Path))
+		}
+		c.JSON(http.StatusOK, gin.H{"routes": routes})
+	})
+
 	// API Documentation
 	router.GET("/api-docs", orderHandler.SwaggerUI)
 	router.GET("/api-docs/openapi.json", orderHandler.OpenAPIJSON)
@@ -159,10 +168,12 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 		// Secure with internal API token
 		internal.POST("/orders", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.CreateOrder)
 		// Shipment endpoints for Fulfillment Service
-		internal.GET("/shipments/:id", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipment)
+		// IMPORTANT: More specific routes must come before less specific ones
+		// /orders/:id/shipments must come before /shipments/:id to avoid route conflicts
 		internal.GET("/orders/:id/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsByOrder)
 		internal.GET("/sellers/:sellerId/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsBySeller)
 		internal.GET("/shipments/by-tracking/:trackingNumber", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentByTracking)
+		internal.GET("/shipments/:id", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipment)
 		internal.PUT("/shipments/:id/status", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentStatus)
 		internal.PUT("/shipments/:id/tracking", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentTracking)
 	}

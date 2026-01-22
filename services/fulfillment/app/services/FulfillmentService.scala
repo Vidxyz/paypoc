@@ -190,64 +190,71 @@ class FulfillmentService @Inject()(
           logger.debug(s"Shipment ${shipment.id} already has status $shipmentStatus, skipping update")
           Future.successful(Some(shipment))
         } else {
-          // Determine timestamps based on status
-          val shippedAt = if (shipmentStatus == "SHIPPED" && shipment.status != "SHIPPED") {
-            Some(Instant.now())
+          // Validate state transition (same validation as manual updates)
+          if (!isValidStatusTransition(shipment.status, shipmentStatus)) {
+            logger.warn(s"Invalid status transition from ${shipment.status} to $shipmentStatus for shipment ${shipment.id} (carrier: $carrier, carrierStatus: $carrierStatus). Ignoring webhook update.")
+            Future.successful(Some(shipment)) // Return current shipment without updating
           } else {
-            shipment.shippedAt
-          }
-          
-          val deliveredAt = if (shipmentStatus == "DELIVERED" && shipment.status != "DELIVERED") {
-            Some(Instant.now())
-          } else {
-            shipment.deliveredAt
-          }
-          
-          // Update shipment status
-          orderServiceClient.updateShipmentStatus(shipment.id, shipmentStatus, shippedAt, deliveredAt).map { updatedShipment =>
-            // Publish event for status update
-            eventProducer.publishShipmentStatusUpdatedEvent(
-              shipmentId = updatedShipment.id,
-              orderId = updatedShipment.orderId,
-              sellerId = updatedShipment.sellerId,
-              status = shipmentStatus,
-              previousStatus = shipment.status
-            )
-            
-            // Publish specific events for shipped/delivered
-            if (shipmentStatus == "SHIPPED" && shipment.status != "SHIPPED") {
-              updatedShipment.trackingNumber.foreach { tn =>
-                updatedShipment.carrier.foreach { c =>
-                  eventProducer.publishShipmentShippedEvent(
-                    shipmentId = updatedShipment.id,
-                    orderId = updatedShipment.orderId,
-                    sellerId = updatedShipment.sellerId,
-                    trackingNumber = tn,
-                    carrier = c,
-                    shippedAt = shippedAt.get
-                  )
-                }
-              }
+            // Determine timestamps based on status
+            val shippedAt = if (shipmentStatus == "SHIPPED" && shipment.status != "SHIPPED") {
+              Some(Instant.now())
+            } else {
+              shipment.shippedAt
             }
             
-            if (shipmentStatus == "DELIVERED" && shipment.status != "DELIVERED") {
-              eventProducer.publishShipmentDeliveredEvent(
+            val deliveredAt = if (shipmentStatus == "DELIVERED" && shipment.status != "DELIVERED") {
+              Some(Instant.now())
+            } else {
+              shipment.deliveredAt
+            }
+            
+            // Update shipment status
+            orderServiceClient.updateShipmentStatus(shipment.id, shipmentStatus, shippedAt, deliveredAt).map { updatedShipment =>
+              // Publish event for status update
+              eventProducer.publishShipmentStatusUpdatedEvent(
                 shipmentId = updatedShipment.id,
                 orderId = updatedShipment.orderId,
                 sellerId = updatedShipment.sellerId,
-                deliveredAt = deliveredAt.get
+                status = shipmentStatus,
+                previousStatus = shipment.status
               )
+              
+              // Publish specific events for shipped/delivered
+              if (shipmentStatus == "SHIPPED" && shipment.status != "SHIPPED") {
+                updatedShipment.trackingNumber.foreach { tn =>
+                  updatedShipment.carrier.foreach { c =>
+                    eventProducer.publishShipmentShippedEvent(
+                      shipmentId = updatedShipment.id,
+                      orderId = updatedShipment.orderId,
+                      sellerId = updatedShipment.sellerId,
+                      trackingNumber = tn,
+                      carrier = c,
+                      shippedAt = shippedAt.get
+                    )
+                  }
+                }
+              }
+              
+              if (shipmentStatus == "DELIVERED" && shipment.status != "DELIVERED") {
+                eventProducer.publishShipmentDeliveredEvent(
+                  shipmentId = updatedShipment.id,
+                  orderId = updatedShipment.orderId,
+                  sellerId = updatedShipment.sellerId,
+                  deliveredAt = deliveredAt.get
+                )
+              }
+              
+              Some(updatedShipment)
+            }.recover { case e =>
+              logger.error(s"Failed to process carrier webhook for tracking $trackingNumber", e)
+              None
             }
-            
-            Some(updatedShipment)
-          }.recover { case e =>
-            logger.error(s"Failed to process carrier webhook for tracking $trackingNumber", e)
-            None
           }
         }
     }
   }
   
+  // todo-vh: Fulfilments not extremely tested, but seems to work well thus far
   /**
    * Validates status transitions.
    */

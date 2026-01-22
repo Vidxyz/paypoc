@@ -57,12 +57,12 @@ GET     /health                          controllers.HealthController.health
 #    404:
 #      description: Shipment not found
 ###
-GET     /api/shipments/:shipmentId       controllers.FulfillmentController.getShipment(shipmentId: java.util.UUID)
+GET     /api/seller/shipments/:shipmentId       controllers.FulfillmentController.getShipment(shipmentId: java.util.UUID)
 
 ###
 #  summary: List shipments for seller
 #  tags:
-#    - Fulfillment
+#    - Seller Fulfillment
 #  description: Lists all shipments for the authenticated seller.
 #  security:
 #    - bearerAuth: []
@@ -86,7 +86,7 @@ GET     /api/shipments/:shipmentId       controllers.FulfillmentController.getSh
 #    401:
 #      description: Unauthorized - missing or invalid bearer token
 ###
-GET     /api/shipments                   controllers.FulfillmentController.listShipments
+GET     /api/seller/shipments                   controllers.FulfillmentController.listShipments
 
 ###
 #  summary: Update shipment status
@@ -131,7 +131,7 @@ GET     /api/shipments                   controllers.FulfillmentController.listS
 #    403:
 #      description: Forbidden - shipment belongs to different seller
 ###
-PUT     /api/shipments/:shipmentId/status controllers.FulfillmentController.updateShipmentStatus(shipmentId: java.util.UUID)
+PUT     /api/seller/shipments/:shipmentId/status controllers.FulfillmentController.updateShipmentStatus(shipmentId: java.util.UUID)
 
 ###
 #  summary: Add tracking information
@@ -178,7 +178,7 @@ PUT     /api/shipments/:shipmentId/status controllers.FulfillmentController.upda
 #    403:
 #      description: Forbidden - shipment belongs to different seller
 ###
-PUT     /api/shipments/:shipmentId/tracking controllers.FulfillmentController.addTracking(shipmentId: java.util.UUID)
+PUT     /api/seller/shipments/:shipmentId/tracking controllers.FulfillmentController.addTracking(shipmentId: java.util.UUID)
 
 ###
 #  summary: Get tracking information for an order

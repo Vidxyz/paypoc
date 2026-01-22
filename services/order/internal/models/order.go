@@ -53,17 +53,17 @@ type OrderItem struct {
 
 // Shipment represents a shipment (one per seller)
 type Shipment struct {
-	ID             uuid.UUID
-	OrderID        uuid.UUID
-	SellerID       string
-	Status         string // PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED
-	Provisional    bool
-	TrackingNumber *string
-	Carrier        *string
-	ShippedAt      *time.Time
-	DeliveredAt    *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID             uuid.UUID  `json:"id"`
+	OrderID        uuid.UUID  `json:"order_id"`
+	SellerID       string     `json:"seller_id"`
+	Status         string     `json:"status"` // PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED
+	Provisional    bool       `json:"provisional"`
+	TrackingNumber *string    `json:"tracking_number,omitempty"`
+	Carrier        *string    `json:"carrier,omitempty"`
+	ShippedAt      *time.Time `json:"shipped_at,omitempty"`
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // CreateOrderRequest represents a request to create an order

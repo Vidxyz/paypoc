@@ -38,6 +38,7 @@ import CloseIcon from '@mui/icons-material/Close'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import { orderApiClient } from '../api/orderApi'
 import { catalogApiClient } from '../api/catalogApi'
+import { fulfillmentApiClient } from '../api/fulfillmentApi'
 import { useAuth0 } from '../auth/Auth0Provider'
 
 function Orders({ buyerId, userEmail }) {
@@ -49,6 +50,8 @@ function Orders({ buyerId, userEmail }) {
   const [orderDetailsOpen, setOrderDetailsOpen] = useState(false)
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false)
   const [orderDetails, setOrderDetails] = useState(null)
+  const [trackingInfo, setTrackingInfo] = useState(null)
+  const [loadingTracking, setLoadingTracking] = useState(false)
   const [page, setPage] = useState(0)
   const [pageSize] = useState(20)
   const [totalPages, setTotalPages] = useState(0)
@@ -131,6 +134,18 @@ function Orders({ buyerId, userEmail }) {
       }
       
       setOrderDetails(details)
+
+      // Fetch tracking information from fulfillment service
+      setLoadingTracking(true)
+      try {
+        const tracking = await fulfillmentApiClient.getOrderTracking(order.id, token)
+        setTrackingInfo(tracking || [])
+      } catch (err) {
+        console.error('Failed to fetch tracking information:', err)
+        setTrackingInfo([])
+      } finally {
+        setLoadingTracking(false)
+      }
     } catch (err) {
       setError(err.message || 'Failed to load order details')
     } finally {
@@ -415,6 +430,7 @@ function Orders({ buyerId, userEmail }) {
           setOrderDetailsOpen(false)
           setSelectedOrder(null)
           setOrderDetails(null)
+          setTrackingInfo(null)
         }}
         maxWidth="md"
         fullWidth
@@ -714,25 +730,49 @@ function Orders({ buyerId, userEmail }) {
                 })}
               </List>
 
-              {orderDetails.shipments && orderDetails.shipments.length > 0 && (
+              {/* Tracking Information from Fulfillment Service */}
+              {loadingTracking ? (
+                <>
+                  <Divider sx={{ my: 3 }} />
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
+                      Loading tracking information...
+                    </Typography>
+                  </Box>
+                </>
+              ) : trackingInfo && trackingInfo.length > 0 ? (
                 <>
                   <Divider sx={{ my: 3 }} />
                   <Typography variant="h6" gutterBottom>
-                    Shipments ({orderDetails.shipments.length})
+                    Tracking Information ({trackingInfo.length} shipment{trackingInfo.length !== 1 ? 's' : ''})
                   </Typography>
                   <List>
-                    {orderDetails.shipments.map((shipment, index) => {
-                      const sellerId = shipment.seller_id || shipment.sellerId
+                    {trackingInfo.map((shipment, index) => {
                       const shipmentStatus = shipment.status
-                      const trackingNumber = shipment.tracking_number || shipment.trackingNumber
+                      const trackingNumber = shipment.trackingNumber || shipment.tracking_number
                       const carrier = shipment.carrier
-                      const shippedAt = shipment.shipped_at || shipment.shippedAt
-                      const deliveredAt = shipment.delivered_at || shipment.deliveredAt
+                      const shippedAt = shipment.shippedAt || shipment.shipped_at
+                      const deliveredAt = shipment.deliveredAt || shipment.delivered_at
+                      const sellerId = shipment.sellerId || shipment.seller_id
                       
                       // Find items for this seller
                       const shipmentItems = orderDetails.items?.filter(
                         item => (item.seller_id || item.sellerId) === sellerId
                       ) || []
+                      
+                      const getStatusColor = (status) => {
+                        switch (status) {
+                          case 'DELIVERED': return 'success'
+                          case 'SHIPPED':
+                          case 'IN_TRANSIT':
+                          case 'OUT_FOR_DELIVERY': return 'info'
+                          case 'PROCESSING': return 'warning'
+                          case 'CANCELLED':
+                          case 'RETURNED': return 'error'
+                          default: return 'default'
+                        }
+                      }
                       
                       return (
                         <Box key={shipment.id || index}>
@@ -752,7 +792,7 @@ function Orders({ buyerId, userEmail }) {
                                   </Box>
                                   <Chip
                                     label={shipmentStatus}
-                                    color={shipmentStatus === 'DELIVERED' ? 'success' : shipmentStatus === 'SHIPPED' ? 'info' : 'default'}
+                                    color={getStatusColor(shipmentStatus)}
                                     size="small"
                                   />
                                 </Box>
@@ -761,33 +801,48 @@ function Orders({ buyerId, userEmail }) {
                                 <Box sx={{ mt: 1 }}>
                                   {trackingNumber && (
                                     <Typography variant="body2" color="text.secondary">
-                                      Tracking: {trackingNumber}
+                                      <strong>Tracking:</strong> {trackingNumber}
                                     </Typography>
                                   )}
                                   {carrier && (
                                     <Typography variant="body2" color="text.secondary">
-                                      Carrier: {carrier}
+                                      <strong>Carrier:</strong> {carrier}
                                     </Typography>
                                   )}
                                   {shippedAt && (
                                     <Typography variant="caption" color="text.secondary" display="block">
-                                      Shipped: {formatDate(shippedAt)}
+                                      <strong>Shipped:</strong> {formatDate(shippedAt)}
                                     </Typography>
                                   )}
                                   {deliveredAt && (
                                     <Typography variant="caption" color="text.secondary" display="block">
-                                      Delivered: {formatDate(deliveredAt)}
+                                      <strong>Delivered:</strong> {formatDate(deliveredAt)}
+                                    </Typography>
+                                  )}
+                                  {!trackingNumber && shipmentStatus === 'PENDING' && (
+                                    <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: 'italic' }}>
+                                      Awaiting shipment preparation
                                     </Typography>
                                   )}
                                 </Box>
                               }
                             />
                           </ListItem>
-                          {index < orderDetails.shipments.length - 1 && <Divider />}
+                          {index < trackingInfo.length - 1 && <Divider />}
                         </Box>
                       )
                     })}
                   </List>
+                </>
+              ) : trackingInfo !== null && (
+                <>
+                  <Divider sx={{ my: 3 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Tracking Information
+                  </Typography>
+                  <Alert severity="info">
+                    No tracking information available yet. Shipments will appear here once they are created.
+                  </Alert>
                 </>
               )}
             </Box>

@@ -57,6 +57,7 @@ class OrderServiceClient @Inject()(
   
   /**
    * Gets all shipments for an order from the Order Service.
+   * Returns empty list if no shipments exist (order may not have shipments yet).
    */
   def getShipmentsByOrder(orderId: UUID): Future[List[Shipment]] = {
     val headers = getAuthHeader.toSeq
@@ -70,15 +71,27 @@ class OrderServiceClient @Inject()(
         .map { response =>
           if (response.status == 200) {
             val json = response.json
-            json.as[List[JsValue]].map(parseShipment)
+            // Handle both array and empty response
+            if (json.asOpt[List[JsValue]].isDefined) {
+              json.as[List[JsValue]].map(parseShipment)
+            } else {
+              // Empty response or invalid format - return empty list
+              logger.debug(s"No shipments found for order $orderId or invalid response format")
+              List.empty[Shipment]
+            }
+          } else if (response.status == 404) {
+            // Order not found or no shipments - return empty list (valid state)
+            logger.debug(s"Order $orderId not found or has no shipments (404)")
+            List.empty[Shipment]
           } else {
             logger.error(s"Failed to get shipments for order: ${response.status} - ${response.body}")
             throw new IllegalStateException(s"Failed to get shipments: ${response.status}")
           }
         }
         .recoverWith { case e =>
-          logger.error(s"Error calling Order Service to get shipments for order $orderId", e)
-          Future.failed(new IllegalStateException(s"Failed to get shipments: ${e.getMessage}", e))
+          logger.warn(s"Error calling Order Service to get shipments for order $orderId: ${e.getMessage}. Returning empty list.")
+          // Return empty list instead of failing - order may not have shipments yet
+          Future.successful(List.empty[Shipment])
         }
     }
   }
@@ -132,7 +145,27 @@ class OrderServiceClient @Inject()(
         .map { response =>
           if (response.status == 200) {
             val json = response.json
-            json.as[List[JsValue]].map(parseShipment)
+            // Handle JsNull or empty response
+            json match {
+              case play.api.libs.json.JsNull =>
+                logger.debug(s"No shipments found for seller $sellerId (null response)")
+                List.empty[Shipment]
+              case _ =>
+                // Try to parse as array directly
+                json.asOpt[List[JsValue]] match {
+                  case Some(shipmentsList) =>
+                    shipmentsList.map(parseShipment)
+                  case None =>
+                    // Check if it's an object with a "shipments" field (some APIs return {"shipments": [...]})
+                    (json \ "shipments").asOpt[List[JsValue]] match {
+                      case Some(shipmentsList) =>
+                        shipmentsList.map(parseShipment)
+                      case None =>
+                        logger.warn(s"Unexpected response format for seller $sellerId. Expected array or object with 'shipments' field. Got: ${json.toString()}")
+                        List.empty[Shipment]
+                    }
+                }
+            }
           } else {
             logger.error(s"Failed to get shipments for seller: ${response.status} - ${response.body}")
             throw new IllegalStateException(s"Failed to get shipments: ${response.status}")

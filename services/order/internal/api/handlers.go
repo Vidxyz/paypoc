@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -311,22 +312,31 @@ func (h *OrderHandler) GetShipment(c *gin.Context) {
 
 // GetShipmentsByOrder handles GET /internal/orders/:id/shipments
 // Retrieves all shipments for an order (internal API)
+// Returns empty array if no shipments exist (order may not have shipments yet)
 func (h *OrderHandler) GetShipmentsByOrder(c *gin.Context) {
 	orderIDStr := c.Param("id")
+	log.Printf("[GetShipmentsByOrder] Received request for order ID: %s", orderIDStr)
+
 	orderID, err := uuid.Parse(orderIDStr)
 	if err != nil {
+		log.Printf("[GetShipmentsByOrder] Invalid order ID format: %s, error: %v", orderIDStr, err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order ID"})
 		return
 	}
 
-	// Get shipments from repository (service doesn't have this method, use repo directly)
-	// Note: This is a simple delegation - in a more complex setup, this would go through service layer
+	log.Printf("[GetShipmentsByOrder] Parsed order ID: %s, querying database...", orderID)
+
+	// Get shipments from repository
 	shipments, err := h.orderService.GetShipmentsByOrderID(c.Request.Context(), orderID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("[GetShipmentsByOrder] Database error for order %s: %v", orderID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get shipments: %v", err)})
 		return
 	}
 
+	log.Printf("[GetShipmentsByOrder] Found %d shipments for order %s", len(shipments), orderID)
+
+	// Return shipments array (empty if no shipments)
 	c.JSON(http.StatusOK, shipments)
 }
 
@@ -434,6 +444,11 @@ func (h *OrderHandler) GetShipmentsBySeller(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Always return an array, even if empty (nil becomes empty array)
+	if shipments == nil {
+		shipments = []models.Shipment{}
 	}
 
 	c.JSON(http.StatusOK, shipments)

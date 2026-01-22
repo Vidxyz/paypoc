@@ -1,6 +1,6 @@
 import React from 'react'
 import { AppBar, Toolbar, Typography, Button, Box, Avatar, Menu, MenuItem, Divider, ListItemIcon, ListItemText, IconButton } from '@mui/material'
-import { Logout, Store, Dashboard, Inventory, AccountCircle, ShoppingBag } from '@mui/icons-material'
+import { Logout, Store, Dashboard, Inventory, AccountCircle, ShoppingBag, LocalShipping } from '@mui/icons-material'
 import { useNavigate, useLocation } from 'react-router-dom'
 
 function SellerNavbar({ onLogout, userEmail }) {
@@ -105,6 +105,23 @@ function SellerNavbar({ onLogout, userEmail }) {
             }}
           >
             Orders
+          </Button>
+          <Button
+            color="inherit"
+            startIcon={<LocalShipping />}
+            onClick={() => navigate('/shipments')}
+            sx={{
+              minWidth: 'auto',
+              px: 2,
+              py: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/shipments' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
+          >
+            Shipments
           </Button>
         </Box>
         

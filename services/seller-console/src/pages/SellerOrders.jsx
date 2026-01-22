@@ -38,9 +38,11 @@ import CloseIcon from '@mui/icons-material/Close'
 import { createOrderApiClient } from '../api/orderApi'
 import { createCatalogApiClient } from '../api/catalogApi'
 import { useAuth0 } from '../auth/Auth0Provider'
+import { useNavigate } from 'react-router-dom'
 
 function SellerOrders({ userEmail }) {
   const { getAccessToken } = useAuth0()
+  const navigate = useNavigate()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -666,6 +668,15 @@ function SellerOrders({ userEmail }) {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => {
+              navigate('/shipments')
+            }}
+            variant="outlined"
+            color="primary"
+          >
+            Manage Shipments
+          </Button>
           <Button
             onClick={() => {
               setOrderDetailsOpen(false)

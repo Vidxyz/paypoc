@@ -60,12 +60,19 @@ class JwtValidator @Inject()(config: Configuration) {
   
   /**
    * Validates a JWT token and extracts the user ID.
+   * For SELLER accounts, returns the email (as String) since the database stores seller_id as email.
+   * For BUYER/ADMIN accounts, returns the user_id UUID (as String).
+   *
+   * @param token The JWT token string
+   * @return String (email for SELLER, UUID for BUYER/ADMIN) if token is valid, None otherwise
+   *         Returns None if token is expired, invalid, or missing required claims
    */
   def validateAndExtractUserId(token: String): Option[String] = {
     Try {
       val decodedJWT = decodeToken(token)
-      val userId = extractUserIdFromClaims(decodedJWT)
-      logger.debug(s"Successfully extracted user_id from JWT token: $userId")
+      val accountType = extractAccountTypeFromClaims(decodedJWT)
+      val userId = extractUserIdFromClaims(decodedJWT, accountType)
+      logger.debug(s"Successfully extracted user identifier from JWT token (account_type: ${accountType.value}): $userId")
       userId
     } match {
       case Success(userId) => Some(userId)
@@ -76,7 +83,7 @@ class JwtValidator @Inject()(config: Configuration) {
         logger.warn(s"JWT token validation failed: ${e.getMessage}")
         None
       case Failure(e: Exception) =>
-        logger.error("Error extracting user_id from JWT token", e)
+        logger.error("Error extracting user identifier from JWT token", e)
         None
     }
   }
@@ -143,14 +150,28 @@ class JwtValidator @Inject()(config: Configuration) {
       .getOrElse(throw new IllegalArgumentException(s"Invalid account_type in token: '$accountTypeClaim'. Must be one of: BUYER, SELLER, ADMIN"))
   }
   
-  private def extractUserIdFromClaims(decodedJWT: DecodedJWT): String = {
+  /**
+   * Extracts user identifier from JWT claims.
+   * For SELLER accounts: extracts email (since database stores seller_id as email)
+   * For BUYER/ADMIN accounts: extracts user_id (UUID)
+   */
+  private def extractUserIdFromClaims(decodedJWT: DecodedJWT, accountType: AccountType): String = {
     val claims = decodedJWT.getClaims
     val customNamespace = "https://buyit.local/"
     
-    val userIdClaim = Option(claims.get(customNamespace + "user_id"))
-      .map(_.asString())
-      .getOrElse(throw new IllegalArgumentException(s"Token missing custom claim: ${customNamespace}user_id"))
-    
-    userIdClaim
+    accountType match {
+      case AccountType.SELLER =>
+        // For SELLER, use email (matches how Order Service stores seller_id)
+        val emailClaim = Option(claims.get(customNamespace + "email"))
+          .map(_.asString())
+          .getOrElse(throw new IllegalArgumentException(s"Token missing custom claim: ${customNamespace}email"))
+        emailClaim.trim
+      case _ =>
+        // For BUYER/ADMIN, use user_id (UUID)
+        val userIdClaim = Option(claims.get(customNamespace + "user_id"))
+          .map(_.asString())
+          .getOrElse(throw new IllegalArgumentException(s"Token missing custom claim: ${customNamespace}user_id"))
+        userIdClaim.trim
+    }
   }
 }

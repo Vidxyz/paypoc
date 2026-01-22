@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -115,6 +116,9 @@ func (r *OrderRepository) GetItemsByOrderID(ctx context.Context, orderID uuid.UU
 }
 
 func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Shipment, error) {
+	// Log the query for debugging
+	log.Printf("[GetShipmentsByOrderID] Querying shipments for order_id: %s", orderID)
+	
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
 		        shipped_at, delivered_at, created_at, updated_at
@@ -122,6 +126,7 @@ func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uui
 		orderID,
 	)
 	if err != nil {
+		log.Printf("[GetShipmentsByOrderID] Database query error for order_id %s: %v", orderID, err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -135,11 +140,13 @@ func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uui
 			&shipment.CreatedAt, &shipment.UpdatedAt,
 		)
 		if err != nil {
+			log.Printf("[GetShipmentsByOrderID] Row scan error for order_id %s: %v", orderID, err)
 			return nil, err
 		}
 		shipments = append(shipments, shipment)
 	}
 
+	log.Printf("[GetShipmentsByOrderID] Found %d shipments for order_id %s", len(shipments), orderID)
 	return shipments, rows.Err()
 }
 

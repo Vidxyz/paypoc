@@ -36,6 +36,7 @@ import InfoIcon from '@mui/icons-material/Info'
 import ShoppingBagIcon from '@mui/icons-material/ShoppingBag'
 import CloseIcon from '@mui/icons-material/Close'
 import ReceiptIcon from '@mui/icons-material/Receipt'
+import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import { orderApiClient } from '../api/orderApi'
 import { catalogApiClient } from '../api/catalogApi'
 import { fulfillmentApiClient } from '../api/fulfillmentApi'
@@ -188,7 +189,17 @@ function Orders({ buyerId, userEmail }) {
       CANCELLED: { label: status, color: 'error', icon: <ErrorIcon /> },
       PROCESSING: { label: status, color: 'info', icon: <InfoIcon /> },
       SHIPPED: { label: status, color: 'info', icon: <InfoIcon /> },
-      DELIVERED: { label: status, color: 'success', icon: <CheckCircleIcon /> },
+      DELIVERED: { 
+        label: status, 
+        color: 'primary', 
+        icon: <LocalShippingIcon />,
+        variant: 'filled',
+        sx: { 
+          bgcolor: 'primary.main',
+          color: 'primary.contrastText',
+          fontWeight: 'bold'
+        }
+      },
     }
     const chip = chips[status] || { label: status, color: 'default', icon: <InfoIcon /> }
     return (
@@ -196,7 +207,9 @@ function Orders({ buyerId, userEmail }) {
         icon={chip.icon}
         label={chip.label}
         color={chip.color}
+        variant={chip.variant || 'outlined'}
         size="small"
+        sx={chip.sx}
       />
     )
   }

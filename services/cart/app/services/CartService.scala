@@ -173,7 +173,7 @@ class CartService @Inject()(
   }
   
   // Initiate checkout
-  def checkout(buyerId: String, authToken: String): Future[models.CheckoutResponse] = {
+  def checkout(buyerId: String, authToken: String, deliveryDetails: Option[models.DeliveryDetails] = None): Future[models.CheckoutResponse] = {
     getOrCreateCart(buyerId).flatMap { cart =>
       if (cart.items.isEmpty) {
         Future.failed(new IllegalArgumentException("Cannot checkout empty cart"))
@@ -184,7 +184,7 @@ class CartService @Inject()(
             // Delete from Redis
             cartRepository.deleteActiveCart(buyerId).flatMap { _ =>
               // Call Order Service to create provisional order
-              val orderRequest = Json.obj(
+              val orderRequestBase = Json.obj(
                 "cart_id" -> cart.cartId.toString,
                 "buyer_id" -> buyerId,
                 "items" -> Json.toJson(cart.items.map { item =>
@@ -200,6 +200,21 @@ class CartService @Inject()(
                   )
                 })
               )
+              
+              // Add delivery details if provided
+              val orderRequest = deliveryDetails match {
+                case Some(details) =>
+                  orderRequestBase + ("delivery_details" -> Json.obj(
+                    "full_name" -> details.fullName,
+                    "address" -> details.address,
+                    "city" -> details.city,
+                    "province" -> details.province,
+                    "postal_code" -> details.postalCode,
+                    "country" -> details.country,
+                    "phone" -> details.phone
+                  ))
+                case None => orderRequestBase
+              }
               
               val headers = getOrderInternalAuthHeader.toSeq
               if (headers.isEmpty) {

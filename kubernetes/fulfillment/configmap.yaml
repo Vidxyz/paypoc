@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fulfillment-config
+  namespace: fulfillment
+data:
+  application.conf: |
+    play {
+      http {
+        secret.key = "change-me-in-production"
+        secret.key = ${?PLAY_HTTP_SECRET_KEY}
+      }
+      server {
+        http {
+          port = 9006
+        }
+      }
+      filters {
+        enabled += "play.filters.cors.CORSFilter"
+      }
+    }
+    
+    kafka {
+      bootstrap.servers = ${KAFKA_BOOTSTRAP_SERVERS}
+      topics {
+        fulfillment.events = "fulfillment.events"
+      }
+    }
+    
+    order {
+      service {
+        url = "http://order-service.order.svc.cluster.local:8084"
+        url = ${?ORDER_SERVICE_URL}
+        internal {
+          api {
+            token = ${?ORDER_INTERNAL_API_TOKEN}
+          }
+        }
+      }
+    }
+    
+    auth0 {
+      domain = ${AUTH0_DOMAIN}
+      audience = ${?AUTH0_AUDIENCE}
+    }
+    
+    fulfillment {
+      internal {
+        api {
+          token = ${?FULFILLMENT_INTERNAL_API_TOKEN}
+        }
+      }
+    }
+    
+    akka {
+      loglevel = "INFO"
+    }
+    
+    play.filters.cors {
+      allowedOrigins = ["https://buyit.local", "https://admin.local", "https://seller.local", "http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"]
+      allowedHttpMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+      allowedHttpHeaders = ["Accept", "Content-Type", "Authorization", "Origin", "X-Requested-With"]
+      exposedHeaders = []
+      supportsCredentials = true
+      preflightMaxAge = 3 days
+    }
+    
+    play.filters.hosts {
+      allowed = ["."]
+    }

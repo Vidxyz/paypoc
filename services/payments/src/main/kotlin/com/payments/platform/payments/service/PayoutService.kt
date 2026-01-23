@@ -265,6 +265,23 @@ class PayoutService(
     }
     
     /**
+     * Gets paginated payouts for a seller.
+     * 
+     * @param sellerId Seller ID
+     * @param page Page number (0-indexed)
+     * @param size Page size
+     * @return Pair of (payouts list, total count)
+     */
+    fun getPayoutsBySellerId(sellerId: String, page: Int, size: Int): Pair<List<Payout>, Long> {
+        val pageable = org.springframework.data.domain.PageRequest.of(page, size, org.springframework.data.domain.Sort.by("createdAt").descending())
+        val payoutPage = payoutRepository.findBySellerId(sellerId, pageable)
+        return Pair(
+            payoutPage.content.map { it.toDomain() },
+            payoutPage.totalElements
+        )
+    }
+    
+    /**
      * Finds a payout by Stripe Transfer ID.
      * 
      * @param stripeTransferId Stripe Transfer ID

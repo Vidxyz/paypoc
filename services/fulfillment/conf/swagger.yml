@@ -1,0 +1,56 @@
+openapi: 3.0.0
+info:
+  title: Fulfillment Service API
+  version: 1.0.0
+  description: |
+    The Fulfillment Service manages shipment tracking and status updates for the payments platform.
+    
+    **Key Features:**
+    - Shipment status management (PENDING, PROCESSING, SHIPPED, IN_TRANSIT, DELIVERED, etc.)
+    - Tracking number and carrier management
+    - Seller shipment management (update status, add tracking)
+    - Buyer tracking lookup (view shipment status for orders)
+    - Carrier webhook processing (UPS, FedEx, DHL)
+    - Automatic order status aggregation based on shipment statuses
+    
+    **Shipment Lifecycle:**
+    1. **PENDING**: Shipment created, awaiting processing
+    2. **PROCESSING**: Seller is preparing the shipment
+    3. **SHIPPED**: Shipment has been shipped with tracking number
+    4. **IN_TRANSIT**: Package is in transit
+    5. **OUT_FOR_DELIVERY**: Package is out for delivery
+    6. **DELIVERED**: Package has been delivered
+    7. **CANCELLED**: Shipment was cancelled
+    8. **RETURNED**: Package was returned
+    
+    **State Transitions:**
+    - PENDING → PROCESSING, CANCELLED
+    - PROCESSING → SHIPPED, CANCELLED
+    - SHIPPED → IN_TRANSIT, DELIVERED, RETURNED
+    - IN_TRANSIT → OUT_FOR_DELIVERY, DELIVERED, RETURNED
+    - OUT_FOR_DELIVERY → DELIVERED, RETURNED
+    - DELIVERED, CANCELLED, RETURNED are terminal states
+    
+    **Order Service Integration:**
+    - Fulfillment Service uses Order Service as the source of truth for shipments
+    - All shipment updates are persisted in Order Service
+    - Order status is automatically recalculated when shipment statuses change
+    
+    **Carrier Webhooks:**
+    - Supports webhook endpoints for UPS, FedEx, DHL, and generic carriers
+    - Automatically maps carrier-specific statuses to platform shipment statuses
+    - Updates shipment status based on carrier webhook events
+    
+    **Authentication:**
+    - Seller endpoints require JWT bearer token with SELLER or ADMIN account type
+    - Buyer endpoints require JWT bearer token with BUYER or ADMIN account type
+    - Webhook endpoints require internal API token
+  contact:
+    name: Payments Platform Team
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:9006
+    description: Local development
+  - url: http://fulfillment.local
+    description: Minikube

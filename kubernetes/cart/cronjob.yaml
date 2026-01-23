@@ -4,7 +4,7 @@ metadata:
   name: cart-cleanup-cronjob
   namespace: cart
 spec:
-  # Run every hour
+  # Run every hour at the top of the hour
   schedule: "0 * * * *"
   successfulJobsHistoryLimit: 0
   failedJobsHistoryLimit: 3

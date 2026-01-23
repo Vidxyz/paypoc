@@ -35,9 +35,9 @@ export const orderApiClient = {
     const { page = 0, pageSize = 20, buyerId } = options
     const params = new URLSearchParams()
     params.append('page', page.toString())
-    params.append('pageSize', pageSize.toString())
+    params.append('page_size', pageSize.toString()) // API expects snake_case
     if (buyerId) {
-      params.append('buyerId', buyerId)
+      params.append('buyer_id', buyerId) // API expects snake_case
     }
 
     const response = await orderApi.get(`/api/orders?${params.toString()}`, {
@@ -45,7 +45,15 @@ export const orderApiClient = {
         Authorization: `Bearer ${token}`,
       },
     })
-    return response.data
+    // Normalize response keys to camelCase for frontend consistency
+    const data = response.data
+    if (data.total_pages !== undefined) {
+      data.totalPages = data.total_pages
+    }
+    if (data.page_size !== undefined) {
+      data.pageSize = data.page_size
+    }
+    return data
   },
 
   /**
@@ -76,6 +84,34 @@ export const orderApiClient = {
       },
       responseType: 'blob',
     })
+    return response.data
+  },
+
+  /**
+   * Update delivery details for a PENDING order
+   * @param {string} orderId - Order UUID
+   * @param {Object} deliveryDetails - Delivery details object
+   * @param {string} token - JWT access token
+   * @returns {Promise<Object>} Success response
+   */
+  updateDeliveryDetails: async (orderId, deliveryDetails, token) => {
+    const response = await orderApi.put(
+      `/api/orders/${orderId}/delivery-details`,
+      {
+        full_name: (deliveryDetails.fullName || '').trim(),
+        address: (deliveryDetails.address || '').trim(),
+        city: (deliveryDetails.city || '').trim(),
+        province: (deliveryDetails.province || '').trim(),
+        postal_code: (deliveryDetails.postalCode || '').trim(),
+        country: (deliveryDetails.country || '').trim(),
+        phone: (deliveryDetails.phone || '').trim(),
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    )
     return response.data
   },
 }

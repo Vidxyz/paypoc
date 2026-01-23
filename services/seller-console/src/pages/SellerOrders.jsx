@@ -38,9 +38,11 @@ import CloseIcon from '@mui/icons-material/Close'
 import { createOrderApiClient } from '../api/orderApi'
 import { createCatalogApiClient } from '../api/catalogApi'
 import { useAuth0 } from '../auth/Auth0Provider'
+import { useNavigate } from 'react-router-dom'
 
 function SellerOrders({ userEmail }) {
   const { getAccessToken } = useAuth0()
+  const navigate = useNavigate()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -89,6 +91,7 @@ function SellerOrders({ userEmail }) {
         throw new Error(response.error)
       }
       
+      // Always replace orders (traditional pagination, not infinite scroll)
       setOrders(response.orders || [])
       setTotalPages(response.total_pages || response.totalPages || 0)
       setTotal(response.total || 0)
@@ -373,14 +376,31 @@ function SellerOrders({ userEmail }) {
                 </Table>
               </TableContainer>
 
+              {/* Pagination Controls */}
               {totalPages > 1 && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Page {page + 1} of {totalPages} ({total} total orders)
+                    </Typography>
+                    <Pagination
+                      count={totalPages}
+                      page={page + 1}
+                      onChange={handlePageChange}
+                      color="primary"
+                      showFirstButton
+                      showLastButton
+                    />
+                  </Box>
+                </Box>
+              )}
+              
+              {/* Show total count if no pagination needed */}
+              {totalPages <= 1 && total > 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                  <Pagination
-                    count={totalPages}
-                    page={page + 1}
-                    onChange={handlePageChange}
-                    color="primary"
-                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Showing all {total} orders
+                  </Typography>
                 </Box>
               )}
             </>
@@ -491,6 +511,96 @@ function SellerOrders({ userEmail }) {
                   </Grid>
                 )}
               </Grid>
+
+              {/* Delivery Details Section */}
+              {(orderDetails.delivery_details || orderDetails.deliveryDetails) && (() => {
+                const delivery = orderDetails.delivery_details || orderDetails.deliveryDetails
+                const hasDeliveryInfo = delivery.full_name || delivery.fullName || delivery.address || 
+                                       delivery.city || delivery.province || delivery.postal_code || 
+                                       delivery.postalCode || delivery.phone
+                if (!hasDeliveryInfo) return null
+                
+                return (
+                  <Box sx={{ mb: 3 }}>
+                    <Divider sx={{ my: 3 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Delivery Information
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {(delivery.full_name || delivery.fullName) && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Full Name
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.full_name || delivery.fullName}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.address && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Address
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.address}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.city && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            City
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.city}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.province && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Province/State
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.province}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {(delivery.postal_code || delivery.postalCode) && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Postal Code
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.postal_code || delivery.postalCode}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.country && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Country
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.country}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.phone && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Phone
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.phone}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                )
+              })()}
 
               <Divider sx={{ my: 3 }} />
 
@@ -666,6 +776,15 @@ function SellerOrders({ userEmail }) {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => {
+              navigate('/shipments')
+            }}
+            variant="outlined"
+            color="primary"
+          >
+            Manage Shipments
+          </Button>
           <Button
             onClick={() => {
               setOrderDetailsOpen(false)

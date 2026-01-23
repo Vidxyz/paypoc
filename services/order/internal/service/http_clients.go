@@ -290,6 +290,58 @@ func NewCartClient(baseURL string) *CartClient {
 	}
 }
 
+// GetCartStatus gets the status of a cart by ID
+func (c *CartClient) GetCartStatus(ctx context.Context, cartID uuid.UUID) (string, error) {
+	// Get internal API token from environment
+	internalToken := os.Getenv("CART_INTERNAL_API_TOKEN")
+	if internalToken == "" {
+		return "", fmt.Errorf("CART_INTERNAL_API_TOKEN not configured")
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/internal/carts/%s/exists", c.baseURL, cartID.String()),
+		nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+internalToken)
+
+	// Make request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cart service endpoint not available: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Cart doesn't exist
+		return "", nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("cart service returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var response struct {
+		Exists bool   `json:"exists"`
+		Status string `json:"status,omitempty"`
+	}
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !response.Exists {
+		return "", nil
+	}
+
+	return response.Status, nil
+}
+
 func (c *CartClient) UpdateCartStatus(ctx context.Context, cartID uuid.UUID, status string) error {
 	// Get internal API token from environment
 	internalToken := os.Getenv("CART_INTERNAL_API_TOKEN")

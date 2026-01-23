@@ -63,7 +63,7 @@ func (c *KafkaConsumer) processMessage(ctx context.Context, data []byte) error {
 		return fmt.Errorf("failed to parse event type: %w", err)
 	}
 
-	// Route to appropriate handler based on event type
+	// Route to appropriate handler based on event/command type
 	switch eventType.Type {
 	case "PAYMENT_CAPTURED":
 		return c.handlePaymentCaptured(ctx, data)

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,12 +22,68 @@ func NewOrderRepository(pool *pgxpool.Pool) *OrderRepository {
 
 func (r *OrderRepository) Create(ctx context.Context, order *models.Order) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO orders (id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`INSERT INTO orders (id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, 
+		                     delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		                     delivery_postal_code, delivery_country, delivery_phone, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		order.ID, order.CartID, order.BuyerID, order.Status, order.Provisional, order.PaymentID,
-		order.TotalCents, order.Currency, order.CreatedAt, order.UpdatedAt,
+		order.TotalCents, order.Currency,
+		getDeliveryField(order.DeliveryDetails, "full_name"),
+		getDeliveryField(order.DeliveryDetails, "address"),
+		getDeliveryField(order.DeliveryDetails, "city"),
+		getDeliveryField(order.DeliveryDetails, "province"),
+		getDeliveryField(order.DeliveryDetails, "postal_code"),
+		getDeliveryField(order.DeliveryDetails, "country"),
+		getDeliveryField(order.DeliveryDetails, "phone"),
+		order.CreatedAt, order.UpdatedAt,
 	)
 	return err
+}
+
+// Helper function to get delivery field value or nil
+func getDeliveryField(details *models.DeliveryDetails, field string) interface{} {
+	if details == nil {
+		return nil
+	}
+	switch field {
+	case "full_name":
+		if details.FullName == "" {
+			return nil
+		}
+		return details.FullName
+	case "address":
+		if details.Address == "" {
+			return nil
+		}
+		return details.Address
+	case "city":
+		if details.City == "" {
+			return nil
+		}
+		return details.City
+	case "province":
+		if details.Province == "" {
+			return nil
+		}
+		return details.Province
+	case "postal_code":
+		if details.PostalCode == "" {
+			return nil
+		}
+		return details.PostalCode
+	case "country":
+		if details.Country == "" {
+			return nil
+		}
+		return details.Country
+	case "phone":
+		if details.Phone == "" {
+			return nil
+		}
+		return details.Phone
+	default:
+		return nil
+	}
 }
 
 func (r *OrderRepository) CreateItems(ctx context.Context, items []models.OrderItem) error {
@@ -65,14 +122,20 @@ func (r *OrderRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Or
 	var refundStatus string
 
 	var cartID *uuid.UUID
+	var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		        delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		        delivery_postal_code, delivery_country, delivery_phone,
 		        created_at, updated_at, confirmed_at, cancelled_at
 		 FROM orders WHERE id = $1`,
 		id,
 	).Scan(
 		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
-		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
+		&order.TotalCents, &order.Currency, &refundStatus,
+		&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+		&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+		&order.CreatedAt, &order.UpdatedAt,
 		&confirmedAt, &cancelledAt,
 	)
 	order.CartID = cartID
@@ -83,7 +146,38 @@ func (r *OrderRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Or
 	order.ConfirmedAt = confirmedAt
 	order.CancelledAt = cancelledAt
 	order.RefundStatus = refundStatus
+
+	// Build delivery details if any field is present and non-empty
+	// Check both that pointer is not nil AND that the value is not empty
+	hasDeliveryInfo := (deliveryFullName != nil && *deliveryFullName != "") ||
+		(deliveryAddress != nil && *deliveryAddress != "") ||
+		(deliveryCity != nil && *deliveryCity != "") ||
+		(deliveryProvince != nil && *deliveryProvince != "") ||
+		(deliveryPostalCode != nil && *deliveryPostalCode != "") ||
+		(deliveryCountry != nil && *deliveryCountry != "") ||
+		(deliveryPhone != nil && *deliveryPhone != "")
+
+	if hasDeliveryInfo {
+		order.DeliveryDetails = &models.DeliveryDetails{
+			FullName:   getStringValue(deliveryFullName),
+			Address:    getStringValue(deliveryAddress),
+			City:       getStringValue(deliveryCity),
+			Province:   getStringValue(deliveryProvince),
+			PostalCode: getStringValue(deliveryPostalCode),
+			Country:    getStringValue(deliveryCountry),
+			Phone:      getStringValue(deliveryPhone),
+		}
+	}
+
 	return &order, nil
+}
+
+// Helper function to get string value from pointer
+func getStringValue(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
 }
 
 func (r *OrderRepository) GetItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.OrderItem, error) {
@@ -115,11 +209,160 @@ func (r *OrderRepository) GetItemsByOrderID(ctx context.Context, orderID uuid.UU
 }
 
 func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Shipment, error) {
+	// Log the query for debugging
+	log.Printf("[GetShipmentsByOrderID] Querying shipments for order_id: %s", orderID)
+
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
 		        shipped_at, delivered_at, created_at, updated_at
 		 FROM shipments WHERE order_id = $1`,
 		orderID,
+	)
+	if err != nil {
+		log.Printf("[GetShipmentsByOrderID] Database query error for order_id %s: %v", orderID, err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var shipments []models.Shipment
+	for rows.Next() {
+		var shipment models.Shipment
+		err := rows.Scan(
+			&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+			&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+			&shipment.CreatedAt, &shipment.UpdatedAt,
+		)
+		if err != nil {
+			log.Printf("[GetShipmentsByOrderID] Row scan error for order_id %s: %v", orderID, err)
+			return nil, err
+		}
+		shipments = append(shipments, shipment)
+	}
+
+	log.Printf("[GetShipmentsByOrderID] Found %d shipments for order_id %s", len(shipments), orderID)
+	return shipments, rows.Err()
+}
+
+func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUID) (*models.Order, error) {
+	var order models.Order
+	var confirmedAt, cancelledAt *time.Time
+	var refundStatus string
+	var cartID *uuid.UUID
+	var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
+
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		        delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		        delivery_postal_code, delivery_country, delivery_phone,
+		        created_at, updated_at, confirmed_at, cancelled_at
+		 FROM orders WHERE payment_id = $1`,
+		paymentID,
+	).Scan(
+		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+		&order.TotalCents, &order.Currency, &refundStatus,
+		&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+		&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+		&order.CreatedAt, &order.UpdatedAt,
+		&confirmedAt, &cancelledAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	order.CartID = cartID
+	order.ConfirmedAt = confirmedAt
+	order.CancelledAt = cancelledAt
+	order.RefundStatus = refundStatus
+
+	// Build delivery details if any field is present
+	if deliveryFullName != nil || deliveryAddress != nil || deliveryCity != nil ||
+		deliveryProvince != nil || deliveryPostalCode != nil || deliveryCountry != nil || deliveryPhone != nil {
+		order.DeliveryDetails = &models.DeliveryDetails{
+			FullName:   getStringValue(deliveryFullName),
+			Address:    getStringValue(deliveryAddress),
+			City:       getStringValue(deliveryCity),
+			Province:   getStringValue(deliveryProvince),
+			PostalCode: getStringValue(deliveryPostalCode),
+			Country:    getStringValue(deliveryCountry),
+			Phone:      getStringValue(deliveryPhone),
+		}
+	}
+
+	return &order, nil
+}
+
+func (r *OrderRepository) ConfirmOrder(ctx context.Context, orderID uuid.UUID, confirmedAt time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE orders SET status = $1, provisional = $2, confirmed_at = $3, updated_at = $4 WHERE id = $5`,
+		models.OrderStatusConfirmed, false, confirmedAt, time.Now(), orderID,
+	)
+	return err
+}
+
+func (r *OrderRepository) UpdateShipmentProvisional(ctx context.Context, orderID uuid.UUID, provisional bool) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE shipments SET provisional = $1, updated_at = $2 WHERE order_id = $3`,
+		provisional, time.Now(), orderID,
+	)
+	return err
+}
+
+// GetShipmentByID retrieves a shipment by ID
+func (r *OrderRepository) GetShipmentByID(ctx context.Context, shipmentID uuid.UUID) (*models.Shipment, error) {
+	var shipment models.Shipment
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments WHERE id = $1`,
+		shipmentID,
+	).Scan(
+		&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+		&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+		&shipment.CreatedAt, &shipment.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &shipment, nil
+}
+
+// UpdateShipmentStatus updates the status and timestamps of a shipment
+func (r *OrderRepository) UpdateShipmentStatus(ctx context.Context, shipmentID uuid.UUID, status string, shippedAt, deliveredAt *time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE shipments SET status = $1, shipped_at = $2, delivered_at = $3, updated_at = $4 WHERE id = $5`,
+		status, shippedAt, deliveredAt, time.Now(), shipmentID,
+	)
+	return err
+}
+
+// UpdateShipmentTracking updates the tracking number and carrier of a shipment
+func (r *OrderRepository) UpdateShipmentTracking(ctx context.Context, shipmentID uuid.UUID, trackingNumber, carrier string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE shipments SET tracking_number = $1, carrier = $2, updated_at = $3 WHERE id = $4`,
+		trackingNumber, carrier, time.Now(), shipmentID,
+	)
+	return err
+}
+
+// UpdateOrderStatus updates the status of an order
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status models.OrderStatus) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3`,
+		status, time.Now(), orderID,
+	)
+	return err
+}
+
+// GetShipmentsBySellerID retrieves all shipments for a seller
+func (r *OrderRepository) GetShipmentsBySellerID(ctx context.Context, sellerID string, limit, offset int) ([]models.Shipment, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments 
+		 WHERE seller_id = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2 OFFSET $3`,
+		sellerID, limit, offset,
 	)
 	if err != nil {
 		return nil, err
@@ -143,47 +386,23 @@ func (r *OrderRepository) GetShipmentsByOrderID(ctx context.Context, orderID uui
 	return shipments, rows.Err()
 }
 
-func (r *OrderRepository) GetByPaymentID(ctx context.Context, paymentID uuid.UUID) (*models.Order, error) {
-	var order models.Order
-	var confirmedAt, cancelledAt *time.Time
-	var refundStatus string
-	var cartID *uuid.UUID
-
+// GetShipmentByTrackingNumber retrieves a shipment by tracking number
+func (r *OrderRepository) GetShipmentByTrackingNumber(ctx context.Context, trackingNumber string) (*models.Shipment, error) {
+	var shipment models.Shipment
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, cart_id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
-		        created_at, updated_at, confirmed_at, cancelled_at
-		 FROM orders WHERE payment_id = $1`,
-		paymentID,
+		`SELECT id, order_id, seller_id, status, provisional, tracking_number, carrier, 
+		        shipped_at, delivered_at, created_at, updated_at
+		 FROM shipments WHERE tracking_number = $1`,
+		trackingNumber,
 	).Scan(
-		&order.ID, &cartID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
-		&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
-		&confirmedAt, &cancelledAt,
+		&shipment.ID, &shipment.OrderID, &shipment.SellerID, &shipment.Status, &shipment.Provisional,
+		&shipment.TrackingNumber, &shipment.Carrier, &shipment.ShippedAt, &shipment.DeliveredAt,
+		&shipment.CreatedAt, &shipment.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
-
-	order.CartID = cartID
-	order.ConfirmedAt = confirmedAt
-	order.CancelledAt = cancelledAt
-	order.RefundStatus = refundStatus
-	return &order, nil
-}
-
-func (r *OrderRepository) ConfirmOrder(ctx context.Context, orderID uuid.UUID, confirmedAt time.Time) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE orders SET status = $1, provisional = $2, confirmed_at = $3, updated_at = $4 WHERE id = $5`,
-		models.OrderStatusConfirmed, false, confirmedAt, time.Now(), orderID,
-	)
-	return err
-}
-
-func (r *OrderRepository) UpdateShipmentProvisional(ctx context.Context, orderID uuid.UUID, provisional bool) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE shipments SET provisional = $1, updated_at = $2 WHERE order_id = $3`,
-		provisional, time.Now(), orderID,
-	)
-	return err
+	return &shipment, nil
 }
 
 func (r *OrderRepository) CancelOrder(ctx context.Context, orderID uuid.UUID, cancelledAt time.Time) error {
@@ -285,6 +504,32 @@ func (r *OrderRepository) UpdateOrderRefundStatusTx(ctx context.Context, tx pgx.
 	_, err := tx.Exec(ctx,
 		`UPDATE orders SET refund_status = $1, updated_at = $2 WHERE id = $3`,
 		status, time.Now(), orderID,
+	)
+	return err
+}
+
+// UpdateDeliveryDetails updates the delivery details for an order
+func (r *OrderRepository) UpdateDeliveryDetails(ctx context.Context, orderID uuid.UUID, details *models.DeliveryDetails) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE orders SET 
+			delivery_full_name = $1, 
+			delivery_address = $2, 
+			delivery_city = $3, 
+			delivery_province = $4, 
+			delivery_postal_code = $5, 
+			delivery_country = $6, 
+			delivery_phone = $7, 
+			updated_at = $8 
+		WHERE id = $9`,
+		getDeliveryField(details, "full_name"),
+		getDeliveryField(details, "address"),
+		getDeliveryField(details, "city"),
+		getDeliveryField(details, "province"),
+		getDeliveryField(details, "postal_code"),
+		getDeliveryField(details, "country"),
+		getDeliveryField(details, "phone"),
+		time.Now(),
+		orderID,
 	)
 	return err
 }
@@ -425,6 +670,8 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		// Use STARTSWITH (LIKE pattern) to match both email and UUID patterns
 		// This allows filtering by partial email (e.g., "buyer@") or partial UUID (e.g., "550e8400")
 		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		                delivery_postal_code, delivery_country, delivery_phone,
 		                created_at, updated_at, confirmed_at, cancelled_at
 		         FROM orders 
 		         WHERE buyer_id LIKE $1 || '%'
@@ -433,6 +680,8 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		args = []interface{}{*buyerID, limit, offset}
 	} else {
 		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		                delivery_postal_code, delivery_country, delivery_phone,
 		                created_at, updated_at, confirmed_at, cancelled_at
 		         FROM orders 
 		         ORDER BY created_at DESC
@@ -451,10 +700,14 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		var order models.Order
 		var confirmedAt, cancelledAt *time.Time
 		var refundStatus string
+		var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
 
 		err := rows.Scan(
 			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
-			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
+			&order.TotalCents, &order.Currency, &refundStatus,
+			&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+			&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+			&order.CreatedAt, &order.UpdatedAt,
 			&confirmedAt, &cancelledAt,
 		)
 		if err != nil {
@@ -469,10 +722,129 @@ func (r *OrderRepository) ListOrders(ctx context.Context, buyerID *string, limit
 		}
 		order.RefundStatus = refundStatus
 
+		// Build delivery details if any field is present
+		if deliveryFullName != nil || deliveryAddress != nil || deliveryCity != nil ||
+			deliveryProvince != nil || deliveryPostalCode != nil || deliveryCountry != nil || deliveryPhone != nil {
+			order.DeliveryDetails = &models.DeliveryDetails{
+				FullName:   getStringValue(deliveryFullName),
+				Address:    getStringValue(deliveryAddress),
+				City:       getStringValue(deliveryCity),
+				Province:   getStringValue(deliveryProvince),
+				PostalCode: getStringValue(deliveryPostalCode),
+				Country:    getStringValue(deliveryCountry),
+				Phone:      getStringValue(deliveryPhone),
+			}
+		}
+
 		orders = append(orders, order)
 	}
 
 	return orders, rows.Err()
+}
+
+// ListOrdersExcludingPending lists orders excluding PENDING and CANCELLED status (for buyer order history)
+// CANCELLED orders are abandoned checkouts that buyers never completed, so they shouldn't see them
+// buyerID filter uses STARTSWITH matching to support both email and UUID partial matches
+func (r *OrderRepository) ListOrdersExcludingPending(ctx context.Context, buyerID *string, limit, offset int) ([]models.Order, error) {
+	var query string
+	var args []interface{}
+
+	if buyerID != nil {
+		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		                delivery_postal_code, delivery_country, delivery_phone,
+		                created_at, updated_at, confirmed_at, cancelled_at
+		         FROM orders 
+		         WHERE buyer_id LIKE $1 || '%' AND status != $2 AND status != $3
+		         ORDER BY created_at DESC
+		         LIMIT $4 OFFSET $5`
+		args = []interface{}{*buyerID, models.OrderStatusPending, models.OrderStatusCancelled, limit, offset}
+	} else {
+		query = `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+		                delivery_full_name, delivery_address, delivery_city, delivery_province, 
+		                delivery_postal_code, delivery_country, delivery_phone,
+		                created_at, updated_at, confirmed_at, cancelled_at
+		         FROM orders 
+		         WHERE status != $1 AND status != $2
+		         ORDER BY created_at DESC
+		         LIMIT $3 OFFSET $4`
+		args = []interface{}{models.OrderStatusPending, models.OrderStatusCancelled, limit, offset}
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+	for rows.Next() {
+		var order models.Order
+		var confirmedAt, cancelledAt *time.Time
+		var refundStatus string
+		var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
+
+		err := rows.Scan(
+			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+			&order.TotalCents, &order.Currency, &refundStatus,
+			&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+			&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+			&order.CreatedAt, &order.UpdatedAt,
+			&confirmedAt, &cancelledAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if confirmedAt != nil {
+			order.ConfirmedAt = confirmedAt
+		}
+		if cancelledAt != nil {
+			order.CancelledAt = cancelledAt
+		}
+		order.RefundStatus = refundStatus
+
+		// Build delivery details if any field is present
+		if deliveryFullName != nil || deliveryAddress != nil || deliveryCity != nil ||
+			deliveryProvince != nil || deliveryPostalCode != nil || deliveryCountry != nil || deliveryPhone != nil {
+			order.DeliveryDetails = &models.DeliveryDetails{
+				FullName:   getStringValue(deliveryFullName),
+				Address:    getStringValue(deliveryAddress),
+				City:       getStringValue(deliveryCity),
+				Province:   getStringValue(deliveryProvince),
+				PostalCode: getStringValue(deliveryPostalCode),
+				Country:    getStringValue(deliveryCountry),
+				Phone:      getStringValue(deliveryPhone),
+			}
+		}
+
+		orders = append(orders, order)
+	}
+
+	return orders, rows.Err()
+}
+
+// CountOrdersExcludingPending counts total orders excluding PENDING and CANCELLED status (for buyer order history)
+// CANCELLED orders are abandoned checkouts that buyers never completed, so they shouldn't see them
+// buyerID filter uses STARTSWITH matching to support both email and UUID partial matches
+func (r *OrderRepository) CountOrdersExcludingPending(ctx context.Context, buyerID *string) (int, error) {
+	var count int
+	var err error
+
+	if buyerID != nil {
+		// Use STARTSWITH (LIKE pattern) to match both email and UUID patterns
+		err = r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM orders WHERE buyer_id LIKE $1 || '%' AND status != $2 AND status != $3`,
+			*buyerID, models.OrderStatusPending, models.OrderStatusCancelled,
+		).Scan(&count)
+	} else {
+		err = r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM orders WHERE status != $1 AND status != $2`,
+			models.OrderStatusPending, models.OrderStatusCancelled,
+		).Scan(&count)
+	}
+
+	return count, err
 }
 
 // CountOrders counts total orders with optional buyer filtering
@@ -494,6 +866,70 @@ func (r *OrderRepository) CountOrders(ctx context.Context, buyerID *string) (int
 	}
 
 	return count, err
+}
+
+// FindStalePendingOrders finds PENDING orders older than the specified duration
+// These are orders that were created during checkout but never completed (abandoned)
+func (r *OrderRepository) FindStalePendingOrders(ctx context.Context, olderThan time.Time) ([]models.Order, error) {
+	query := `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+	                delivery_full_name, delivery_address, delivery_city, delivery_province, 
+	                delivery_postal_code, delivery_country, delivery_phone,
+	                created_at, updated_at, confirmed_at, cancelled_at
+	         FROM orders 
+	         WHERE status = $1 AND provisional = true AND created_at < $2
+	         ORDER BY created_at ASC`
+
+	rows, err := r.pool.Query(ctx, query, models.OrderStatusPending, olderThan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+	for rows.Next() {
+		var order models.Order
+		var confirmedAt, cancelledAt *time.Time
+		var refundStatus string
+		var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
+
+		err := rows.Scan(
+			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
+			&order.TotalCents, &order.Currency, &refundStatus,
+			&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+			&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+			&order.CreatedAt, &order.UpdatedAt,
+			&confirmedAt, &cancelledAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if confirmedAt != nil {
+			order.ConfirmedAt = confirmedAt
+		}
+		if cancelledAt != nil {
+			order.CancelledAt = cancelledAt
+		}
+		order.RefundStatus = refundStatus
+
+		// Build delivery details if any field is present
+		if deliveryFullName != nil || deliveryAddress != nil || deliveryCity != nil ||
+			deliveryProvince != nil || deliveryPostalCode != nil || deliveryCountry != nil || deliveryPhone != nil {
+			order.DeliveryDetails = &models.DeliveryDetails{
+				FullName:   getStringValue(deliveryFullName),
+				Address:    getStringValue(deliveryAddress),
+				City:       getStringValue(deliveryCity),
+				Province:   getStringValue(deliveryProvince),
+				PostalCode: getStringValue(deliveryPostalCode),
+				Country:    getStringValue(deliveryCountry),
+				Phone:      getStringValue(deliveryPhone),
+			}
+		}
+
+		orders = append(orders, order)
+	}
+
+	return orders, rows.Err()
 }
 
 // ListOrdersForSeller retrieves orders where the seller has items, with pagination
@@ -528,6 +964,8 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 
 	// Get orders for these IDs
 	query := `SELECT id, buyer_id, status, provisional, payment_id, total_cents, currency, refund_status,
+	                 delivery_full_name, delivery_address, delivery_city, delivery_province, 
+	                 delivery_postal_code, delivery_country, delivery_phone,
 	                 created_at, updated_at, confirmed_at, cancelled_at
 	          FROM orders 
 	          WHERE id = ANY($1)
@@ -544,10 +982,14 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 		var order models.Order
 		var confirmedAt, cancelledAt *time.Time
 		var refundStatus string
+		var deliveryFullName, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryCountry, deliveryPhone *string
 
 		err := rows.Scan(
 			&order.ID, &order.BuyerID, &order.Status, &order.Provisional, &order.PaymentID,
-			&order.TotalCents, &order.Currency, &refundStatus, &order.CreatedAt, &order.UpdatedAt,
+			&order.TotalCents, &order.Currency, &refundStatus,
+			&deliveryFullName, &deliveryAddress, &deliveryCity, &deliveryProvince,
+			&deliveryPostalCode, &deliveryCountry, &deliveryPhone,
+			&order.CreatedAt, &order.UpdatedAt,
 			&confirmedAt, &cancelledAt,
 		)
 		if err != nil {
@@ -561,6 +1003,20 @@ func (r *OrderRepository) ListOrdersForSeller(ctx context.Context, sellerID stri
 			order.CancelledAt = cancelledAt
 		}
 		order.RefundStatus = refundStatus
+
+		// Build delivery details if any field is present
+		if deliveryFullName != nil || deliveryAddress != nil || deliveryCity != nil ||
+			deliveryProvince != nil || deliveryPostalCode != nil || deliveryCountry != nil || deliveryPhone != nil {
+			order.DeliveryDetails = &models.DeliveryDetails{
+				FullName:   getStringValue(deliveryFullName),
+				Address:    getStringValue(deliveryAddress),
+				City:       getStringValue(deliveryCity),
+				Province:   getStringValue(deliveryProvince),
+				PostalCode: getStringValue(deliveryPostalCode),
+				Country:    getStringValue(deliveryCountry),
+				Phone:      getStringValue(deliveryPhone),
+			}
+		}
 
 		orders = append(orders, order)
 	}

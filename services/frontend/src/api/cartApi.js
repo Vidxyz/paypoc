@@ -104,10 +104,11 @@ export const cartApiClient = {
    * @param {string} token - JWT access token
    * @returns {Promise<Object>} CheckoutResponse with orderId, paymentId, clientSecret, checkoutUrl
    */
-  checkout: async (token) => {
+  checkout: async (token, deliveryDetails = null) => {
+    const body = deliveryDetails ? { delivery_details: deliveryDetails } : {}
     const response = await cartApi.post(
       '/api/cart/checkout',
-      {},
+      body,
       {
         headers: {
           Authorization: `Bearer ${token}`,

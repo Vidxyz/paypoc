@@ -7,11 +7,16 @@ import SellerProfile from './pages/SellerProfile'
 import Products from './pages/Products'
 import AddProduct from './pages/AddProduct'
 import SellerOrders from './pages/SellerOrders'
+import Shipments from './pages/Shipments'
+import Payouts from './pages/Payouts'
 import SellerNavbar from './components/SellerNavbar'
 import LoginModal from './components/LoginModal'
 import SignupModal from './components/SignupModal'
 import SuccessModal from './components/SuccessModal'
 import ErrorModal from './components/ErrorModal'
+
+// Production mode flag - set to false for nonproduction (development/testing)
+export const IS_PRODUCTION = import.meta.env.VITE_IS_PRODUCTION === 'true' || false
 
 function AppContent() {
   const { isLoading, isAuthenticated, user, login, logout, initError, error, setError, clearError } = useAuth0()
@@ -291,6 +296,26 @@ function AppContent() {
           element={
             isSellerAuthenticated ? (
               <SellerOrders userEmail={userEmail} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/shipments"
+          element={
+            isSellerAuthenticated ? (
+              <Shipments userEmail={userEmail} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/payouts"
+          element={
+            isSellerAuthenticated ? (
+              <Payouts />
             ) : (
               <Navigate to="/" replace />
             )

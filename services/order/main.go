@@ -71,7 +71,7 @@ func main() {
 	// Initialize handlers
 	orderHandler := api.NewOrderHandler(orderService, invoiceGen)
 
-	// Initialize Kafka consumer
+	// Initialize Kafka consumer for events
 	kafkaConsumer := kafka.NewKafkaConsumer(
 		config.KafkaBrokers,
 		config.KafkaEventsTopic,
@@ -80,13 +80,28 @@ func main() {
 	)
 	defer kafkaConsumer.Close()
 
-	// Start Kafka consumer in background
+	// Initialize Kafka consumer for commands
+	commandsConsumer := kafka.NewCommandsConsumer(
+		config.KafkaBrokers,
+		config.KafkaCommandsTopic,
+		config.KafkaCommandsGroupID,
+		orderService,
+	)
+	defer commandsConsumer.Close()
+
+	// Start Kafka consumers in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go func() {
 		if err := kafkaConsumer.Start(ctx); err != nil {
-			log.Printf("Kafka consumer error: %v", err)
+			log.Printf("Kafka events consumer error: %v", err)
+		}
+	}()
+
+	go func() {
+		if err := commandsConsumer.Start(ctx); err != nil {
+			log.Printf("Kafka commands consumer error: %v", err)
 		}
 	}()
 
@@ -146,6 +161,15 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	// Health check
 	router.GET("/health", orderHandler.Health)
 
+	// Debug route to test internal API routing (remove in production)
+	router.GET("/debug/routes", func(c *gin.Context) {
+		routes := make([]string, 0)
+		for _, route := range router.Routes() {
+			routes = append(routes, fmt.Sprintf("%s %s", route.Method, route.Path))
+		}
+		c.JSON(http.StatusOK, gin.H{"routes": routes})
+	})
+
 	// API Documentation
 	router.GET("/api-docs", orderHandler.SwaggerUI)
 	router.GET("/api-docs/openapi.json", orderHandler.OpenAPIJSON)
@@ -158,6 +182,15 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 	{
 		// Secure with internal API token
 		internal.POST("/orders", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.CreateOrder)
+		// Shipment endpoints for Fulfillment Service
+		// IMPORTANT: More specific routes must come before less specific ones
+		// /orders/:id/shipments must come before /shipments/:id to avoid route conflicts
+		internal.GET("/orders/:id/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsByOrder)
+		internal.GET("/sellers/:sellerId/shipments", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentsBySeller)
+		internal.GET("/shipments/by-tracking/:trackingNumber", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipmentByTracking)
+		internal.GET("/shipments/:id", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.GetShipment)
+		internal.PUT("/shipments/:id/status", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentStatus)
+		internal.PUT("/shipments/:id/tracking", auth.InternalTokenAuth(config.InternalAPIToken), orderHandler.UpdateShipmentTracking)
 	}
 
 	// Public API (requires JWT authentication)
@@ -168,6 +201,8 @@ func setupRouter(orderHandler *api.OrderHandler, config *Config) *gin.Engine {
 		// Get single order - supports BUYER, ADMIN, and SELLER (sellers see only their items)
 		api.GET("/orders/:id", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin, auth.AccountTypeSeller), orderHandler.GetOrder)
 		api.GET("/orders/:id/invoice", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin), orderHandler.GetInvoice)
+		// Update delivery details - buyer only (for PENDING orders)
+		api.PUT("/orders/:id/delivery-details", jwtAuth.RequireAccountType(auth.AccountTypeBuyer, auth.AccountTypeAdmin), orderHandler.UpdateDeliveryDetails)
 		// Full refund - admin only
 		api.POST("/orders/:id/refund", jwtAuth.RequireAccountType(auth.AccountTypeAdmin), orderHandler.CreateFullRefund)
 		// Partial refund - admin only
@@ -189,7 +224,9 @@ type Config struct {
 	CatalogServiceURL      string
 	KafkaBrokers           []string
 	KafkaEventsTopic       string
+	KafkaCommandsTopic     string
 	KafkaConsumerGroupID   string
+	KafkaCommandsGroupID   string
 	InternalAPIToken       string
 	Auth0Domain            string
 	Auth0Audience          string
@@ -218,7 +255,9 @@ func loadConfig() *Config {
 		CatalogServiceURL:      getEnv("CATALOG_SERVICE_URL", "http://catalog-service.catalog.svc.cluster.local:8082"),
 		KafkaBrokers:           []string{getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092")},
 		KafkaEventsTopic:       getEnv("KAFKA_EVENTS_TOPIC", "payment.events"),
+		KafkaCommandsTopic:     getEnv("KAFKA_COMMANDS_TOPIC", "order.commands"),
 		KafkaConsumerGroupID:   getEnv("KAFKA_CONSUMER_GROUP_ID", "order-service"),
+		KafkaCommandsGroupID:   getEnv("KAFKA_COMMANDS_GROUP_ID", "order-service-commands"),
 		InternalAPIToken:       getEnv("INTERNAL_API_TOKEN", ""),
 		Auth0Domain:            getEnv("AUTH0_DOMAIN", ""),
 		Auth0Audience:          getEnv("AUTH0_AUDIENCE", ""),

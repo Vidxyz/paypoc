@@ -20,19 +20,20 @@ const (
 
 // Order represents an order in the system
 type Order struct {
-	ID           uuid.UUID
-	CartID       *uuid.UUID // Cart ID that this order was created from
-	BuyerID      string
-	Status       OrderStatus
-	Provisional  bool
-	PaymentID    *uuid.UUID
-	TotalCents   int64
-	Currency     string
-	RefundStatus string // NONE, PARTIAL, FULL
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	ConfirmedAt  *time.Time
-	CancelledAt  *time.Time
+	ID              uuid.UUID
+	CartID          *uuid.UUID // Cart ID that this order was created from
+	BuyerID         string
+	Status          OrderStatus
+	Provisional     bool
+	PaymentID       *uuid.UUID
+	TotalCents      int64
+	Currency        string
+	RefundStatus    string // NONE, PARTIAL, FULL
+	DeliveryDetails *DeliveryDetails
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ConfirmedAt     *time.Time
+	CancelledAt     *time.Time
 }
 
 // OrderItem represents an item in an order
@@ -53,24 +54,36 @@ type OrderItem struct {
 
 // Shipment represents a shipment (one per seller)
 type Shipment struct {
-	ID             uuid.UUID
-	OrderID        uuid.UUID
-	SellerID       string
-	Status         string // PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED
-	Provisional    bool
-	TrackingNumber *string
-	Carrier        *string
-	ShippedAt      *time.Time
-	DeliveredAt    *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID             uuid.UUID  `json:"id"`
+	OrderID        uuid.UUID  `json:"order_id"`
+	SellerID       string     `json:"seller_id"`
+	Status         string     `json:"status"` // PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED
+	Provisional    bool       `json:"provisional"`
+	TrackingNumber *string    `json:"tracking_number,omitempty"`
+	Carrier        *string    `json:"carrier,omitempty"`
+	ShippedAt      *time.Time `json:"shipped_at,omitempty"`
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// DeliveryDetails represents delivery/shipping information
+type DeliveryDetails struct {
+	FullName   string `json:"full_name,omitempty"`
+	Address    string `json:"address,omitempty"`
+	City       string `json:"city,omitempty"`
+	Province   string `json:"province,omitempty"`
+	PostalCode string `json:"postal_code,omitempty"`
+	Country    string `json:"country,omitempty"`
+	Phone      string `json:"phone,omitempty"`
 }
 
 // CreateOrderRequest represents a request to create an order
 type CreateOrderRequest struct {
-	CartID  uuid.UUID  `json:"cart_id" binding:"required"`
-	BuyerID string     `json:"buyer_id" binding:"required"`
-	Items   []CartItem `json:"items" binding:"required"`
+	CartID          uuid.UUID        `json:"cart_id" binding:"required"`
+	BuyerID         string           `json:"buyer_id" binding:"required"`
+	Items           []CartItem       `json:"items" binding:"required"`
+	DeliveryDetails *DeliveryDetails `json:"delivery_details,omitempty"`
 }
 
 // CartItem represents an item from the cart
@@ -95,17 +108,18 @@ type CreateOrderResponse struct {
 
 // OrderResponse represents an order in API responses
 type OrderResponse struct {
-	ID           uuid.UUID           `json:"id"`
-	BuyerID      string              `json:"buyer_id"`
-	Status       string              `json:"status"`
-	TotalCents   int64               `json:"total_cents"`
-	Currency     string              `json:"currency"`
-	PaymentID    *uuid.UUID          `json:"payment_id,omitempty"`
-	RefundStatus string              `json:"refund_status,omitempty"`
-	Items        []OrderItemResponse `json:"items"`
-	Shipments    []ShipmentResponse  `json:"shipments"`
-	CreatedAt    time.Time           `json:"created_at"`
-	ConfirmedAt  *time.Time          `json:"confirmed_at,omitempty"`
+	ID              uuid.UUID           `json:"id"`
+	BuyerID         string              `json:"buyer_id"`
+	Status          string              `json:"status"`
+	TotalCents      int64               `json:"total_cents"`
+	Currency        string              `json:"currency"`
+	PaymentID       *uuid.UUID          `json:"payment_id,omitempty"`
+	RefundStatus    string              `json:"refund_status,omitempty"`
+	DeliveryDetails *DeliveryDetails    `json:"delivery_details,omitempty"`
+	Items           []OrderItemResponse `json:"items"`
+	Shipments       []ShipmentResponse  `json:"shipments"`
+	CreatedAt       time.Time           `json:"created_at"`
+	ConfirmedAt     *time.Time          `json:"confirmed_at,omitempty"`
 }
 
 // OrderItemResponse represents an order item in API responses

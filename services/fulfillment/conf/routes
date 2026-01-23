@@ -1,0 +1,314 @@
+# Routes
+# This file defines all application routes
+# https://www.playframework.com/documentation/latest/ScalaRouting
+
+# Root route - redirect to API docs
+GET     /                               controllers.ApiDocsController.swaggerUI
+
+###
+#  summary: Health check endpoint
+#  tags:
+#    - Health
+#  responses:
+#    200:
+#      description: Service is healthy
+#      content:
+#        application/json:
+#          schema:
+#            type: object
+#            properties:
+#              status:
+#                type: string
+#                example: healthy
+#              service:
+#                type: string
+#                example: fulfillment-service
+###
+GET     /health                          controllers.HealthController.health
+
+###
+#  summary: Get shipment by ID
+#  tags:
+#    - Fulfillment
+#  description: Retrieves a shipment by ID. Sellers can only access their own shipments.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with SELLER or ADMIN account_type claim
+#    - name: shipmentId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Shipment UUID
+#  responses:
+#    200:
+#      description: Shipment retrieved successfully
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - shipment belongs to different seller
+#    404:
+#      description: Shipment not found
+###
+GET     /api/seller/shipments/:shipmentId       controllers.FulfillmentController.getShipment(shipmentId: java.util.UUID)
+
+###
+#  summary: List shipments for seller
+#  tags:
+#    - Seller Fulfillment
+#  description: Lists all shipments for the authenticated seller.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with SELLER or ADMIN account_type claim
+#    - name: limit
+#      in: query
+#      required: false
+#      schema:
+#        type: integer
+#        default: 50
+#      description: Maximum number of shipments to return
+#  responses:
+#    200:
+#      description: Shipments retrieved successfully
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+###
+GET     /api/seller/shipments                   controllers.FulfillmentController.listShipments
+
+###
+#  summary: Update shipment status
+#  tags:
+#    - Fulfillment
+#  description: Updates the status of a shipment. Validates state transitions and seller authorization.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with SELLER or ADMIN account_type claim
+#    - name: shipmentId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Shipment UUID
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          type: object
+#          required:
+#            - status
+#          properties:
+#            status:
+#              type: string
+#              enum: [PENDING, PROCESSING, SHIPPED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, CANCELLED, RETURNED]
+#  responses:
+#    200:
+#      description: Shipment status updated successfully
+#    400:
+#      description: Invalid status or invalid state transition
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - shipment belongs to different seller
+###
+PUT     /api/seller/shipments/:shipmentId/status controllers.FulfillmentController.updateShipmentStatus(shipmentId: java.util.UUID)
+
+###
+#  summary: Add tracking information
+#  tags:
+#    - Fulfillment
+#  description: Adds tracking number and carrier to a shipment.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with SELLER or ADMIN account_type claim
+#    - name: shipmentId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Shipment UUID
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          type: object
+#          required:
+#            - tracking_number
+#            - carrier
+#          properties:
+#            tracking_number:
+#              type: string
+#            carrier:
+#              type: string
+#  responses:
+#    200:
+#      description: Tracking information added successfully
+#    400:
+#      description: Invalid request data
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+#    403:
+#      description: Forbidden - shipment belongs to different seller
+###
+PUT     /api/seller/shipments/:shipmentId/tracking controllers.FulfillmentController.addTracking(shipmentId: java.util.UUID)
+
+###
+#  summary: Get tracking information for an order
+#  tags:
+#    - Tracking
+#  description: Retrieves all shipments (tracking information) for an order. Buyers can only access their own orders.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#    - name: orderId
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#        format: uuid
+#      description: Order UUID
+#  responses:
+#    200:
+#      description: Tracking information retrieved successfully
+#    401:
+#      description: Unauthorized - missing or invalid bearer token
+###
+GET     /api/tracking/orders/:orderId    controllers.TrackingController.getOrderTracking(orderId: java.util.UUID)
+
+###
+#  summary: Get tracking by tracking number
+#  tags:
+#    - Tracking
+#  description: Retrieves tracking information by tracking number. Not yet implemented.
+#  security:
+#    - bearerAuth: []
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (JWT) with BUYER or ADMIN account_type claim
+#    - name: trackingNumber
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#      description: Tracking number
+#  responses:
+#    501:
+#      description: Not yet implemented
+###
+GET     /api/tracking/:trackingNumber    controllers.TrackingController.getTrackingByNumber(trackingNumber: String)
+
+###
+#  summary: Carrier webhook endpoint (generic)
+#  tags:
+#    - Webhooks
+#  description: Generic webhook endpoint for carrier status updates. Requires internal API token.
+#  parameters:
+#    - name: Authorization
+#      in: header
+#      required: true
+#      schema:
+#        type: string
+#      description: Bearer token (internal API token)
+#    - name: carrier
+#      in: path
+#      required: true
+#      schema:
+#        type: string
+#      description: Carrier name (UPS, FEDEX, DHL, etc.)
+#  requestBody:
+#    required: true
+#    content:
+#      application/json:
+#        schema:
+#          type: object
+#          required:
+#            - tracking_number
+#            - status
+#          properties:
+#            tracking_number:
+#              type: string
+#            status:
+#              type: string
+#            timestamp:
+#              type: string
+#            metadata:
+#              type: object
+#  responses:
+#    200:
+#      description: Webhook processed successfully
+#    401:
+#      description: Unauthorized - invalid or missing token
+###
+POST    /api/webhooks/carriers/:carrier  controllers.CarrierWebhookController.handleCarrierWebhook(carrier: String)
+
+###
+#  summary: UPS webhook endpoint
+#  tags:
+#    - Webhooks
+#  description: Webhook endpoint for UPS status updates.
+###
+POST    /api/webhooks/ups                 controllers.CarrierWebhookController.handleUpsWebhook
+
+###
+#  summary: FedEx webhook endpoint
+#  tags:
+#    - Webhooks
+#  description: Webhook endpoint for FedEx status updates.
+###
+POST    /api/webhooks/fedex               controllers.CarrierWebhookController.handleFedExWebhook
+
+###
+#  summary: DHL webhook endpoint
+#  tags:
+#    - Webhooks
+#  description: Webhook endpoint for DHL status updates.
+###
+POST    /api/webhooks/dhl                 controllers.CarrierWebhookController.handleDhlWebhook
+
+# Swagger/OpenAPI Documentation  
+GET     /api-docs/openapi.json           controllers.ApiDocsController.openApiJson
+GET     /api-docs                        controllers.ApiDocsController.swaggerUI
+
+# Favicon (prevent 404 errors)
+GET     /favicon.ico                     controllers.ApiDocsController.favicon
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file                    controllers.Assets.at(path="/public", file)

@@ -36,8 +36,10 @@ import InfoIcon from '@mui/icons-material/Info'
 import ShoppingBagIcon from '@mui/icons-material/ShoppingBag'
 import CloseIcon from '@mui/icons-material/Close'
 import ReceiptIcon from '@mui/icons-material/Receipt'
+import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import { orderApiClient } from '../api/orderApi'
 import { catalogApiClient } from '../api/catalogApi'
+import { fulfillmentApiClient } from '../api/fulfillmentApi'
 import { useAuth0 } from '../auth/Auth0Provider'
 
 function Orders({ buyerId, userEmail }) {
@@ -49,10 +51,18 @@ function Orders({ buyerId, userEmail }) {
   const [orderDetailsOpen, setOrderDetailsOpen] = useState(false)
   const [loadingOrderDetails, setLoadingOrderDetails] = useState(false)
   const [orderDetails, setOrderDetails] = useState(null)
+  const [trackingInfo, setTrackingInfo] = useState(null)
+  const [loadingTracking, setLoadingTracking] = useState(false)
   const [page, setPage] = useState(0)
   const [pageSize] = useState(20)
   const [totalPages, setTotalPages] = useState(0)
   const [total, setTotal] = useState(0)
+
+  useEffect(() => {
+    // Reset to first page when buyerId changes
+    setPage(0)
+    setOrders([])
+  }, [buyerId])
 
   useEffect(() => {
     loadOrders()
@@ -78,6 +88,7 @@ function Orders({ buyerId, userEmail }) {
         throw new Error(response.error)
       }
       
+      // Always replace orders (traditional pagination, not infinite scroll)
       setOrders(response.orders || [])
       setTotalPages(response.totalPages || 0)
       setTotal(response.total || 0)
@@ -131,6 +142,18 @@ function Orders({ buyerId, userEmail }) {
       }
       
       setOrderDetails(details)
+
+      // Fetch tracking information from fulfillment service
+      setLoadingTracking(true)
+      try {
+        const tracking = await fulfillmentApiClient.getOrderTracking(order.id, token)
+        setTrackingInfo(tracking || [])
+      } catch (err) {
+        console.error('Failed to fetch tracking information:', err)
+        setTrackingInfo([])
+      } finally {
+        setLoadingTracking(false)
+      }
     } catch (err) {
       setError(err.message || 'Failed to load order details')
     } finally {
@@ -166,7 +189,17 @@ function Orders({ buyerId, userEmail }) {
       CANCELLED: { label: status, color: 'error', icon: <ErrorIcon /> },
       PROCESSING: { label: status, color: 'info', icon: <InfoIcon /> },
       SHIPPED: { label: status, color: 'info', icon: <InfoIcon /> },
-      DELIVERED: { label: status, color: 'success', icon: <CheckCircleIcon /> },
+      DELIVERED: { 
+        label: status, 
+        color: 'primary', 
+        icon: <LocalShippingIcon />,
+        variant: 'filled',
+        sx: { 
+          bgcolor: 'primary.main',
+          color: 'primary.contrastText',
+          fontWeight: 'bold'
+        }
+      },
     }
     const chip = chips[status] || { label: status, color: 'default', icon: <InfoIcon /> }
     return (
@@ -174,7 +207,9 @@ function Orders({ buyerId, userEmail }) {
         icon={chip.icon}
         label={chip.label}
         color={chip.color}
+        variant={chip.variant || 'outlined'}
         size="small"
+        sx={chip.sx}
       />
     )
   }
@@ -361,19 +396,37 @@ function Orders({ buyerId, userEmail }) {
                           })()}
                         </TableCell>
                         <TableCell>
-                          {order.payment_id || order.paymentId ? (
-                            <Chip
-                              label="Paid"
-                              color="success"
-                              size="small"
-                            />
-                          ) : (
-                            <Chip
-                              label="Pending"
-                              color="warning"
-                              size="small"
-                            />
-                          )}
+                          {(() => {
+                            // If order is cancelled, payment was never completed
+                            if (order.status === 'CANCELLED') {
+                              return (
+                                <Chip
+                                  label="Cancelled"
+                                  color="error"
+                                  size="small"
+                                />
+                              )
+                            }
+                            // Only show "Paid" if order is confirmed and has payment_id
+                            // PENDING orders with payment_id are not actually paid yet
+                            if ((order.payment_id || order.paymentId) && order.status === 'CONFIRMED') {
+                              return (
+                                <Chip
+                                  label="Paid"
+                                  color="success"
+                                  size="small"
+                                />
+                              )
+                            }
+                            // Default to pending for orders without payment or not confirmed
+                            return (
+                              <Chip
+                                label="Pending"
+                                color="warning"
+                                size="small"
+                              />
+                            )
+                          })()}
                         </TableCell>
                         <TableCell>
                           {getRefundStatusChip(order.refund_status || order.refundStatus)}
@@ -393,14 +446,31 @@ function Orders({ buyerId, userEmail }) {
                 </Table>
               </TableContainer>
 
+              {/* Pagination Controls */}
               {totalPages > 1 && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, mt: 3 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Page {page + 1} of {totalPages} ({total} total orders)
+                    </Typography>
+                    <Pagination
+                      count={totalPages}
+                      page={page + 1}
+                      onChange={handlePageChange}
+                      color="primary"
+                      showFirstButton
+                      showLastButton
+                    />
+                  </Box>
+                </Box>
+              )}
+              
+              {/* Show total count if no pagination needed */}
+              {totalPages <= 1 && total > 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                  <Pagination
-                    count={totalPages}
-                    page={page + 1}
-                    onChange={handlePageChange}
-                    color="primary"
-                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Showing all {total} orders
+                  </Typography>
                 </Box>
               )}
             </>
@@ -415,6 +485,7 @@ function Orders({ buyerId, userEmail }) {
           setOrderDetailsOpen(false)
           setSelectedOrder(null)
           setOrderDetails(null)
+          setTrackingInfo(null)
         }}
         maxWidth="md"
         fullWidth
@@ -507,25 +578,43 @@ function Orders({ buyerId, userEmail }) {
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                     Payment Status
                   </Typography>
-                  {orderDetails.payment_id || orderDetails.paymentId ? (
-                    <Box>
+                  {(() => {
+                    // If order is cancelled, payment was never completed
+                    if (orderDetails.status === 'CANCELLED') {
+                      return (
+                        <Chip
+                          label="Cancelled"
+                          color="error"
+                          size="small"
+                        />
+                      )
+                    }
+                    // Only show "Paid" if order is confirmed and has payment_id
+                    // PENDING orders with payment_id are not actually paid yet
+                    if ((orderDetails.payment_id || orderDetails.paymentId) && orderDetails.status === 'CONFIRMED') {
+                      return (
+                        <Box>
+                          <Chip
+                            label="Paid"
+                            color="success"
+                            size="small"
+                            sx={{ mb: 0.5 }}
+                          />
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Payment ID: {(orderDetails.payment_id || orderDetails.paymentId).substring(0, 8)}...
+                          </Typography>
+                        </Box>
+                      )
+                    }
+                    // Default to pending for orders without payment or not confirmed
+                    return (
                       <Chip
-                        label="Paid"
-                        color="success"
+                        label="Pending Payment"
+                        color="warning"
                         size="small"
-                        sx={{ mb: 0.5 }}
                       />
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Payment ID: {(orderDetails.payment_id || orderDetails.paymentId).substring(0, 8)}...
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <Chip
-                      label="Pending Payment"
-                      color="warning"
-                      size="small"
-                    />
-                  )}
+                    )
+                  })()}
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -546,6 +635,96 @@ function Orders({ buyerId, userEmail }) {
                   </Grid>
                 )}
               </Grid>
+
+              {/* Delivery Details Section */}
+              {(orderDetails.delivery_details || orderDetails.deliveryDetails) && (() => {
+                const delivery = orderDetails.delivery_details || orderDetails.deliveryDetails
+                const hasDeliveryInfo = delivery.full_name || delivery.fullName || delivery.address || 
+                                       delivery.city || delivery.province || delivery.postal_code || 
+                                       delivery.postalCode || delivery.phone
+                if (!hasDeliveryInfo) return null
+                
+                return (
+                  <Box sx={{ mb: 3 }}>
+                    <Divider sx={{ my: 3 }} />
+                    <Typography variant="h6" gutterBottom>
+                      Delivery Information
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {(delivery.full_name || delivery.fullName) && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Full Name
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.full_name || delivery.fullName}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.address && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Address
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.address}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.city && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            City
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.city}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.province && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Province/State
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.province}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {(delivery.postal_code || delivery.postalCode) && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Postal Code
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.postal_code || delivery.postalCode}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.country && (
+                        <Grid item xs={12} sm={6}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Country
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.country}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {delivery.phone && (
+                        <Grid item xs={12}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Phone
+                          </Typography>
+                          <Typography variant="body1">
+                            {delivery.phone}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                )
+              })()}
 
               {(() => {
                 // Calculate totals for summary
@@ -714,25 +893,49 @@ function Orders({ buyerId, userEmail }) {
                 })}
               </List>
 
-              {orderDetails.shipments && orderDetails.shipments.length > 0 && (
+              {/* Tracking Information from Fulfillment Service */}
+              {loadingTracking ? (
+                <>
+                  <Divider sx={{ my: 3 }} />
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
+                      Loading tracking information...
+                    </Typography>
+                  </Box>
+                </>
+              ) : trackingInfo && trackingInfo.length > 0 ? (
                 <>
                   <Divider sx={{ my: 3 }} />
                   <Typography variant="h6" gutterBottom>
-                    Shipments ({orderDetails.shipments.length})
+                    Tracking Information ({trackingInfo.length} shipment{trackingInfo.length !== 1 ? 's' : ''})
                   </Typography>
                   <List>
-                    {orderDetails.shipments.map((shipment, index) => {
-                      const sellerId = shipment.seller_id || shipment.sellerId
+                    {trackingInfo.map((shipment, index) => {
                       const shipmentStatus = shipment.status
-                      const trackingNumber = shipment.tracking_number || shipment.trackingNumber
+                      const trackingNumber = shipment.trackingNumber || shipment.tracking_number
                       const carrier = shipment.carrier
-                      const shippedAt = shipment.shipped_at || shipment.shippedAt
-                      const deliveredAt = shipment.delivered_at || shipment.deliveredAt
+                      const shippedAt = shipment.shippedAt || shipment.shipped_at
+                      const deliveredAt = shipment.deliveredAt || shipment.delivered_at
+                      const sellerId = shipment.sellerId || shipment.seller_id
                       
                       // Find items for this seller
                       const shipmentItems = orderDetails.items?.filter(
                         item => (item.seller_id || item.sellerId) === sellerId
                       ) || []
+                      
+                      const getStatusColor = (status) => {
+                        switch (status) {
+                          case 'DELIVERED': return 'success'
+                          case 'SHIPPED':
+                          case 'IN_TRANSIT':
+                          case 'OUT_FOR_DELIVERY': return 'info'
+                          case 'PROCESSING': return 'warning'
+                          case 'CANCELLED':
+                          case 'RETURNED': return 'error'
+                          default: return 'default'
+                        }
+                      }
                       
                       return (
                         <Box key={shipment.id || index}>
@@ -752,7 +955,7 @@ function Orders({ buyerId, userEmail }) {
                                   </Box>
                                   <Chip
                                     label={shipmentStatus}
-                                    color={shipmentStatus === 'DELIVERED' ? 'success' : shipmentStatus === 'SHIPPED' ? 'info' : 'default'}
+                                    color={getStatusColor(shipmentStatus)}
                                     size="small"
                                   />
                                 </Box>
@@ -761,33 +964,48 @@ function Orders({ buyerId, userEmail }) {
                                 <Box sx={{ mt: 1 }}>
                                   {trackingNumber && (
                                     <Typography variant="body2" color="text.secondary">
-                                      Tracking: {trackingNumber}
+                                      <strong>Tracking:</strong> {trackingNumber}
                                     </Typography>
                                   )}
                                   {carrier && (
                                     <Typography variant="body2" color="text.secondary">
-                                      Carrier: {carrier}
+                                      <strong>Carrier:</strong> {carrier}
                                     </Typography>
                                   )}
                                   {shippedAt && (
                                     <Typography variant="caption" color="text.secondary" display="block">
-                                      Shipped: {formatDate(shippedAt)}
+                                      <strong>Shipped:</strong> {formatDate(shippedAt)}
                                     </Typography>
                                   )}
                                   {deliveredAt && (
                                     <Typography variant="caption" color="text.secondary" display="block">
-                                      Delivered: {formatDate(deliveredAt)}
+                                      <strong>Delivered:</strong> {formatDate(deliveredAt)}
+                                    </Typography>
+                                  )}
+                                  {!trackingNumber && shipmentStatus === 'PENDING' && (
+                                    <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: 'italic' }}>
+                                      Awaiting shipment preparation
                                     </Typography>
                                   )}
                                 </Box>
                               }
                             />
                           </ListItem>
-                          {index < orderDetails.shipments.length - 1 && <Divider />}
+                          {index < trackingInfo.length - 1 && <Divider />}
                         </Box>
                       )
                     })}
                   </List>
+                </>
+              ) : trackingInfo !== null && (
+                <>
+                  <Divider sx={{ my: 3 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Tracking Information
+                  </Typography>
+                  <Alert severity="info">
+                    No tracking information available yet. Shipments will appear here once they are created.
+                  </Alert>
                 </>
               )}
             </Box>

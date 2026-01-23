@@ -4,6 +4,7 @@ import com.payments.platform.payments.client.LedgerClient
 import com.payments.platform.payments.client.LedgerClientException
 import com.payments.platform.payments.config.AuthenticationInterceptor
 import com.payments.platform.payments.models.User
+import com.payments.platform.payments.persistence.PaymentRepository
 import com.payments.platform.payments.service.PaymentCreationException
 import com.payments.platform.payments.service.PaymentService
 import io.swagger.v3.oas.annotations.Operation
@@ -23,7 +24,8 @@ import java.util.UUID
 @Tag(name = "Payments", description = "Payments Service API - Orchestration layer for payment workflows")
 class PaymentController(
     private val paymentService: PaymentService,
-    private val ledgerClient: LedgerClient
+    private val ledgerClient: LedgerClient,
+    private val paymentRepository: PaymentRepository
 ) {
     
     /**
@@ -170,22 +172,31 @@ class PaymentController(
         }
         
         // Get payments based on account type
-        val payments = when (user.accountType) {
+        val (payments, totalCount) = when (user.accountType) {
             User.AccountType.BUYER -> {
                 // For buyers, get payments where they are the buyer
                 val buyerId = user.userId.toString()
-                paymentService.getPaymentsByBuyerId(
+                val buyerPayments = paymentService.getPaymentsByBuyerId(
                     buyerId = buyerId,
                     page = validPage,
                     size = validSize,
                     sortBy = validSortBy,
                     sortDirection = validSortDirection
                 )
+                // For buyers, get total from Page result
+                val sort = if (validSortDirection.uppercase() == "ASC") {
+                    org.springframework.data.domain.Sort.by(validSortBy).ascending()
+                } else {
+                    org.springframework.data.domain.Sort.by(validSortBy).descending()
+                }
+                val pageable = org.springframework.data.domain.PageRequest.of(validPage, validSize, sort)
+                val buyerPage = paymentRepository.findByBuyerId(buyerId, pageable)
+                Pair(buyerPayments, buyerPage.totalElements)
             }
             User.AccountType.SELLER -> {
                 // For sellers, get payments where they are the seller (using email as sellerId)
                 val sellerId = user.email
-                paymentService.getPaymentsBySellerId(
+                paymentService.getPaymentsBySellerIdWithCount(
                     sellerId = sellerId,
                     page = validPage,
                     size = validSize,
@@ -196,7 +207,7 @@ class PaymentController(
             else -> {
                 // ADMIN accounts can see all payments, but for now return empty
                 // In the future, we might want to add admin-specific logic here
-                emptyList()
+                Pair(emptyList(), 0L)
             }
         }
         
@@ -218,7 +229,7 @@ class PaymentController(
                 },
                 page = validPage,
                 size = validSize,
-                total = payments.size
+                total = totalCount.toInt()
             )
         )
     }

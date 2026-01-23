@@ -107,6 +107,24 @@ function Navbar({ onLogout, buyerId, userEmail }) {
           >
             Home
           </Button>
+          <Button
+            component={Link}
+            to="/orders"
+            color="inherit"
+            startIcon={<ShoppingBagIcon />}
+            sx={{
+              minWidth: 'auto',
+              px: 2,
+              py: 1,
+              borderRadius: 2,
+              bgcolor: location.pathname === '/orders' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+              '&:hover': {
+                bgcolor: 'rgba(255, 255, 255, 0.1)',
+              },
+            }}
+          >
+            Orders
+          </Button>
           <IconButton
             onClick={handleCartClick}
             color="inherit"
@@ -127,24 +145,6 @@ function Navbar({ onLogout, buyerId, userEmail }) {
             open={cartPopupOpen}
             onClose={handleCartClose}
           />
-          <Button
-            component={Link}
-            to="/orders"
-            color="inherit"
-            startIcon={<ShoppingBagIcon />}
-            sx={{
-              minWidth: 'auto',
-              px: 2,
-              py: 1,
-              borderRadius: 2,
-              bgcolor: location.pathname === '/orders' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
-              '&:hover': {
-                bgcolor: 'rgba(255, 255, 255, 0.1)',
-              },
-            }}
-          >
-            Orders
-          </Button>
         </Box>
         
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

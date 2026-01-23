@@ -122,13 +122,33 @@ class CartController @Inject()(
     extractTokenAndValidate { (token, buyerId, accountType) =>
       requireBuyerOrAdmin(accountType)
       
-      cartService.checkout(buyerId, token).map { checkoutResponse =>
-        Ok(Json.toJson(checkoutResponse))
-      }.recover {
-        case e: IllegalArgumentException => BadRequest(Json.obj("error" -> e.getMessage))
-        case e: Exception =>
-          logger.error("Error initiating checkout", e)
-          InternalServerError(Json.obj("error" -> "Failed to initiate checkout"))
+      // Parse delivery details from request body (required)
+      val deliveryDetails = request.body.asJson.flatMap { json =>
+        (json \ "delivery_details").asOpt[play.api.libs.json.JsObject].map { detailsObj =>
+          models.DeliveryDetails(
+            fullName = (detailsObj \ "full_name").asOpt[String].getOrElse(""),
+            address = (detailsObj \ "address").asOpt[String].getOrElse(""),
+            city = (detailsObj \ "city").asOpt[String].getOrElse(""),
+            province = (detailsObj \ "province").asOpt[String].getOrElse(""),
+            postalCode = (detailsObj \ "postal_code").asOpt[String].getOrElse(""),
+            country = (detailsObj \ "country").asOpt[String].getOrElse("Canada"),
+            phone = (detailsObj \ "phone").asOpt[String].getOrElse("")
+          )
+        }
+      }
+      
+      // Validate that delivery details are provided
+      if (deliveryDetails.isEmpty) {
+        Future.successful(BadRequest(Json.obj("error" -> "Delivery details are required")))
+      } else {
+        cartService.checkout(buyerId, token, deliveryDetails).map { checkoutResponse =>
+          Ok(Json.toJson(checkoutResponse))
+        }.recover {
+          case e: IllegalArgumentException => BadRequest(Json.obj("error" -> e.getMessage))
+          case e: Exception =>
+            logger.error("Error initiating checkout", e)
+            InternalServerError(Json.obj("error" -> "Failed to initiate checkout"))
+        }
       }
     }
   }

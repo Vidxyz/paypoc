@@ -229,6 +229,7 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/fulfillment/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
     
@@ -263,6 +264,7 @@ build_all_images() {
     local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
     local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
     local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+    local vite_is_production="${VITE_IS_PRODUCTION:-false}"
     
     log_info "Building frontend image..."
     (cd "$PROJECT_ROOT/services/frontend" && docker build \
@@ -271,6 +273,7 @@ build_all_images() {
         --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
         --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
         --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+        --build-arg VITE_IS_PRODUCTION="$vite_is_production" \
         -t frontend:latest .) &
     FRONTEND_PID=$!
     
@@ -322,6 +325,10 @@ build_all_images() {
     (cd "$PROJECT_ROOT/services/order" && docker build -t order-service:latest .) &
     ORDER_PID=$!
     
+    log_info "Building fulfillment-service image..."
+    (cd "$PROJECT_ROOT/services/fulfillment" && docker build -t fulfillment-service:latest .) &
+    FULFILLMENT_PID=$!
+    
     # Wait for all builds to complete
     log_info "Waiting for all image builds to complete..."
     wait $LEDGER_PID || { log_error "Ledger image build failed"; exit 1; }
@@ -354,6 +361,9 @@ build_all_images() {
     wait $ORDER_PID || { log_error "Order image build failed"; exit 1; }
     log_info "Order image built successfully"
     
+    wait $FULFILLMENT_PID || { log_error "Fulfillment image build failed"; exit 1; }
+    log_info "Fulfillment image built successfully"
+    
     # Load images into minikube in parallel
     log_info "Loading images into minikube in parallel..."
     minikube image load ledger-service:latest &
@@ -366,6 +376,7 @@ build_all_images() {
     minikube image load inventory-service:latest &
     minikube image load cart-service:latest &
     minikube image load order-service:latest &
+    minikube image load fulfillment-service:latest &
     
     # Wait for all image loads to complete
     wait
@@ -409,6 +420,9 @@ delete_deployments() {
                 ;;
             order)
                 kubectl delete -f "$K8S_DIR/order/deployment.yaml" 2>/dev/null || true
+                ;;
+            fulfillment)
+                kubectl delete -f "$K8S_DIR/fulfillment/deployment.yaml" 2>/dev/null || true
                 ;;
         esac
     done
@@ -462,6 +476,10 @@ deploy_multiple_services() {
                 ;;
             order)
                 deploy_order &
+                pids+=($!)
+                ;;
+            fulfillment)
+                deploy_fulfillment &
                 pids+=($!)
                 ;;
         esac
@@ -526,6 +544,7 @@ build_single_image() {
             local auth0_frontend_client_id="${AUTH0_FRONTEND_CLIENT_ID:-}"
             local auth0_frontend_redirect_uri="${AUTH0_FRONTEND_REDIRECT_URI:-}"
             local auth0_frontend_audience="${AUTH0_FRONTEND_AUDIENCE:-}"
+            local vite_is_production="${VITE_IS_PRODUCTION:-false}"
             log_info "Building frontend image..."
             (cd "$PROJECT_ROOT/services/frontend" && docker build \
                 --build-arg VITE_STRIPE_PUBLISHABLE_KEY="$stripe_key" \
@@ -533,6 +552,7 @@ build_single_image() {
                 --build-arg VITE_AUTH0_CLIENT_ID="$auth0_frontend_client_id" \
                 --build-arg VITE_AUTH0_REDIRECT_URI="$auth0_frontend_redirect_uri" \
                 --build-arg VITE_AUTH0_AUDIENCE="$auth0_frontend_audience" \
+                --build-arg VITE_IS_PRODUCTION="$vite_is_production" \
                 -t frontend:latest .) || { log_error "Frontend image build failed"; exit 1; }
             minikube image load frontend:latest
             log_info "Frontend image built and loaded successfully"
@@ -599,9 +619,15 @@ build_single_image() {
                 minikube image load order-service:latest
                 log_info "Order image built and loaded successfully"
                 ;;
+            fulfillment)
+                log_info "Building fulfillment-service image..."
+                (cd "$PROJECT_ROOT/services/fulfillment" && docker build -t fulfillment-service:latest .) || { log_error "Fulfillment image build failed"; exit 1; }
+                minikube image load fulfillment-service:latest
+                log_info "Fulfillment image built and loaded successfully"
+                ;;
         *)
             log_error "Unknown service: $service_name"
-            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart, order"
+            log_info "Available services: ledger, payments, frontend, admin-console, seller-console, user, catalog, inventory, cart, order, fulfillment"
             exit 1
             ;;
     esac
@@ -741,6 +767,18 @@ deploy_order() {
     kubectl apply -f "$K8S_DIR/order/service.yaml" &
     kubectl apply -f "$K8S_DIR/order/deployment.yaml" &
     kubectl apply -f "$K8S_DIR/order/ingress.yaml" &
+    kubectl apply -f "$K8S_DIR/order/cronjob.yaml" &
+    wait
+}
+
+deploy_fulfillment() {
+    log_info "Deploying Fulfillment Service..."
+    kubectl apply -f "$K8S_DIR/fulfillment/namespace.yaml" &
+    kubectl apply -f "$K8S_DIR/fulfillment/configmap.yaml" &
+    kubectl apply -f "$K8S_DIR/fulfillment/secret.yaml" &
+    kubectl apply -f "$K8S_DIR/fulfillment/service.yaml" &
+    kubectl apply -f "$K8S_DIR/fulfillment/deployment.yaml" &
+    kubectl apply -f "$K8S_DIR/fulfillment/ingress.yaml" &
     wait
 }
 
@@ -799,6 +837,10 @@ wait_for_services() {
     kubectl wait --for=condition=available deployment/order-service -n order --timeout=300s || log_warn "Order Service not ready yet" &
     ORDER_PID=$!
     
+    log_info "Waiting for Fulfillment Service..."
+    kubectl wait --for=condition=available deployment/fulfillment-service -n fulfillment --timeout=300s || log_warn "Fulfillment Service not ready yet" &
+    FULFILLMENT_PID=$!
+    
     # Wait for all services to be ready
     wait $POSTGRES_PID
     wait $LEDGER_PID
@@ -811,6 +853,7 @@ wait_for_services() {
     wait $INVENTORY_PID
     wait $CART_PID
     wait $ORDER_PID
+    wait $FULFILLMENT_PID
     
     log_info "Services deployment complete"
 }
@@ -859,6 +902,10 @@ wait_for_single_service() {
                 log_info "Waiting for Order Service..."
                 kubectl wait --for=condition=available deployment/order-service -n order --timeout=300s || log_warn "Order Service not ready yet"
                 ;;
+            fulfillment)
+                log_info "Waiting for Fulfillment Service..."
+                kubectl wait --for=condition=available deployment/fulfillment-service -n fulfillment --timeout=300s || log_warn "Fulfillment Service not ready yet"
+                ;;
         esac
 }
 
@@ -899,6 +946,13 @@ show_status() {
     kubectl get services -n "order"
     echo ""
     kubectl get ingress -n "order"
+    echo ""
+    echo "=== Fulfillment Namespace ==="
+    kubectl get pods -n "fulfillment"
+    echo ""
+    kubectl get services -n "fulfillment"
+    echo ""
+    kubectl get ingress -n "fulfillment"
     echo ""
     
     log_info "Access URLs:"
@@ -941,12 +995,21 @@ show_status() {
     
     echo "  Ledger Service: http://$(kubectl get svc ledger-service -n $NAMESPACE -o jsonpath='{.spec.clusterIP}'):8081 (ClusterIP only)"
     echo ""
+    INGRESS_IP_FULFILLMENT=$(kubectl get ingress fulfillment-ingress -n "fulfillment" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    if [ -n "$INGRESS_IP_FULFILLMENT" ]; then
+        echo "  Fulfillment Service (Ingress): http://$INGRESS_IP_FULFILLMENT"
+    else
+        echo "  Fulfillment Service (Ingress): http://fulfillment.local (add to /etc/hosts: $MINIKUBE_IP fulfillment.local)"
+        echo "    Or use port-forward: kubectl port-forward -n fulfillment svc/fulfillment-service 9006:9006"
+    fi
+    echo ""
     log_info "To port-forward services:"
     echo "  Frontend: kubectl port-forward -n ui svc/frontend 3000:80"
     echo "  Admin Console: kubectl port-forward -n ui svc/admin-console 3001:80"
     echo "  Seller Console: kubectl port-forward -n ui svc/seller-console 3002:80"
     echo "  Payments: kubectl port-forward -n $NAMESPACE svc/payments-service 8080:8080"
     echo "  Ledger: kubectl port-forward -n $NAMESPACE svc/ledger-service 8081:8081"
+    echo "  Fulfillment: kubectl port-forward -n fulfillment svc/fulfillment-service 9006:9006"
 }
 
 # Main execution
@@ -979,6 +1042,7 @@ main() {
     deploy_inventory &
     deploy_cart &
     deploy_order &
+    deploy_fulfillment &
     
     # Wait for postgres check to complete (non-blocking, just logs warnings if not ready)
     wait $POSTGRES_CHECK_PID
@@ -994,7 +1058,7 @@ main() {
 }
 
 # Parse arguments
-VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart" "order")
+VALID_SERVICES=("ledger" "payments" "frontend" "admin-console" "seller-console" "user" "catalog" "inventory" "cart" "order" "fulfillment")
 SERVICES_TO_DEPLOY=()
 EXCLUDED_SERVICES=()
 EXCLUDE_MODE=false

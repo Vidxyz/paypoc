@@ -2,9 +2,11 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -287,6 +289,249 @@ func (h *OrderHandler) CreatePartialRefund(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Partial refund created successfully"})
+}
+
+// GetShipment handles GET /internal/shipments/:id
+// Retrieves a shipment by ID (internal API)
+func (h *OrderHandler) GetShipment(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	shipment, err := h.orderService.GetShipmentByID(c.Request.Context(), shipmentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "shipment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// GetShipmentsByOrder handles GET /internal/orders/:id/shipments
+// Retrieves all shipments for an order (internal API)
+// Returns empty array if no shipments exist (order may not have shipments yet)
+func (h *OrderHandler) GetShipmentsByOrder(c *gin.Context) {
+	orderIDStr := c.Param("id")
+	log.Printf("[GetShipmentsByOrder] Received request for order ID: %s", orderIDStr)
+
+	orderID, err := uuid.Parse(orderIDStr)
+	if err != nil {
+		log.Printf("[GetShipmentsByOrder] Invalid order ID format: %s, error: %v", orderIDStr, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order ID"})
+		return
+	}
+
+	log.Printf("[GetShipmentsByOrder] Parsed order ID: %s, querying database...", orderID)
+
+	// Get shipments from repository
+	shipments, err := h.orderService.GetShipmentsByOrderID(c.Request.Context(), orderID)
+	if err != nil {
+		log.Printf("[GetShipmentsByOrder] Database error for order %s: %v", orderID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get shipments: %v", err)})
+		return
+	}
+
+	log.Printf("[GetShipmentsByOrder] Found %d shipments for order %s", len(shipments), orderID)
+
+	// Return shipments array (empty if no shipments)
+	c.JSON(http.StatusOK, shipments)
+}
+
+// UpdateShipmentStatus handles PUT /internal/shipments/:id/status
+// Updates the status of a shipment (internal API)
+func (h *OrderHandler) UpdateShipmentStatus(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	var req struct {
+		Status      string  `json:"status" binding:"required"`
+		ShippedAt   *string `json:"shipped_at"`
+		DeliveredAt *string `json:"delivered_at"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var shippedAt, deliveredAt *time.Time
+	if req.ShippedAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.ShippedAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipped_at format"})
+			return
+		}
+		shippedAt = &t
+	}
+	if req.DeliveredAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.DeliveredAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid delivered_at format"})
+			return
+		}
+		deliveredAt = &t
+	}
+
+	shipment, err := h.orderService.UpdateShipmentStatus(c.Request.Context(), shipmentID, req.Status, shippedAt, deliveredAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// UpdateShipmentTracking handles PUT /internal/shipments/:id/tracking
+// Updates the tracking information for a shipment (internal API)
+func (h *OrderHandler) UpdateShipmentTracking(c *gin.Context) {
+	shipmentIDStr := c.Param("id")
+	shipmentID, err := uuid.Parse(shipmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid shipment ID"})
+		return
+	}
+
+	var req struct {
+		TrackingNumber string `json:"tracking_number" binding:"required"`
+		Carrier        string `json:"carrier" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	shipment, err := h.orderService.UpdateShipmentTracking(c.Request.Context(), shipmentID, req.TrackingNumber, req.Carrier)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// GetShipmentsBySeller handles GET /internal/sellers/:sellerId/shipments
+// Retrieves all shipments for a seller (internal API)
+func (h *OrderHandler) GetShipmentsBySeller(c *gin.Context) {
+	sellerID := c.Param("sellerId")
+	if sellerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "seller ID is required"})
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 50
+	offset := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	// Always parse offset, even if it's 0 (first page)
+	offsetStr := c.Query("offset")
+	if offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		} else {
+			log.Printf("[GetShipmentsBySeller] Failed to parse offset '%s': %v, defaulting to 0", offsetStr, err)
+			offset = 0
+		}
+	} else {
+		// If offset is not provided, default to 0 (first page)
+		offset = 0
+	}
+
+	log.Printf("[GetShipmentsBySeller] sellerID: %s, limit: %d, offset: %d", sellerID, limit, offset)
+	shipments, err := h.orderService.GetShipmentsBySellerID(c.Request.Context(), sellerID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Always return an array, even if empty (nil becomes empty array)
+	if shipments == nil {
+		shipments = []models.Shipment{}
+	}
+
+	c.JSON(http.StatusOK, shipments)
+}
+
+// GetShipmentByTracking handles GET /internal/shipments/by-tracking/:trackingNumber
+// Retrieves a shipment by tracking number (internal API)
+func (h *OrderHandler) GetShipmentByTracking(c *gin.Context) {
+	trackingNumber := c.Param("trackingNumber")
+	if trackingNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tracking number is required"})
+		return
+	}
+
+	shipment, err := h.orderService.GetShipmentByTrackingNumber(c.Request.Context(), trackingNumber)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "shipment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, shipment)
+}
+
+// UpdateDeliveryDetails handles PUT /api/orders/:id/delivery-details
+// Updates delivery details for a PENDING order (only buyers can update their own orders)
+func (h *OrderHandler) UpdateDeliveryDetails(c *gin.Context) {
+	orderIDStr := c.Param("id")
+	orderID, err := uuid.Parse(orderIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order ID"})
+		return
+	}
+
+	// Get user info from JWT middleware
+	userID, ok := auth.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user ID not found in token"})
+		return
+	}
+
+	accountType, ok := auth.GetAccountType(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "account type not found in token"})
+		return
+	}
+
+	// Only buyers can update their own orders (admins could be added later if needed)
+	if accountType != auth.AccountTypeBuyer && accountType != auth.AccountTypeAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only buyers can update delivery details"})
+		return
+	}
+
+	// Parse delivery details from request body
+	var req models.DeliveryDetails
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
+		return
+	}
+
+	// Update delivery details (service validates order status and ownership)
+	if err := h.orderService.UpdateDeliveryDetails(c.Request.Context(), orderID, userID, &req); err != nil {
+		if strings.Contains(err.Error(), "cannot update delivery details") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "access denied") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "delivery details updated successfully"})
 }
 
 // Health handles GET /health

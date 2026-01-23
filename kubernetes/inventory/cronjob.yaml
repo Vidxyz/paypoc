@@ -4,8 +4,8 @@ metadata:
   name: inventory-cleanup-cronjob
   namespace: inventory
 spec:
-  # Run every hour
-  schedule: "0 * * * *"
+  # Run every hour at 15 minutes past the hour (staggered to reduce overlap)
+  schedule: "15 * * * *"
   successfulJobsHistoryLimit: 0
   failedJobsHistoryLimit: 3
   jobTemplate:

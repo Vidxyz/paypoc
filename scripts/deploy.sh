@@ -229,6 +229,7 @@ build_all_images() {
     kubectl delete -f "$K8S_DIR/catalog/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/inventory/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/cart/deployment.yaml" 2>/dev/null || true
+    kubectl delete -f "$K8S_DIR/order/deployment.yaml" 2>/dev/null || true
     kubectl delete -f "$K8S_DIR/fulfillment/deployment.yaml" 2>/dev/null || true
 
     log_info "Building Docker images in parallel..."
@@ -633,9 +634,22 @@ build_single_image() {
     esac
 }
 
+# Apply all namespaces first so every service has its namespace before any manifests
+apply_all_namespaces() {
+    log_info "Applying all namespaces (required order: namespaces before any resources)..."
+    kubectl apply -f "$K8S_DIR/ledger/namespace.yaml"   # payments-platform (used by ledger + payments)
+    kubectl apply -f "$K8S_DIR/ui/namespace.yaml"      # ui (frontend, admin-console, seller-console)
+    kubectl apply -f "$K8S_DIR/user/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/catalog/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/cart/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/order/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/fulfillment/namespace.yaml"
+    log_info "All namespaces applied"
+}
+
 create_namespace() {
-    log_info "Creating namespace: $NAMESPACE"
-    kubectl apply -f "$K8S_DIR/ledger/namespace.yaml" || kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+    apply_all_namespaces
 }
 
 deploy_postgres() {
@@ -647,12 +661,11 @@ deploy_postgres() {
 
 deploy_ledger() {
     log_info "Deploying Ledger Service..."
-    kubectl apply -f "$K8S_DIR/ledger/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/ledger/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/ledger/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/ledger/service.yaml" &
-    kubectl apply -f "$K8S_DIR/ledger/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/ledger/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/ledger/secret.yaml"
+    kubectl apply -f "$K8S_DIR/ledger/service.yaml"
+    kubectl apply -f "$K8S_DIR/ledger/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/ledger/ingress.yaml"
 }
 
 deploy_ingress() {
@@ -675,111 +688,92 @@ deploy_ingress() {
 
 deploy_payments() {
     log_info "Deploying Payments Service..."
-    kubectl apply -f "$K8S_DIR/payments/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/payments/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/payments/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/payments/service.yaml" &
-    kubectl apply -f "$K8S_DIR/payments/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/payments/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/payments/secret.yaml"
+    kubectl apply -f "$K8S_DIR/payments/service.yaml"
+    kubectl apply -f "$K8S_DIR/payments/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/payments/ingress.yaml"
 }
 
 deploy_frontend() {
     log_info "Deploying Frontend..."
-    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/frontend/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/frontend/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/frontend/service.yaml" &
-    kubectl apply -f "$K8S_DIR/frontend/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/frontend/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/service.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/frontend/ingress.yaml"
 }
 
 deploy_admin_console() {
     log_info "Deploying Admin Console..."
-    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/admin-console/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/admin-console/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/admin-console/service.yaml" &
-    kubectl apply -f "$K8S_DIR/admin-console/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/admin-console/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/admin-console/service.yaml"
+    kubectl apply -f "$K8S_DIR/admin-console/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/admin-console/ingress.yaml"
 }
 
 deploy_seller_console() {
     log_info "Deploying Seller Console..."
-    kubectl apply -f "$K8S_DIR/ui/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/seller-console/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/seller-console/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/seller-console/service.yaml" &
-    kubectl apply -f "$K8S_DIR/seller-console/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/seller-console/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/seller-console/service.yaml"
+    kubectl apply -f "$K8S_DIR/seller-console/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/seller-console/ingress.yaml"
 }
 
 deploy_user() {
     log_info "Deploying User Service..."
-    kubectl apply -f "$K8S_DIR/user/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/user/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/user/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/user/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/user/service.yaml" &
-    kubectl apply -f "$K8S_DIR/user/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/user/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/user/secret.yaml"
+    kubectl apply -f "$K8S_DIR/user/service.yaml"
+    kubectl apply -f "$K8S_DIR/user/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/user/ingress.yaml"
 }
 
 deploy_catalog() {
     log_info "Deploying Catalog Service..."
-    kubectl apply -f "$K8S_DIR/catalog/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/catalog/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/catalog/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/catalog/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/catalog/service.yaml" &
-    kubectl apply -f "$K8S_DIR/catalog/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/catalog/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/catalog/secret.yaml"
+    kubectl apply -f "$K8S_DIR/catalog/service.yaml"
+    kubectl apply -f "$K8S_DIR/catalog/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/catalog/ingress.yaml"
 }
 
 deploy_inventory() {
     log_info "Deploying Inventory Service..."
-    kubectl apply -f "$K8S_DIR/inventory/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/service.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/ingress.yaml" &
-    kubectl apply -f "$K8S_DIR/inventory/cronjob.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/inventory/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/secret.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/service.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/ingress.yaml"
+    kubectl apply -f "$K8S_DIR/inventory/cronjob.yaml"
 }
 
 deploy_cart() {
     log_info "Deploying Cart Service..."
-    kubectl apply -f "$K8S_DIR/cart/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/service.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/ingress.yaml" &
-    kubectl apply -f "$K8S_DIR/cart/cronjob.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/cart/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/cart/secret.yaml"
+    kubectl apply -f "$K8S_DIR/cart/service.yaml"
+    kubectl apply -f "$K8S_DIR/cart/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/cart/ingress.yaml"
+    kubectl apply -f "$K8S_DIR/cart/cronjob.yaml"
 }
 
 deploy_order() {
     log_info "Deploying Order Service..."
-    kubectl apply -f "$K8S_DIR/order/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/order/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/order/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/order/service.yaml" &
-    kubectl apply -f "$K8S_DIR/order/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/order/ingress.yaml" &
-    kubectl apply -f "$K8S_DIR/order/cronjob.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/order/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/order/secret.yaml"
+    kubectl apply -f "$K8S_DIR/order/service.yaml"
+    kubectl apply -f "$K8S_DIR/order/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/order/ingress.yaml"
+    kubectl apply -f "$K8S_DIR/order/cronjob.yaml"
 }
 
 deploy_fulfillment() {
     log_info "Deploying Fulfillment Service..."
-    kubectl apply -f "$K8S_DIR/fulfillment/namespace.yaml" &
-    kubectl apply -f "$K8S_DIR/fulfillment/configmap.yaml" &
-    kubectl apply -f "$K8S_DIR/fulfillment/secret.yaml" &
-    kubectl apply -f "$K8S_DIR/fulfillment/service.yaml" &
-    kubectl apply -f "$K8S_DIR/fulfillment/deployment.yaml" &
-    kubectl apply -f "$K8S_DIR/fulfillment/ingress.yaml" &
-    wait
+    kubectl apply -f "$K8S_DIR/fulfillment/configmap.yaml"
+    kubectl apply -f "$K8S_DIR/fulfillment/secret.yaml"
+    kubectl apply -f "$K8S_DIR/fulfillment/service.yaml"
+    kubectl apply -f "$K8S_DIR/fulfillment/deployment.yaml"
+    kubectl apply -f "$K8S_DIR/fulfillment/ingress.yaml"
 }
 
 wait_for_services() {
@@ -926,6 +920,20 @@ show_status() {
     echo ""
     kubectl get ingress -n "catalog"
     echo ""
+    echo "=== User Namespace ==="
+    kubectl get pods -n "user"
+    echo ""
+    kubectl get services -n "user"
+    echo ""
+    kubectl get ingress -n "user"
+    echo ""
+    echo "=== Cart Namespace ==="
+    kubectl get pods -n "cart"
+    echo ""
+    kubectl get services -n "cart"
+    echo ""
+    kubectl get ingress -n "cart"
+    echo ""
     echo "=== Inventory Namespace ==="
     kubectl get pods -n "inventory"
     echo ""
@@ -1018,8 +1026,9 @@ main() {
     
     check_prerequisites
     build_images "all"
+    # Apply all namespaces first (required order: namespaces before any service manifests)
     create_namespace
-    
+
     # Deploy ingress and check postgres in parallel (postgres check is non-blocking)
     log_info "Setting up infrastructure..."
     deploy_ingress &
